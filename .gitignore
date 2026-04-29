@@ -23,6 +23,9 @@ ml/tmp/
 # Logs
 logs/
 
+# Archive (old experiments / backups)
+archive/
+
 # Secrets
 .env
 access_token.txt

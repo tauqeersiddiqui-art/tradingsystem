@@ -1,0 +1,25 @@
+# Python virtual environments
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Large datasets (all CSVs in ML & data)
+ml/**/*.csv
+data/**/*.csv
+
+# ML models
+ml/models/*.pkl
+ml/models/*.joblib
+ml/models/*.h5
+ml/models/*.pt
+
+# Temporary ML files
+ml/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db

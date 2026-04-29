@@ -7,7 +7,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Large datasets (all CSVs in ML & data)
+# Large datasets
 ml/**/*.csv
 data/**/*.csv
 
@@ -19,6 +19,13 @@ ml/models/*.pt
 
 # Temporary ML files
 ml/tmp/
+
+# Logs
+logs/
+
+# Secrets
+.env
+access_token.txt
 
 # OS files
 .DS_Store

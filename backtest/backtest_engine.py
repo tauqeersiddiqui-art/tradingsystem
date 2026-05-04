@@ -289,9 +289,9 @@ class BacktestSignalEngine:
         if now >= _NO_ENTRY_AFTER:    return None
 
         # Day type gate
-        if self._day_clf and self._day_classified:
-            if not self._day_clf.should_trade_orb():
-                return None
+        day = self.learner.get_day_type()
+        #if day == "VOLATILE_DAY":
+         #   return None
 
         features = self._build_features(window)
         if not features:
@@ -313,10 +313,34 @@ class BacktestSignalEngine:
 
         signal = None
 
-        for side, prob, breakout in [("CE", ce_adj, ce_break), ("PE", pe_adj, pe_break)]:
-            thr = threshold - 0.03 if breakout else threshold
-            if prob >= thr:
-                blocked, _ = self.learner.is_side_blocked(side)
+        # ── CE check ─────────────────────────────────────────────
+        ce_thr = threshold - 0.03 if ce_break else threshold
+        if ce_adj >= ce_thr:
+            blocked, _ = self.learner.is_side_blocked("CE")
+            if not blocked:
+                atr_val = features.get("atr", price * 0.01)
+                day_type = self.learner.get_day_type()
+                regime = (
+                    "EXPANSION" if "VOLATILE" in day_type else
+                    "TREND"     if "TREND" in day_type else "RANGE"
+                )
+                stop_loss, target, stop_pct = compute_entry_stops(price, atr_val, regime)
+                signal = {
+                    "side": "CE",
+                    "ml_prob": ce_adj,
+                    "features": features,
+                    "reason": "ORB+ML_CE" if ce_break else "ML_CE",
+                    "stop_loss": stop_loss,
+                    "target": target,
+                    "stop_pct": stop_pct,
+                    "regime": regime,
+                }
+
+        # ── PE check ─────────────────────────────────────────────
+        if signal is None:
+            pe_thr = threshold - 0.03 if pe_break else threshold
+            if pe_adj >= pe_thr:
+                blocked, _ = self.learner.is_side_blocked("PE")
                 if not blocked:
                     atr_val = features.get("atr", price * 0.01)
                     day_type = self.learner.get_day_type()
@@ -325,20 +349,16 @@ class BacktestSignalEngine:
                         "TREND"     if "TREND" in day_type else "RANGE"
                     )
                     stop_loss, target, stop_pct = compute_entry_stops(price, atr_val, regime)
-                    reason = f"ORB+ML_{side}" if breakout else f"ML_{side}"
                     signal = {
-                        "side":      side,
-                        "ml_prob":   prob,
-                        "features":  features,
-                        "reason":    reason,
+                        "side": "PE",
+                        "ml_prob": pe_adj,
+                        "features": features,
+                        "reason": "ORB+ML_PE" if pe_break else "ML_PE",
                         "stop_loss": stop_loss,
-                        "target":    target,
-                        "stop_pct":  stop_pct,
-                        "regime":    regime,
+                        "target": target,
+                        "stop_pct": stop_pct,
+                        "regime": regime,
                     }
-                    break
-
-        return signal
 
     # ── Exit check ────────────────────────────────────────────────────
 
@@ -364,7 +384,8 @@ class BacktestSignalEngine:
 
         max_hold = self.config.get("MAX_HOLD_SECONDS", 300)
         if held_seconds > max_hold:
-            return True, "TIME_EXIT"
+            if position["max_pnl"] < 100:
+                return True, "TIME_EXIT_WEAK"
 
         ml_edge = ml_prob - 0.5
         early, e_reason = self.learner.should_exit_early(
@@ -404,7 +425,7 @@ class BacktestEngine:
             "DAILY_LOSS_LIMIT":   -2_000,
             "MAX_TRADES_PER_DAY": 10,
             "MAX_HOLD_SECONDS":   300,
-            "COOLDOWN_SECONDS":   120,
+            "COOLDOWN_SECONDS":   180,
             "LOT_SIZE":           NIFTY_LOT_SIZE,
             "LOTS_PER_TRADE":     1,
             "CHAMPION_THRESHOLD": float(os.getenv("CHAMPION_THRESHOLD", 0.42)),
@@ -620,7 +641,21 @@ class BacktestEngine:
                 signal = self.signal_engine.step(window_df, ts)
 
                 if signal is not None:
-                   # Entry price: next candle open or current close
+
+                    side = signal["side"]
+                    features = signal.get("features", {})
+
+                    # TREND FILTER (CORRECT PLACE)
+                    ema20 = features.get("ema20")
+                    ema50 = features.get("ema50")
+
+                    if ema20 < ema50 and side == "CE":
+                        continue
+
+                    if ema20 > ema50 and side == "PE":
+                        continue
+
+                    # Entry price: next candle open or current close
                     if entry_on == "next_open" and i < len(day_df) - 1:
                         next_row = day_df.iloc[i + 1]
                         entry_price = float(next_row["open"]) + 0.5
@@ -630,16 +665,19 @@ class BacktestEngine:
                     stop_loss = signal.get("stop_loss", entry_price * 0.90)
                     target    = signal.get("target",    entry_price * 1.05)
 
-                    # ATM strike proxy (for option PnL sim)
+                    # ATM strike proxy
                     atm_strike = round(entry_price / 50) * 50
+
+                    # FIX: define mins_to_close
                     mins_to_close = max(
                         (_MARKET_CLOSE.hour * 60 + _MARKET_CLOSE.minute) -
-                        (ts.hour * 60 + ts.minute), 1
+                        (ts.hour * 60 + ts.minute),
+                        1
                     )
 
                     position = {
-                        "symbol":      f"NIFTY_{signal['side']}_{atm_strike}",
-                        "side":        signal["side"],
+                        "symbol":      f"NIFTY_{side}_{atm_strike}",
+                        "side":        side,
                         "entry":       entry_price,
                         "qty":         qty,
                         "lot_size":    lot_size,
@@ -647,7 +685,7 @@ class BacktestEngine:
                         "target":      target,
                         "max_pnl":     0.0,
                         "ml_prob":     signal["ml_prob"],
-                        "features":    signal.get("features", {}),
+                        "features":    features,
                         "regime":      signal.get("regime", "UNKNOWN"),
                         "reason":      signal.get("reason", ""),
                         "atm_strike":  atm_strike,
@@ -888,7 +926,7 @@ if __name__ == "__main__":
     engine = BacktestEngine()
 
     df = engine.load_data(r"D:\All Bots\trading_system\data\historical\nifty_1m_full.csv")
-    df = df.tail(20000)
+    df = df.tail(200000)
     print("Data loaded:", df.shape)
 
     results = engine.run(df)

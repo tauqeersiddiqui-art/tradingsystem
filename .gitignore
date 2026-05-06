@@ -33,3 +33,5 @@ access_token.txt
 # OS files
 .DS_Store
 Thumbs.db
+# Added by code-review-graph
+.code-review-graph/

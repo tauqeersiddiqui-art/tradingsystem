@@ -158,19 +158,13 @@ class ExecutionEngine:
     # ══════════════════════════════════════════════════════════════════
 
     def execute_exit(self, symbol: str, qty: int, side: str = "CE") -> dict | None:
-        """
-        Close an open options position.
-            CE exit → SELL  (sold to close long call)
-            PE exit → BUY   (bought to close long put)  ← FIX-1
+    """
+    Close an open options position.
+    Both CE and PE are exited using SELL because both were opened using BUY.
+    """
 
-        Returns {order_id, price, qty, symbol} or None on failure.
-        """
-        # FIX-1: correct transaction type per side
-        if side == "PE":
-            txn_type = self.broker.kite.TRANSACTION_TYPE_BUY
-        else:
-            txn_type = self.broker.kite.TRANSACTION_TYPE_SELL
-
+        txn_type = self.broker.kite.TRANSACTION_TYPE_SELL   
+        
         # ── Paper / DRY RUN ───────────────────────────────────────────
         if self.config.DRY_RUN or getattr(self.broker, "is_paper", False):
             price = self.broker.ltp(symbol) or 0.0

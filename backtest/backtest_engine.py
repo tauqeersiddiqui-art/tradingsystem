@@ -161,13 +161,49 @@ class BacktestSignalEngine:
         self._prev_close: Optional[float] = None
         self._open_price_set   = False
 
+        # ═══════════════════════════════════════════════════════
+        # TELEMETRY / PIPELINE OBSERVABILITY
+        # Tracks where signals are generated, filtered, blocked,
+        # rejected, and executed.
+        # ═══════════════════════════════════════════════════════
+        self.telemetry = {
+
+            # Raw ORB breakout detections
+            "ce_raw_signals": 0,
+            "pe_raw_signals": 0,
+
+            # Passed ML threshold
+            "ce_ml_pass": 0,
+            "pe_ml_pass": 0,
+
+            # Blocked by learner logic
+            "ce_blocked": 0,
+            "pe_blocked": 0,
+
+            # Successfully executed trades
+            "ce_executed": 0,
+            "pe_executed": 0,
+
+            # Diagnostics
+            "signals_returned": 0,
+            "signals_none": 0,
+
+            # Day stats
+            "trend_candles": 0,
+            "range_candles": 0,
+            "volatile_candles": 0,
+            "unknown_candles": 0,
+        }
+
         try:
             from ml.day_classifier import DayClassifier
             self._day_clf = DayClassifier()
             logger.info("[BacktestSignalEngine] DayClassifier loaded")
-        except Exception as e:
-            logger.warning(f"[BacktestSignalEngine] DayClassifier unavailable: {e}")
 
+        except Exception as e:
+            logger.warning(
+                f"[BacktestSignalEngine] DayClassifier unavailable: {e}"
+            )
     # ── Day reset ─────────────────────────────────────────────────────
 
     def reset_day(self, prev_close: Optional[float] = None):
@@ -274,9 +310,13 @@ class BacktestSignalEngine:
         Returns signal dict or None.
         Identical contract to LiveEngine.step().
         """
+
         row = window.iloc[-1]
         now = ts.time()
 
+        # ─────────────────────────────────────────────────────
+        # OPEN PRICE INIT
+        # ─────────────────────────────────────────────────────
         if not self._open_price_set and now >= _MARKET_OPEN:
             self.learner.set_open_price(row["close"])
             self._open_price_set = True
@@ -284,47 +324,145 @@ class BacktestSignalEngine:
         self._update_orb(row, ts)
         self._maybe_classify_day(row, ts)
 
-        # Time gates
-        if now < _ORB_END:            return None
-        if now >= _NO_ENTRY_AFTER:    return None
-
-        # Day type gate
-        day = self.learner.get_day_type()
-        #if day == "VOLATILE_DAY":
-         #   return None
-
-        features = self._build_features(window)
-        if not features:
+        # ─────────────────────────────────────────────────────
+        # TIME GATES
+        # ─────────────────────────────────────────────────────
+        if now < _ORB_END:
+            self.telemetry["signals_none"] += 1
             return None
 
-        price     = row["close"]
+        if now >= _NO_ENTRY_AFTER:
+            self.telemetry["signals_none"] += 1
+            return None
+
+        # ─────────────────────────────────────────────────────
+        # DAY TYPE GATE
+        # ─────────────────────────────────────────────────────
+        day = self.learner.get_day_type()
+
+        # Optional hard block
+        # if day == "VOLATILE_DAY":
+        #     return None
+
+        # Track day stats
+        if "TREND" in day:
+            self.telemetry["trend_candles"] += 1
+        elif "RANGE" in day:
+            self.telemetry["range_candles"] += 1
+        elif "VOLATILE" in day:
+            self.telemetry["volatile_candles"] += 1
+        else:
+            self.telemetry["unknown_candles"] += 1
+
+        # ─────────────────────────────────────────────────────
+        # FEATURE BUILD
+        # ─────────────────────────────────────────────────────
+        features = self._build_features(window)
+
+        if not features:
+            self.telemetry["signals_none"] += 1
+            return None
+
+        price = row["close"]
+
+        # Adaptive threshold
         threshold = self.learner.get_ml_threshold()
 
+        # ─────────────────────────────────────────────────────
+        # ML PREDICTIONS
+        # ─────────────────────────────────────────────────────
         ce_prob = self.predictor.predict(features, "CE")
         pe_prob = self.predictor.predict(features, "PE")
 
         if ce_prob is None or pe_prob is None:
+            self.telemetry["signals_none"] += 1
             return None
 
-        ce_adj, pe_adj = self.learner.get_adjusted_ml_prob(ce_prob, pe_prob, "CE")
+        ce_adj, pe_adj = self.learner.get_adjusted_ml_prob(
+            ce_prob,
+            pe_prob,
+            "CE"
+        )
 
-        ce_break = self.orb_done and self.orb_high and price > self.orb_high
-        pe_break = self.orb_done and self.orb_low  and price < self.orb_low
+        logger.info(
+            f"[ML] CE={ce_adj:.3f} "
+            f"PE={pe_adj:.3f} "
+            f"THR={threshold:.3f}"
+        )
+
+        # ─────────────────────────────────────────────────────
+        # ORB BREAKOUTS
+        # ─────────────────────────────────────────────────────
+        ce_break = (
+            self.orb_done and
+            self.orb_high is not None and
+            price > self.orb_high
+        )
+
+        pe_break = (
+            self.orb_done and
+            self.orb_low is not None and
+            price < self.orb_low
+        )
+
+        # ─────────────────────────────────────────────────────
+        # TELEMETRY — RAW SIGNALS
+        # ─────────────────────────────────────────────────────
+        if ce_break:
+            self.telemetry["ce_raw_signals"] += 1
+            logger.info(
+                f"[RAW CE BREAK] "
+                f"price={price:.2f} "
+                f"orb_high={self.orb_high:.2f}"
+            )
+
+        if pe_break:
+            self.telemetry["pe_raw_signals"] += 1
+            logger.info(
+                f"[RAW PE BREAK] "
+                f"price={price:.2f} "
+                f"orb_low={self.orb_low:.2f}"
+            )
 
         signal = None
 
-        # ── CE check ─────────────────────────────────────────────
+        # ═════════════════════════════════════════════════════
+        # CE CHECK
+        # ═════════════════════════════════════════════════════
         ce_thr = threshold - 0.03 if ce_break else threshold
+
         if ce_adj >= ce_thr:
-            blocked, _ = self.learner.is_side_blocked("CE")
-            if not blocked:
+
+            self.telemetry["ce_ml_pass"] += 1
+
+            blocked, reason_block = self.learner.is_side_blocked("CE")
+
+            if blocked:
+
+                self.telemetry["ce_blocked"] += 1
+
+                logger.info(
+                    f"[BLOCKED] CE blocked: {reason_block}"
+                )
+
+            else:
+
                 atr_val = features.get("atr", price * 0.01)
+
                 day_type = self.learner.get_day_type()
+
                 regime = (
                     "EXPANSION" if "VOLATILE" in day_type else
-                    "TREND"     if "TREND" in day_type else "RANGE"
+                    "TREND"     if "TREND" in day_type else
+                    "RANGE"
                 )
-                stop_loss, target, stop_pct = compute_entry_stops(price, atr_val, regime)
+
+                stop_loss, target, stop_pct = compute_entry_stops(
+                    price,
+                    atr_val,
+                    regime
+                )
+
                 signal = {
                     "side": "CE",
                     "ml_prob": ce_adj,
@@ -336,19 +474,52 @@ class BacktestSignalEngine:
                     "regime": regime,
                 }
 
-        # ── PE check ─────────────────────────────────────────────
+        else:
+
+            logger.info(
+                f"[CE FAIL] "
+                f"ce_adj={ce_adj:.3f} "
+                f"ce_thr={ce_thr:.3f}"
+            )
+
+        # ═════════════════════════════════════════════════════
+        # PE CHECK
+        # ═════════════════════════════════════════════════════
         if signal is None:
+
             pe_thr = threshold - 0.03 if pe_break else threshold
             if pe_adj >= pe_thr:
-                blocked, _ = self.learner.is_side_blocked("PE")
-                if not blocked:
+
+                self.telemetry["pe_ml_pass"] += 1
+
+                blocked, reason_block = self.learner.is_side_blocked("PE")
+
+                if blocked:
+
+                    self.telemetry["pe_blocked"] += 1
+
+                    logger.info(
+                        f"[BLOCKED] PE blocked: {reason_block}"
+                    )
+
+                else:
+
                     atr_val = features.get("atr", price * 0.01)
+
                     day_type = self.learner.get_day_type()
+
                     regime = (
                         "EXPANSION" if "VOLATILE" in day_type else
-                        "TREND"     if "TREND" in day_type else "RANGE"
+                        "TREND"     if "TREND" in day_type else
+                        "RANGE"
                     )
-                    stop_loss, target, stop_pct = compute_entry_stops(price, atr_val, regime)
+
+                    stop_loss, target, stop_pct = compute_entry_stops(
+                        price,
+                        atr_val,
+                        regime
+                    )
+
                     signal = {
                         "side": "PE",
                         "ml_prob": pe_adj,
@@ -360,6 +531,28 @@ class BacktestSignalEngine:
                         "regime": regime,
                     }
 
+            else:
+
+                logger.info(
+                    f"[PE FAIL] "
+                    f"pe_adj={pe_adj:.3f} "
+                    f"pe_thr={pe_thr:.3f}"
+                )
+
+        # ─────────────────────────────────────────────────────
+        # FINAL SIGNAL TELEMETRY
+        # ─────────────────────────────────────────────────────
+        if signal is not None:
+
+            self.telemetry["signals_returned"] += 1
+
+        else:
+
+            self.telemetry["signals_none"] += 1
+
+        # IMPORTANT FIX
+        return signal
+    
     # ── Exit check ────────────────────────────────────────────────────
 
     def check_exit(self, position: dict, ltp: float, held_seconds: float) -> tuple[bool, str]:
@@ -519,6 +712,65 @@ class BacktestEngine:
 
         metrics = self._compute_metrics(total_pnl, equity, max_drawdown)
         logger.info("[BACKTEST] Complete")
+        # ═══════════════════════════════════════════════════════
+        # FINAL TELEMETRY SUMMARY
+        # ═══════════════════════════════════════════════════════
+
+        t = self.signal_engine.telemetry
+
+        print("\n===== TELEMETRY =====")
+
+        print(f"CE Raw Signals:              {t['ce_raw_signals']}")
+        print(f"PE Raw Signals:              {t['pe_raw_signals']}")
+
+        print(f"CE ML Pass:                  {t['ce_ml_pass']}")
+        print(f"PE ML Pass:                  {t['pe_ml_pass']}")
+
+        print(f"CE Blocked:                  {t['ce_blocked']}")
+        print(f"PE Blocked:                  {t['pe_blocked']}")
+
+        print(f"CE Executed:                 {t['ce_executed']}")
+        print(f"PE Executed:                 {t['pe_executed']}")
+
+        print(f"Signals Returned:            {t['signals_returned']}")
+        print(f"Signals None:                {t['signals_none']}")
+
+        print(f"Trend Candles:               {t['trend_candles']}")
+        print(f"Range Candles:               {t['range_candles']}")
+        print(f"Volatile Candles:            {t['volatile_candles']}")
+        print(f"Unknown Candles:             {t['unknown_candles']}")
+
+        # ═══════════════════════════════════════════════════════
+        # DERIVED DIAGNOSTICS
+        # ═══════════════════════════════════════════════════════
+
+        try:
+
+            ce_conversion = (
+                t["ce_executed"] / max(t["ce_raw_signals"], 1)
+            ) * 100
+
+            pe_conversion = (
+                t["pe_executed"] / max(t["pe_raw_signals"], 1)
+            ) * 100
+
+            print("\n===== CONVERSION RATES =====")
+
+            print(f"CE Conversion Rate:          {ce_conversion:.2f}%")
+            print(f"PE Conversion Rate:          {pe_conversion:.2f}%")
+            ce_ml_conversion = (
+                t["ce_executed"] / max(t["ce_ml_pass"], 1)
+            ) * 100
+
+            pe_ml_conversion = (
+                t["pe_executed"] / max(t["pe_ml_pass"], 1)
+            ) * 100
+
+            print(f"CE ML Conversion Rate:       {ce_ml_conversion:.2f}%")
+            print(f"PE ML Conversion Rate:       {pe_ml_conversion:.2f}%")
+        except Exception as e:
+
+            print(f"[Telemetry Error] {e}")
         return metrics
 
     # ── Single day simulation ─────────────────────────────────────────
@@ -555,8 +807,6 @@ class BacktestEngine:
 
         for i in range(len(day_df)):
             row = day_df.iloc[i]
-            if i % 50000 == 0:
-                print(f"[PROGRESS] {i}/{len(day_df)}")
             ts  = row["date"]
             now = ts.time()
 
@@ -641,7 +891,7 @@ class BacktestEngine:
                 signal = self.signal_engine.step(window_df, ts)
 
                 if signal is not None:
-
+                    logger.info(f"[SIGNAL] {signal}")       
                     side = signal["side"]
                     features = signal.get("features", {})
 
@@ -649,12 +899,23 @@ class BacktestEngine:
                     ema20 = features.get("ema20")
                     ema50 = features.get("ema50")
 
-                    if ema20 < ema50 and side == "CE":
-                        continue
+                    # ── Soft trend alignment filter ─────────────────────────
 
-                    if ema20 > ema50 and side == "PE":
-                        continue
+                    trend_penalty = 0.0
 
+                    # CE against trend
+                    if side == "CE" and ema20 < ema50:
+                        trend_penalty = 0.04
+
+                    # PE against trend
+                    elif side == "PE" and ema20 > ema50:
+                        trend_penalty = 0.04
+
+                    # Soft trend adjustment only
+                    signal["ml_prob"] = max(
+                        signal["ml_prob"] - trend_penalty,
+                        0.0
+                    )
                     # Entry price: next candle open or current close
                     if entry_on == "next_open" and i < len(day_df) - 1:
                         next_row = day_df.iloc[i + 1]
@@ -696,6 +957,20 @@ class BacktestEngine:
                     }
                     entry_time    = ts
                     trades_today += 1
+                    # ═══════════════════════════════════════════════════════
+                    # TELEMETRY — EXECUTED TRADES
+                    # ═══════════════════════════════════════════════════════
+                    if side == "CE":
+                        self.signal_engine.telemetry["ce_executed"] += 1
+                    else:
+                        self.signal_engine.telemetry["pe_executed"] += 1
+
+                    logger.info(
+                        f"[EXECUTED] "
+                        f"side={side} "
+                        f"entry={entry_price:.2f} "
+                        f"ml_prob={signal['ml_prob']:.3f}"
+                    )
 
         # ── End of day force-close ────────────────────────────────────
         if position is not None:

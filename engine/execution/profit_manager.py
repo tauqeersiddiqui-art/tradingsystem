@@ -1,77 +1,48 @@
-# execution/profit_manager.py
+# engine/execution/profit_manager.py
 
-def manage_position(
-    entry_price,
-    ltp,
-    lot_size,
-    stop_loss,
-    max_pnl,
-    ml_prob
-):
-    """
-    Returns:
-        updated_stop_loss,
-        updated_max_pnl,
-        exit_reason (None or string)
-    """
+def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob):
 
-    pnl = (ltp - entry_price) * lot_size
+    pnl     = (ltp - entry_price) * lot_size
     max_pnl = max(max_pnl, pnl)
+    reason  = None
 
-    reason = None
-
-    # =========================================
-    # 1️⃣ Break-even once trade shows strength
-    # =========================================
-    if max_pnl >= 100:
+    # 1️⃣ Break-even at ₹150 (raised from ₹100 — give more room early)
+    if max_pnl >= 150:
         stop_loss = max(stop_loss, entry_price)
 
-    # =========================================
-    # 2️⃣ Hard Minimum ₹120 Lock (Capital Protection)
-    # =========================================
-    if max_pnl >= 150:
-        min_points = 120 / lot_size
-        stop_loss = max(stop_loss, entry_price + min_points)
-
-    # =========================================
-    # 3️⃣ Ladder Profit Lock System
-    # =========================================
+    # 2️⃣ Lock ₹200 minimum once ₹300 reached (raised from ₹120 lock at ₹150)
     if max_pnl >= 300:
-        stop_loss = max(stop_loss, entry_price + 3)
+        min_points = 200 / lot_size
+        stop_loss  = max(stop_loss, entry_price + min_points)
 
-    if max_pnl >= 600:
-        stop_loss = max(stop_loss, entry_price + 6)
+    # 3️⃣ Ladder locks — tighter steps
+    if max_pnl >= 500:
+        stop_loss = max(stop_loss, entry_price + 5)
 
-    # =========================================
-    # 4️⃣ Ultra Profit Lock (92% of Max Profit)
-    # =========================================
-    # Balanced Professional Mode
-    if max_pnl >= 1000:
+    if max_pnl >= 900:
+        stop_loss = max(stop_loss, entry_price + 9)
 
-        lock_percent = 0.92   # Change to 0.95 for aggressive lock
+    # 4️⃣ Ultra Profit Lock — only above ₹1500 (was ₹1000, too early)
+    if max_pnl >= 1500:
+        lock_percent     = 0.90
         allowed_drawdown = max_pnl * (1 - lock_percent)
-
         if pnl <= max_pnl - allowed_drawdown:
             reason = "MaxProfitTrail"
 
-    # =========================================
-    # 5️⃣ AI Dynamic Runner (Confidence Based)
-    # =========================================
-    if max_pnl >= 300:
-
+    # 5️⃣ Drawdown exit — confidence-based runner
+    #    Threshold raised to max_pnl >= 400 (was 300) — let it breathe longer
+    if max_pnl >= 400:
         if ml_prob < 0.35:
-            retention = 0.65
+            retention = 0.70    # was 0.65
         elif ml_prob < 0.50:
-            retention = 0.75
+            retention = 0.80    # was 0.75
         else:
-            retention = 0.85
+            retention = 0.88    # was 0.85
 
         if pnl <= max_pnl * retention:
             reason = "Drawdown"
 
-    # =========================================
-    # 6️⃣ Final Hard Stop Loss
-    # =========================================
+    # 6️⃣ Hard stop
     if ltp <= stop_loss:
         reason = "Stop Loss"
 

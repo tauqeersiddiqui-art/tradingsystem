@@ -39,6 +39,15 @@ NIFTY_LOT_SIZE = 75          # standard lot size for simulation
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
 
 
+def _mins_to_close(ts) -> float:
+    """Minutes from ts until market close (≥1)."""
+    return max(
+        (_MARKET_CLOSE.hour * 60 + _MARKET_CLOSE.minute) -
+        (ts.hour * 60 + ts.minute),
+        1,
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════
 # DATA CLASSES
 # ══════════════════════════════════════════════════════════════════════
@@ -96,6 +105,7 @@ class OptionPriceSimulator:
     def __init__(self, base_premium: float = 150.0, atm_vol: float = 0.12):
         self.base_premium = base_premium
         self.atm_vol      = atm_vol
+        self.atm_delta    = 0.5   # long ATM option ≈ 0.5 delta BOTH directions
 
     def price(
         self,
@@ -116,6 +126,28 @@ class OptionPriceSimulator:
 
         return round(max(intrinsic + time_val, 5.0), 2)
 
+    def premium(
+        self,
+        entry_spot:    float,
+        cur_spot:      float,
+        side:          str,
+        mins_to_close: float,
+    ) -> float:
+        """
+        Directional option premium for a LONG CE/PE, relative to entry spot.
+
+        premium = time_value + delta * favorable_move
+          - CE favorable when spot RISES, PE favorable when spot FALLS.
+          - time_value decays as mins_to_close shrinks (theta).
+        This is the SAME quantity live reads as the option LTP, so backtest
+        stops / profit_manager / PnL all operate in premium space exactly
+        like live — and it is side-correct (PE profits on down-moves).
+        """
+        T = max(mins_to_close / (375 * 252), 1e-6)
+        time_val  = self.base_premium * (T ** 0.5) * self.atm_vol * 100
+        favorable = (cur_spot - entry_spot) if side == "CE" else (entry_spot - cur_spot)
+        return round(max(time_val + self.atm_delta * favorable, 1.0), 2)
+
     def pnl(
         self,
         entry_spot:  float,
@@ -126,8 +158,10 @@ class OptionPriceSimulator:
         entry_mins_to_close: float,
         exit_mins_to_close:  float,
     ) -> float:
-        ep = self.price(entry_spot, atm_strike, side, entry_mins_to_close)
-        xp = self.price(exit_spot,  atm_strike, side, exit_mins_to_close)
+        # Premium-space PnL: side-correct (PE gains on down-moves) and
+        # symmetric (adverse and favorable moves weighted equally).
+        ep = self.premium(entry_spot, entry_spot, side, entry_mins_to_close)
+        xp = self.premium(entry_spot, exit_spot,  side, exit_mins_to_close)
         return round((xp - ep) * qty, 2)
 
 
@@ -214,6 +248,7 @@ class BacktestSignalEngine:
         self._day_candles_30m = []
         self._prev_close     = prev_close
         self._open_price_set = False
+        self._clf_day_type   = None   # trained DayClassifier verdict (TREND/RANGE/VOLATILE)
         self.learner.reset_day()
 
     # ── ORB ───────────────────────────────────────────────────────────
@@ -247,7 +282,7 @@ class BacktestSignalEngine:
             self._day_classified = True
             if self._day_clf and len(self._day_candles_30m) >= 10:
                 df30 = pd.DataFrame(self._day_candles_30m)
-                self._day_clf.classify(df30, self._prev_close)
+                self._clf_day_type = self._day_clf.classify(df30, self._prev_close)
 
     # ── Feature builder ───────────────────────────────────────────────
 
@@ -429,7 +464,11 @@ class BacktestSignalEngine:
         # ═════════════════════════════════════════════════════
         # CE CHECK
         # ═════════════════════════════════════════════════════
-        ce_thr = threshold - 0.03 if ce_break else threshold
+        # ORB only RELAXES the bar on trend-qualified days. On RANGE/VOLATILE
+        # days a breakout earns NO discount (it must clear the full ML bar),
+        # because early-session breakouts on those days are mostly fake.
+        orb_ok   = (self._clf_day_type == "TREND")
+        ce_thr   = threshold - 0.03 if (ce_break and orb_ok) else threshold
 
         if ce_adj >= ce_thr:
 
@@ -487,7 +526,7 @@ class BacktestSignalEngine:
         # ═════════════════════════════════════════════════════
         if signal is None:
 
-            pe_thr = threshold - 0.03 if pe_break else threshold
+            pe_thr = threshold - 0.03 if (pe_break and orb_ok) else threshold
             if pe_adj >= pe_thr:
 
                 self.telemetry["pe_ml_pass"] += 1
@@ -817,10 +856,9 @@ class BacktestEngine:
 
             # Force exit at 15:15
             if now >= dtime(15, 15) and position is not None:
-                ltp = row["close"]
-                exit_price, exit_reason = ltp - 0.5, "TIME_CLOSE"
+                exit_spot, exit_reason = row["close"] - 0.5, "TIME_CLOSE"
                 trade = self._close_position(
-                    position, exit_price, ts, exit_reason, trades_today, day_pnl
+                    position, exit_spot, ts, exit_reason, trades_today, day_pnl
                 )
                 trades.append(trade)
                 day_pnl  += trade.pnl
@@ -842,21 +880,30 @@ class BacktestEngine:
 
             # ── Position management ───────────────────────────────────
             if position is not None:
-                ltp          = row["close"]
+                cur_spot     = row["close"]
+                # Option premium LTP at this candle (side-correct, premium space)
+                ltp          = _opt_sim.premium(
+                    position["entry_spot"], cur_spot,
+                    position["side"], _mins_to_close(ts)
+                )
                 held_seconds = (ts - entry_time).total_seconds()
 
                 exit_flag, exit_reason = self.signal_engine.check_exit(
                     position, ltp, held_seconds
                 )
 
-                # Hard SL belt+suspenders
+                # Hard SL belt+suspenders (premium space, side-agnostic)
                 if ltp <= position.get("stop_loss", position["entry"] * 0.90):
                     exit_flag, exit_reason = True, "STOP"
 
                 if exit_flag:
-                    exit_price = (row["open"] if entry_on == "next_open" else ltp) - 0.5
+                    # Realistic fill: exit at the close that TRIGGERED the exit
+                    # (decided on this candle's close), minus slippage. Filling at
+                    # this candle's OPEN would be a look-back and made STOPs show
+                    # fake profits.
+                    exit_spot = cur_spot - 0.5
                     trade = self._close_position(
-                        position, exit_price, ts, exit_reason,
+                        position, exit_spot, ts, exit_reason,
                         trades_today, day_pnl
                     )
                     trades.append(trade)
@@ -899,17 +946,29 @@ class BacktestEngine:
                     ema20 = features.get("ema20")
                     ema50 = features.get("ema50")
 
-                    # ── Soft trend alignment filter ─────────────────────────
-
+                    # ── Trend alignment filter ──────────────────────────────
+                    # Mild misalignment → soft probability penalty (keep trading).
+                    # STRONG counter-trend (EMA gap > 0.15% of price) → skip the
+                    # entry entirely. This is where the big CE losses on downtrend
+                    # days come from. ORB breakouts are exempt (fighting EMA is
+                    # their job).
                     trend_penalty = 0.0
+                    counter_trend = False
+                    ema_gap_pct   = abs(ema20 - ema50) / max(float(row["close"]), 1)
 
                     # CE against trend
                     if side == "CE" and ema20 < ema50:
                         trend_penalty = 0.04
+                        counter_trend = ema_gap_pct > 0.0015
 
                     # PE against trend
                     elif side == "PE" and ema20 > ema50:
                         trend_penalty = 0.04
+                        counter_trend = ema_gap_pct > 0.0015
+
+                    if counter_trend and not signal.get("reason", "").startswith("ORB"):
+                        # Pure-ML entry fighting a strong trend — skip it.
+                        continue
 
                     # Soft trend adjustment only
                     signal["ml_prob"] = max(
@@ -923,23 +982,35 @@ class BacktestEngine:
                     else:
                         entry_price = float(row["close"]) + 0.5
 
-                    stop_loss = signal.get("stop_loss", entry_price * 0.90)
-                    target    = signal.get("target",    entry_price * 1.05)
+                    # Entry SPOT: next candle open or current close
+                    if entry_on == "next_open" and i < len(day_df) - 1:
+                        next_row = day_df.iloc[i + 1]
+                        entry_spot = float(next_row["open"]) + 0.5
+                    else:
+                        entry_spot = float(row["close"]) + 0.5
 
                     # ATM strike proxy
-                    atm_strike = round(entry_price / 50) * 50
+                    atm_strike = round(entry_spot / 50) * 50
 
-                    # FIX: define mins_to_close
-                    mins_to_close = max(
-                        (_MARKET_CLOSE.hour * 60 + _MARKET_CLOSE.minute) -
-                        (ts.hour * 60 + ts.minute),
-                        1
+                    # mins to close at entry
+                    mins_to_close = _mins_to_close(ts)
+
+                    # Entry option PREMIUM — what live reads as the fill LTP.
+                    # Everything downstream (stops, profit_manager, PnL) is now
+                    # in PREMIUM space, side-agnostic and aligned with live.
+                    entry_premium = _opt_sim.premium(entry_spot, entry_spot, side, mins_to_close)
+
+                    atr_val = features.get("atr", entry_spot * 0.01)
+                    regime  = signal.get("regime", "UNKNOWN")
+                    stop_loss, target, _stop_pct = compute_entry_stops(
+                        entry_premium, atr_val, regime
                     )
 
                     position = {
                         "symbol":      f"NIFTY_{side}_{atm_strike}",
                         "side":        side,
-                        "entry":       entry_price,
+                        "entry":       entry_premium,
+                        "entry_spot":  entry_spot,
                         "qty":         qty,
                         "lot_size":    lot_size,
                         "stop_loss":   stop_loss,
@@ -947,7 +1018,7 @@ class BacktestEngine:
                         "max_pnl":     0.0,
                         "ml_prob":     signal["ml_prob"],
                         "features":    features,
-                        "regime":      signal.get("regime", "UNKNOWN"),
+                        "regime":      regime,
                         "reason":      signal.get("reason", ""),
                         "atm_strike":  atm_strike,
                         "entry_mins_to_close": mins_to_close,
@@ -968,15 +1039,15 @@ class BacktestEngine:
                     logger.info(
                         f"[EXECUTED] "
                         f"side={side} "
-                        f"entry={entry_price:.2f} "
+                        f"entry_premium={entry_premium:.2f} "
                         f"ml_prob={signal['ml_prob']:.3f}"
                     )
 
         # ── End of day force-close ────────────────────────────────────
         if position is not None:
-            ltp        = day_df["close"].iloc[-1]
+            exit_spot = day_df["close"].iloc[-1] - 0.5
             trade = self._close_position(
-                position, ltp - 0.5, day_df["date"].iloc[-1],
+                position, exit_spot, day_df["date"].iloc[-1],
                 "DAY_END", trades_today, day_pnl
             )
             trades.append(trade)
@@ -998,7 +1069,7 @@ class BacktestEngine:
     def _close_position(
         self,
         position:    dict,
-        exit_price:  float,
+        exit_spot:   float,
         exit_time:   datetime,
         exit_reason: str,
         trades_today: int,
@@ -1006,27 +1077,17 @@ class BacktestEngine:
     ) -> Trade:
 
         self._trade_id += 1
-        entry     = position["entry"]
+        entry_premium = position["entry"]                 # premium at entry
+        entry_spot    = position.get("entry_spot", entry_premium)
         side      = position["side"]
         qty       = position["qty"]
         lot_size  = position["lot_size"]
 
-        # Raw points PnL
-        # CE: profit if price rises; PE: profit if price falls
-        exit_mins_to_close = max(
-            (_MARKET_CLOSE.hour * 60 + _MARKET_CLOSE.minute) -
-            (exit_time.hour * 60 + exit_time.minute), 1
-        )
-
-        pnl = _opt_sim.pnl(
-            entry_spot=entry,
-            exit_spot=exit_price,
-            atm_strike=position["atm_strike"],
-            side=side,
-            qty=qty,
-            entry_mins_to_close=position["entry_mins_to_close"],
-            exit_mins_to_close=exit_mins_to_close,
-        )
+        # Exit option PREMIUM from the exit spot (side-correct), then PnL is the
+        # premium change × qty — exactly what live realises.
+        exit_mins_to_close = _mins_to_close(exit_time)
+        exit_premium = _opt_sim.premium(entry_spot, exit_spot, side, exit_mins_to_close)
+        pnl = round((exit_premium - entry_premium) * qty, 2)
 
         held_secs = (exit_time - position["_entry_ts"]).total_seconds()
 
@@ -1036,8 +1097,8 @@ class BacktestEngine:
             entry_time    = position["_entry_ts"],   # actual entry_time stored in caller
             exit_time     = exit_time,
             side          = side,
-            entry_price   = entry,
-            exit_price    = exit_price,
+            entry_price   = entry_premium,
+            exit_price    = exit_premium,
             qty           = qty,
             lot_size      = lot_size,
             pnl           = pnl,
@@ -1050,8 +1111,8 @@ class BacktestEngine:
             held_candles  = int(held_secs // 60),
             held_seconds  = held_secs,
             max_pnl       = position.get("max_pnl", 0.0),
-            stop_loss     = position.get("stop_loss", entry * 0.90),
-            target        = position.get("target", entry * 1.05),
+            stop_loss     = position.get("stop_loss", entry_premium * 0.90),
+            target        = position.get("target", entry_premium * 1.05),
             features      = position.get("features", {}),
         )
 

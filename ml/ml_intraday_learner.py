@@ -133,7 +133,6 @@ class IntradayMLLearner:
         open_p = self.open_price
         last   = closes[-1]
         rng    = self.first_30min_high - self.first_30min_low
-        avg    = sum(closes) / len(closes)
 
         # Gap detection: if open is >0.5% away from yesterday close
         # (approximate — we check if open vs first close is large)
@@ -182,23 +181,28 @@ class IntradayMLLearner:
         Returns today's adaptive ML threshold.
         Starts at base (0.25). Rises with losses. Falls with wins.
         Day type also adjusts:
-          VOLATILE_DAY: +0.10 (market unpredictable — be very selective)
-          GAP_DAY:      +0.05 (wait for gap fill first)
-          RANGE_DAY:    +0.08 (reversals are tricky)
+          VOLATILE_DAY: +0.04 (market unpredictable — be very selective)
+          GAP_DAY:      +0.02 (wait for gap fill first)
+          RANGE_DAY:    +0.03 (reversals are tricky)
           TREND_DAY:    +0.00 (follow the trend — base threshold is fine)
         """
         base = self.current_threshold
         day_adj = {
-            DAY_VOLATILE: 0.10,
-            DAY_GAP:      0.05,
-            DAY_RANGE:    0.08,
-            DAY_TREND:    0.00,
-            DAY_UNKNOWN:  0.05,
-        }.get(self.day_type, 0.05)
-        return min(base + day_adj, 0.60)
+            DAY_VOLATILE: 0.04,
+            DAY_GAP:      0.02,
+            DAY_RANGE:    0.03,
+            DAY_TREND:   -0.01,
+            DAY_UNKNOWN:  0.02,
+        }.get(self.day_type, 0.02)
+
+        adaptive_threshold = base + day_adj
+
+        # Keep thresholds realistic for intraday ML
+        adaptive_threshold = max(0.45, min(adaptive_threshold, 0.56))
+
+        return round(adaptive_threshold, 3)
 
     def get_adjusted_ml_prob(self, raw_ce: float, raw_pe: float,
-                              direction: str) -> tuple:
         """
         Apply today's learned multipliers to raw ML probabilities.
         Returns (adjusted_ce, adjusted_pe).
@@ -246,13 +250,13 @@ class IntradayMLLearner:
 
             # Boost winning side's multiplier
             if side == "CE":
-                self.ce_multiplier = min(self.ce_multiplier + 0.05, 1.30)
+                self.ce_multiplier = min(self.ce_multiplier + 0.03, 1.15)
             else:
-                self.pe_multiplier = min(self.pe_multiplier + 0.05, 1.30)
+                self.pe_multiplier = min(self.pe_multiplier + 0.04, 1.15)
 
             # Lower threshold (ML is working today)
             self.current_threshold = max(
-                self.current_threshold - 0.03, self.base_threshold)
+                self.current_threshold - 0.01, self.base_threshold)
 
         else:
             self.consecutive_losses += 1
@@ -261,14 +265,14 @@ class IntradayMLLearner:
 
             # Reduce losing side's multiplier
             if side == "CE":
-                self.ce_multiplier = max(self.ce_multiplier - 0.10, 0.50)
+                self.ce_multiplier = max(self.ce_multiplier - 0.05, 0.75)
             else:
-                self.pe_multiplier = max(self.pe_multiplier - 0.10, 0.50)
+                self.pe_multiplier = max(self.pe_multiplier - 0.05, 0.75)
 
             # Raise threshold (ML was wrong — need higher confidence)
             # Cap at 0.60 to keep system usable
             self.current_threshold = min(
-                self.current_threshold + 0.05, 0.60)
+                self.current_threshold + 0.02, 0.56)
 
             # After 2+ consecutive losses, request AI review
             if self.consecutive_losses >= 2:
@@ -300,9 +304,9 @@ class IntradayMLLearner:
         Returns (blocked: bool, reason: str).
         Block a side if it's been consistently losing today.
         """
-        if side == "CE" and self.ce_losses >= 2 and self.ce_wins == 0:
+        if side == "CE" and self.ce_losses >= 4 and self.ce_wins == 0:
             return True, f"CE_LOSING_TODAY_{self.ce_losses}L_0W"
-        if side == "PE" and self.pe_losses >= 2 and self.pe_wins == 0:
+        if side == "PE" and self.pe_losses >= 4 and self.pe_wins == 0:
             return True, f"PE_LOSING_TODAY_{self.pe_losses}L_0W"
 
         # Also block if consecutive losses >= 3
@@ -338,7 +342,7 @@ class IntradayMLLearner:
 
         # ── Range day: allow price to oscillate, exit only at 120s+ ──
         if self.day_type == DAY_RANGE:
-            if held_seconds > 120 and move <= -6:   # was 90s + -5pts; now 120s + wider tolerance
+            if held_seconds > 180 and move <= -8:   # was 90s + -5pts; now 120s + wider tolerance
                 return True, "RANGE_DAY_FAST_EXIT"
 
         # ── Trend day: give room — only exit on sustained adverse + ML disagreement ──
@@ -347,7 +351,7 @@ class IntradayMLLearner:
                 return True, "TREND_DAY_ML_DISAGREES"
 
         # ── ML edge collapse: only after 90s (was 30s) — market noise not edge failure ──
-        if held_seconds > 90 and ml_edge < 0.05 and move < -4:
+        if held_seconds > 150 and ml_edge < 0.03 and move < -6:
             return True, "ML_EDGE_COLLAPSED"
 
         # ── ML unreliable today: only after 120s (was 20s) ──
@@ -459,9 +463,9 @@ NEXT_BIAS: CE/PE/WAIT
                 if line.startswith("NEXT_BIAS:"):
                     bias = line.split(":", 1)[1].strip().upper()
                     if bias == "CE":
-                        learner.pe_multiplier = max(learner.pe_multiplier - 0.15, 0.40)
+                        learner.pe_multiplier = max(learner.pe_multiplier - 0.05, 0.75)
                     elif bias == "PE":
-                        learner.ce_multiplier = max(learner.ce_multiplier - 0.15, 0.40)
+                        learner.ce_multiplier = max(learner.ce_multiplier - 0.05, 0.75)
                     # WAIT → both multipliers reduced
 
             logger.info(f"AI Brain review: {ai_text[:100]}")

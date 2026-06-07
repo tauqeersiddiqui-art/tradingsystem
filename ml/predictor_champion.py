@@ -2,13 +2,14 @@
 
 import os
 import warnings
+import logging
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 warnings.filterwarnings("ignore")
-
+logger = logging.getLogger("predictor_champion")
 from ml.feature_config import FEATURE_COLUMNS
 
 
@@ -73,13 +74,10 @@ class ChampionPredictor:
         self.ce_features = self._model_features(self.ce_model, "CE")
         self.pe_features = self._model_features(self.pe_model, "PE")
 
-        print(f"[ChampionPredictor] Loaded: LGBM | "
+        logger.info(f"[ChampionPredictor] Loaded: LGBM | "
               f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
               f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}")
 
-        # 🔥 DEBUG (VERY IMPORTANT)
-        print(f"[FEATURES CE] {self.ce_features}")
-        print(f"[FEATURES PE] {self.pe_features}")
 
     # ───────────────────────────────────────── #
 
@@ -87,7 +85,7 @@ class ChampionPredictor:
         t_path = os.path.join(os.path.dirname(model_path), f"{name}_threshold.txt")
         try:
             val = float(open(t_path).read().strip())
-            print(f"[Predictor] {name} threshold={val}")
+            logger.info(f"[Predictor] {name} threshold={val}")
             return val
         except Exception:
             return default
@@ -124,7 +122,7 @@ class ChampionPredictor:
                     fn = base.feature_name_
                     return list(fn() if callable(fn) else fn)
 
-        print(f"[PREDICTOR WARNING] {label}: fallback to FEATURE_COLUMNS")
+        logger.warning(f"[PREDICTOR WARNING] {label}: fallback to FEATURE_COLUMNS")
         return list(FEATURE_COLUMNS)
 
     # ───────────────────────────────────────── #
@@ -139,13 +137,23 @@ class ChampionPredictor:
         missing = [f for f in req_cols if f not in features_dict]
 
         if missing:
-            print(f"[PREDICTOR WARNING] Missing features ({len(missing)}): {missing[:5]}...")
+            logger.warning(f"[PREDICTOR WARNING] Missing features ({len(missing)}): {missing[:5]}...")
             return None  # 🚨 DO NOT RETURN 0
 
         # ================= BUILD INPUT ================= #
 
         try:
-            row = [float(features_dict[f]) for f in req_cols]
+            row = []
+
+            for f in req_cols:
+
+                val = float(features_dict[f])
+
+                if np.isnan(val) or np.isinf(val):
+                    logger.warning(f"[PREDICTOR WARNING] Invalid feature {f}={val}")
+                    return None
+
+                row.append(val)
             X = pd.DataFrame([row], columns=req_cols)
 
             prob = float(model.predict_proba(X)[0][1])
@@ -153,8 +161,21 @@ class ChampionPredictor:
             # sanity clamp
             prob = max(0.0, min(1.0, prob))
 
-            return prob
+            if prob < 0.01:
+                return 0.0
+
+            return round(prob, 4)
 
         except Exception as e:
-            print(f"[PREDICTOR ERROR] {direction}: {e}")
+            logger.error(f"[PREDICTOR ERROR] {direction}: {e}")
             return None
+
+    def passes_threshold(self, prob: float, direction: str) -> bool:
+
+        threshold = (
+            self.ce_threshold
+            if direction == "CE"
+            else self.pe_threshold
+        )
+
+        return prob >= threshold

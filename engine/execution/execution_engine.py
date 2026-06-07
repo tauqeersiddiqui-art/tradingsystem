@@ -158,12 +158,12 @@ class ExecutionEngine:
     # ══════════════════════════════════════════════════════════════════
 
     def execute_exit(self, symbol: str, qty: int, side: str = "CE") -> dict | None:
-    """
-    Close an open options position.
-    Both CE and PE are exited using SELL because both were opened using BUY.
-    """
+        """
+        Close an open options position.
+        Both CE and PE are exited using SELL because both were opened using BUY.
+        """
 
-        txn_type = self.broker.kite.TRANSACTION_TYPE_SELL   
+        txn_type = self.broker.kite.TRANSACTION_TYPE_SELL
         
         # ── Paper / DRY RUN ───────────────────────────────────────────
         if self.config.DRY_RUN or getattr(self.broker, "is_paper", False):

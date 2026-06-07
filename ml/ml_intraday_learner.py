@@ -203,6 +203,7 @@ class IntradayMLLearner:
         return round(adaptive_threshold, 3)
 
     def get_adjusted_ml_prob(self, raw_ce: float, raw_pe: float,
+                              direction: str) -> tuple:
         """
         Apply today's learned multipliers to raw ML probabilities.
         Returns (adjusted_ce, adjusted_pe).

@@ -257,11 +257,11 @@ class LiveEngine:
             return None   # no new entries after 15:15
 
         # ── Day type gate ─────────────────────────────────────────────
-        if self._day_clf and self._day_classified:
-            if not self._day_clf.should_trade_orb():
-                day = self._day_clf.day_type
-                logger.debug(f"[GATE] Day type={day} — ORB trading blocked")
-                return None
+        # Do NOT hard-block here — that kills pure-ML entries (the main edge).
+        # Instead, only ORB threshold relaxation is gated to TREND days below.
+        orb_ok = bool(
+            self._day_clf and self._day_classified and self._day_clf.should_trade_orb()
+        )
 
         features = self.build_features(df_window)
         if not features:
@@ -303,8 +303,8 @@ class LiveEngine:
         # ── Side selection ────────────────────────────────────────────
         signal = None
 
-        # CE check — ORB relaxes threshold by 0.03
-        ce_thr = threshold - 0.03 if ce_breakout else threshold
+        # CE check — ORB relaxes threshold by 0.03 ONLY on trend-qualified days
+        ce_thr = threshold - 0.03 if (ce_breakout and orb_ok) else threshold
         if ce_adj >= ce_thr:
             blocked, reason_block = self.learner.is_side_blocked("CE")
             if not blocked:
@@ -318,7 +318,7 @@ class LiveEngine:
 
         # PE check (only if CE not triggered — one trade at a time)
         if signal is None:
-            pe_thr = threshold - 0.03 if pe_breakout else threshold
+            pe_thr = threshold - 0.03 if (pe_breakout and orb_ok) else threshold
             if pe_adj >= pe_thr:
                 blocked, reason_block = self.learner.is_side_blocked("PE")
                 if not blocked:
@@ -400,9 +400,11 @@ class LiveEngine:
             return True, pm_reason
 
         # ── Time-based exit (max hold = 300s default) ─────────────────
+        # Match backtest: only time-exit WEAK trades. Let runners breathe so
+        # the trailing/drawdown logic (the main edge) can work.
         max_hold = int(os.getenv("MAX_HOLD_SECONDS", 300))
-        if held_seconds > max_hold:
-            return True, "TIME_EXIT"
+        if held_seconds > max_hold and new_max_pnl < 100:
+            return True, "TIME_EXIT_WEAK"
 
         # ── Learner early exit check ──────────────────────────────────
         ml_edge = ml_prob - 0.5   # simple edge proxy

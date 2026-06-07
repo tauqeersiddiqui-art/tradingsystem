@@ -48,6 +48,7 @@ from engine.core.health_monitor import update_health, snapshot
 from engine.live_engine import LiveEngine
 from engine.portfolio.allocator import CapitalAllocator
 from engine.execution.filters import has_oi_wall
+from engine.risk.risk_manager import compute_entry_stops
 
 from ml.ml_intraday_learner import IntradayMLLearner
 
@@ -398,7 +399,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 if order and order.get("price", 0) > 0:
 
-                    stop_loss = decision.get("stop_loss", order["price"] * 0.90)
+                    # Premium-space stops computed from the ACTUAL fill premium.
+                    # (The signal's spot-based stop is unusable here: position
+                    #  entry/LTP are option premiums, not spot — mixing them
+                    #  made every trade instant-stop.)
+                    fill_premium = order["price"]
+                    atr_val = decision.get("features", {}).get("atr", 1.0)
+                    regime  = decision.get("regime", "UNKNOWN")
+                    stop_loss, target, _stop_pct = compute_entry_stops(
+                        fill_premium, atr_val, regime
+                    )
 
                     position = {
                         "symbol":   symbol,
@@ -407,7 +417,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "lot_size": lot_size,
                         "entry":    order["price"],
                         "stop_loss": stop_loss,
-                        "target":   decision.get("target", order["price"] * 1.05),
+                        "target":   target,
                         "max_pnl":  0.0,
                         "ml_prob":  decision.get("ml_prob", 0.0),
                         "features": decision.get("features", {}),

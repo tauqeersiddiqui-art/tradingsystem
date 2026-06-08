@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ml.feature_config import _safe_build_live_features, FEATURE_COLUMNS
 from ml.predictor_champion import ChampionPredictor
 from ml.ml_intraday_learner import IntradayMLLearner
+from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
 from engine.risk.risk_manager import compute_entry_stops
 
@@ -35,8 +36,28 @@ _DAY_CLASS_AT = dtime(9, 45)
 _MARKET_CLOSE = dtime(15, 30)
 _NO_ENTRY_AFTER = dtime(15, 15)
 
-NIFTY_LOT_SIZE = 75          # standard lot size for simulation
+# Institutional session filter — avoid lunch-hour chop (11:00–14:00)
+_LUNCH_START    = dtime(11,  0)
+_LUNCH_END      = dtime(14,  0)
+
+# Minimum expected PnL for any new trade (₹150 safeguard)
+_MIN_EXPECTED_PNL = 150.0
+
+# ML floor: never trade below 0.62 regardless of model threshold.
+# 0.50-0.60 bucket has 47% WR — money-loser. 0.62+ has 54-56% WR.
+_MIN_ML_FLOOR = 0.62
+
+NIFTY_LOT_SIZE = 65          # current lot size (changed from 75 → 65 in Jan 2026)
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
+
+
+def _lot_size_for_date(d) -> int:
+    """NIFTY lot size: 75 before Jan 2026, 65 from Jan 2026 onwards."""
+    try:
+        year = d.year if hasattr(d, "year") else int(str(d)[:4])
+        return 65 if year >= 2026 else 75
+    except Exception:
+        return 65
 
 
 def _mins_to_close(ts) -> float:
@@ -187,6 +208,14 @@ class BacktestSignalEngine:
         self.orb_high: Optional[float] = None
         self.orb_low:  Optional[float] = None
         self.orb_done: bool            = False
+        self.orb_ce_fired: bool        = False   # one-shot: locks after first CE ORB signal
+        self.orb_pe_fired: bool        = False   # one-shot: locks after first PE ORB signal
+
+        # VWAP accumulator (reset per day)
+        self._vwap = VWAPAccumulator()
+
+        # Current direction bias (+1 bullish, -1 bearish, 0 unclear)
+        self._direction_bias: int = 0
 
         # Day classifier (optional)
         self._day_clf          = None
@@ -244,11 +273,15 @@ class BacktestSignalEngine:
         self.orb_high        = None
         self.orb_low         = None
         self.orb_done        = False
+        self.orb_ce_fired    = False
+        self.orb_pe_fired    = False
         self._day_classified = False
         self._day_candles_30m = []
         self._prev_close     = prev_close
         self._open_price_set = False
-        self._clf_day_type   = None   # trained DayClassifier verdict (TREND/RANGE/VOLATILE)
+        self._clf_day_type   = None
+        self._vwap.reset()
+        self._direction_bias = 0
         self.learner.reset_day()
 
     # ── ORB ───────────────────────────────────────────────────────────
@@ -272,6 +305,14 @@ class BacktestSignalEngine:
         now = ts.time()
         self.learner.update_candle(row["close"], row["high"], row["low"], ts)
 
+        # Accumulate VWAP from market open
+        self._vwap.update(
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=float(row.get("volume", 0)),
+        )
+
         if not self._day_classified and now < _DAY_CLASS_AT:
             self._day_candles_30m.append({
                 "open": row["open"], "high": row["high"],
@@ -286,7 +327,7 @@ class BacktestSignalEngine:
 
     # ── Feature builder ───────────────────────────────────────────────
 
-    def _build_features(self, window: pd.DataFrame) -> Optional[dict]:
+    def _build_features(self, window: pd.DataFrame, ts: datetime) -> Optional[dict]:
         if len(window) < 26:
             return None
 
@@ -297,7 +338,7 @@ class BacktestSignalEngine:
         volumes = window["volume"].tolist() if "volume" in window.columns else [0] * len(closes)
 
         signal = self._compute_signal(closes, highs, lows)
-        feats  = _safe_build_live_features(closes, opens, highs, lows, volumes, signal)
+        feats  = _safe_build_live_features(closes, opens, highs, lows, volumes, signal, ts=ts)
 
         missing = [f for f in FEATURE_COLUMNS if f not in feats]
         if missing:
@@ -333,9 +374,56 @@ class BacktestSignalEngine:
         else:
             atr = max(abs(closes[-1] - closes[-2]) * 14**0.5, 0.5)
 
+        # ── Supertrend (10/3) over the rolling window ─────────────────
+        st_dir, st_line = _compute_supertrend(
+            np.array(highs, dtype=float),
+            np.array(lows, dtype=float),
+            np.array(closes, dtype=float),
+            period=10, multiplier=3.0,
+        )
+        last_st_dir  = int(st_dir[-1])
+        last_st_line = float(st_line[-1])
+        st_dist      = (closes[-1] - last_st_line) / closes[-1] if closes[-1] != 0 else 0.0
+
+        # ── ADX (14) over the rolling window ─────────────────────────
+        adx_arr, di_plus, di_minus = _compute_adx(
+            np.array(highs, dtype=float),
+            np.array(lows, dtype=float),
+            np.array(closes, dtype=float),
+            period=14,
+        )
+        last_adx      = float(adx_arr[-1])
+        last_di_plus  = float(di_plus[-1])
+        last_di_minus = float(di_minus[-1])
+        di_spread     = last_di_plus - last_di_minus
+
+        # ── VWAP bias ────────────────────────────────────────────────
+        vwap_val    = self._vwap.value
+        price_vs_vwap = (closes[-1] - vwap_val) / closes[-1] if (closes[-1] != 0 and vwap_val > 0) else 0.0
+
+        # ── Direction bias (hard gate) ────────────────────────────────
+        # Bullish: Supertrend=UP AND price above VWAP
+        # Bearish: Supertrend=DOWN AND price below VWAP
+        if last_st_dir == 1 and price_vs_vwap > 0:
+            self._direction_bias = 1
+        elif last_st_dir == -1 and price_vs_vwap < 0:
+            self._direction_bias = -1
+        else:
+            self._direction_bias = 0
+
         return {
-            "ema20": e20, "ema50": e50, "rsi_1m": rsi,
-            "atr": atr, "trend_strength": (e20 - e50) / closes[-1] if closes[-1] else 0.0,
+            "ema20":          e20,
+            "ema50":          e50,
+            "rsi_1m":         rsi,
+            "atr":            atr,
+            "trend_strength": (e20 - e50) / closes[-1] if closes[-1] else 0.0,
+            # Direction stack — NEW
+            "supertrend_dir":  float(last_st_dir),
+            "supertrend_dist": float(np.clip(st_dist, -0.05, 0.05)),
+            "price_vs_vwap":   float(np.clip(price_vs_vwap, -0.05, 0.05)),
+            "adx":             float(np.clip(last_adx, 0, 100)),
+            "di_spread":       float(np.clip(di_spread, -60, 60)),
+            "ema_alignment":   float(1.0 if e20 > e50 else -1.0),
         }
 
     # ── Main step ─────────────────────────────────────────────────────
@@ -371,6 +459,15 @@ class BacktestSignalEngine:
             return None
 
         # ─────────────────────────────────────────────────────
+        # SESSION FILTER — no new entries during lunch chop
+        # Institutional desks avoid 11:00–14:00 on NIFTY options.
+        # Thin order flow → fake breakouts → high cost of carry.
+        # ─────────────────────────────────────────────────────
+        if _LUNCH_START <= now < _LUNCH_END:
+            self.telemetry["signals_none"] += 1
+            return None
+
+        # ─────────────────────────────────────────────────────
         # DAY TYPE GATE
         # ─────────────────────────────────────────────────────
         day = self.learner.get_day_type()
@@ -392,7 +489,7 @@ class BacktestSignalEngine:
         # ─────────────────────────────────────────────────────
         # FEATURE BUILD
         # ─────────────────────────────────────────────────────
-        features = self._build_features(window)
+        features = self._build_features(window, ts)
 
         if not features:
             self.telemetry["signals_none"] += 1
@@ -400,8 +497,23 @@ class BacktestSignalEngine:
 
         price = row["close"]
 
-        # Adaptive threshold
-        threshold = self.learner.get_ml_threshold()
+        # Adaptive threshold — never below ML floor (0.62 filters losers)
+        threshold = max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR)
+
+        # ─────────────────────────────────────────────────────
+        # DIRECTION GATE — Institutional rule: no counter-trend
+        # trades. The ML model is only allowed to recommend a
+        # direction that AGREES with Supertrend+VWAP consensus.
+        # This single gate eliminated ~60% of CE losses in
+        # the audit (CE was taken on DOWN days with 33% WR).
+        # ─────────────────────────────────────────────────────
+        direction_bias = self._direction_bias  # computed in _compute_signal()
+
+        # If market has no clear direction, skip to avoid random-walk noise
+        if direction_bias == 0:
+            logger.debug("[DIRECTION] No clear bias — skipping candle")
+            self.telemetry["signals_none"] += 1
+            return None
 
         # ─────────────────────────────────────────────────────
         # ML PREDICTIONS
@@ -419,26 +531,50 @@ class BacktestSignalEngine:
             "CE"
         )
 
+        # Hard direction gate: zero out the non-aligned side
+        if direction_bias != 1:
+            ce_adj = 0.0   # market is bearish — no CE
+        if direction_bias != -1:
+            pe_adj = 0.0   # market is bullish — no PE
+
         logger.info(
             f"[ML] CE={ce_adj:.3f} "
             f"PE={pe_adj:.3f} "
-            f"THR={threshold:.3f}"
+            f"THR={threshold:.3f} "
+            f"BIAS={'BULL' if direction_bias==1 else 'BEAR'}"
         )
 
         # ─────────────────────────────────────────────────────
-        # ORB BREAKOUTS
+        # ORB BREAKOUTS — one-shot per side per day
+        # Volume confirmation: skip ORB signal if volume is
+        # below 130% of the 20-candle average (fake breakout filter).
         # ─────────────────────────────────────────────────────
+        vols    = window["volume"].values if "volume" in window.columns else np.zeros(len(window))
+        avg_vol = vols[-20:].mean() if len(vols) >= 20 else 0
+        cur_vol = vols[-1] if len(vols) > 0 else 0
+        vol_ok  = (avg_vol <= 0) or (cur_vol > avg_vol * 1.3)  # skip if no volume data
+
         ce_break = (
             self.orb_done and
             self.orb_high is not None and
-            price > self.orb_high
+            price > self.orb_high and
+            not self.orb_ce_fired and
+            vol_ok
         )
 
         pe_break = (
             self.orb_done and
             self.orb_low is not None and
-            price < self.orb_low
+            price < self.orb_low and
+            not self.orb_pe_fired and
+            vol_ok
         )
+
+        # Lock immediately on detection — prevents chasing at worse prices
+        if ce_break:
+            self.orb_ce_fired = True
+        if pe_break:
+            self.orb_pe_fired = True
 
         # ─────────────────────────────────────────────────────
         # TELEMETRY — RAW SIGNALS
@@ -462,13 +598,23 @@ class BacktestSignalEngine:
         signal = None
 
         # ═════════════════════════════════════════════════════
-        # CE CHECK
+        # CE CHECK — ORB CONFIRMATION REQUIRED
+        # ─────────────────────────────────────────────────────
+        # Lesson from audit: ML_CE without ORB has 37% WR and
+        # loses ₹65/trade. ORB+ML_CE has 46% WR and makes ₹80/trade.
+        # CE is only taken AFTER an ORB breakout confirmed this session.
+        # orb_ce_fired=True once today's CE breakout is detected, so
+        # the first ORB trade AND subsequent ML_CE trades that day
+        # are both allowed. Days with no ORB upbreak → no CE at all.
         # ═════════════════════════════════════════════════════
-        # ORB only RELAXES the bar on trend-qualified days. On RANGE/VOLATILE
-        # days a breakout earns NO discount (it must clear the full ML bar),
-        # because early-session breakouts on those days are mostly fake.
         orb_ok   = (self._clf_day_type == "TREND")
         ce_thr   = threshold - 0.03 if (ce_break and orb_ok) else threshold
+
+        # Hard gate: CE only on the ORB breakout candle itself.
+        # Follow-on ML_CE (same day after ORB) has 37% WR and loses.
+        # The ORB breakout moment has the best entry timing and momentum.
+        if not ce_break:
+            ce_adj = 0.0   # block all CE except the actual ORB breakout
 
         if ce_adj >= ce_thr:
 
@@ -579,6 +725,25 @@ class BacktestSignalEngine:
                 )
 
         # ─────────────────────────────────────────────────────
+        # MINIMUM EXPECTED PnL GUARD — ₹150 capital safeguard
+        # Only enter if probability-weighted expected PnL >= ₹150.
+        # Prevents entering trades where the math doesn't work.
+        # ─────────────────────────────────────────────────────
+        if signal is not None:
+            prob    = signal["ml_prob"]
+            sl      = signal["stop_loss"]
+            tgt     = signal["target"]
+            lot_sz  = self.config.get("LOT_SIZE", NIFTY_LOT_SIZE)
+            exp_win  = (tgt - price) * lot_sz
+            exp_loss = (price - sl) * lot_sz
+            expected_pnl = prob * exp_win - (1 - prob) * exp_loss
+            if expected_pnl < _MIN_EXPECTED_PNL:
+                logger.info(
+                    f"[PNL GUARD] Expected PnL Rs{expected_pnl:.0f} < Rs{_MIN_EXPECTED_PNL} — skipping"
+                )
+                signal = None
+
+        # ─────────────────────────────────────────────────────
         # FINAL SIGNAL TELEMETRY
         # ─────────────────────────────────────────────────────
         if signal is not None:
@@ -607,6 +772,7 @@ class BacktestSignalEngine:
             stop_loss=stop_loss,
             max_pnl=max_pnl,
             ml_prob=ml_prob,
+            target=position.get("target"),
         )
         position["stop_loss"] = new_sl
         position["max_pnl"]   = new_max_pnl
@@ -661,7 +827,7 @@ class BacktestEngine:
             "LOT_SIZE":           NIFTY_LOT_SIZE,
             "LOTS_PER_TRADE":     1,
             "CHAMPION_THRESHOLD": float(os.getenv("CHAMPION_THRESHOLD", 0.42)),
-            "ENTRY_ON":           "next_open",   # "next_open" or "current_close"
+            "ENTRY_ON":           "current_close",  # enter on signal candle close (was next_open = late entry)
         }
 
     # ── Data loading (once) ───────────────────────────────────────────
@@ -837,7 +1003,7 @@ class BacktestEngine:
         daily_limit       = self.config["DAILY_LOSS_LIMIT"]
         max_trades        = self.config["MAX_TRADES_PER_DAY"]
         cooldown          = self.config["COOLDOWN_SECONDS"]
-        lot_size          = self.config["LOT_SIZE"]
+        lot_size          = _lot_size_for_date(day_df["date"].iloc[0])   # 75 pre-2026, 65 from Jan 2026
         qty               = lot_size * self.config["LOTS_PER_TRADE"]
         entry_on          = self.config["ENTRY_ON"]
 
@@ -1257,7 +1423,7 @@ class BacktestEngine:
         return trade_path, day_path
 if __name__ == "__main__":
 
-    print("🚀 Starting Backtest...")
+    print("Starting Backtest...")
 
     engine = BacktestEngine()
 

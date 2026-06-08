@@ -1,3 +1,10 @@
+supertrend_dir
+supertrend_dist
+price_vs_vwap
+adx
+di_spread
+ema_alignment
+volume_ratio
 ema20
 ema50
 macd

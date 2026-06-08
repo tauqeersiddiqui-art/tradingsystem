@@ -139,7 +139,7 @@ def update_env_token(token):
         f.writelines(lines)
 
 
-    print("✅ .env updated with new access token")
+    print("[OK] .env updated with new access token")
 
 
 # ================= LOGIN =================
@@ -239,4 +239,4 @@ if __name__ == "__main__":
     update_env_token(access_token)
 
 
-    print("✅ Login + Token Sync Complete")
+    print("[OK] Login + Token Sync Complete")

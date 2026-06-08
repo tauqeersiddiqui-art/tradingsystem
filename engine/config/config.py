@@ -20,7 +20,10 @@ class Config:
         self.DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", 0.05))
         self.MAX_HOLD_SECONDS = int(os.getenv("MAX_HOLD_SECONDS", 300))
 
+        # Lot size: NIFTY changed from 75 → 65 from January 2026
+        self.LOT_SIZE = int(os.getenv("LOT_SIZE", 65))
+
         # ML
         self.CHAMPION_THRESHOLD = float(os.getenv("CHAMPION_THRESHOLD", 0.42))
 
-        print(f"[CONFIG] Capital={self.INITIAL_CAPITAL} | DRY_RUN={self.DRY_RUN}")
+        print(f"[CONFIG] Capital={self.INITIAL_CAPITAL} | DRY_RUN={self.DRY_RUN} | LOT_SIZE={self.LOT_SIZE}")

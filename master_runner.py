@@ -25,7 +25,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import time
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
+
+import pandas as pd
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,14 +54,17 @@ from engine.risk.risk_manager import compute_entry_stops
 
 from ml.ml_intraday_learner import IntradayMLLearner
 
-from engine.services.dashboard import render as render_dashboard
+from engine.services.dashboard import render_engine, render_market
 
 from telegram.messages import format_trade_entry, format_trade_exit
 from telegram.notifier import (
     send_trade_entry_with_exit_button,
     send_bot,
     remove_exit_button,
-    poll_manual_exit,
+    poll_commands,
+    ask_trade_permission,
+    send_or_edit_engine_dashboard,
+    send_or_edit_market_dashboard,
     MANUAL_EXIT_REQUESTED,
 )
 
@@ -107,27 +112,116 @@ def tg_force(msg: str):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# BROKER INIT
+# HISTORICAL DATA — fetch from Zerodha + append live candles
 # ══════════════════════════════════════════════════════════════════════
 
-def init_broker():
-    if PAPER_MODE:
-        logger.info("Paper mode — MockBroker")
-        from engine.execution.mock_broker import MockBroker
-        broker = MockBroker()
-        broker.start_feed(["NIFTY"])
-        return broker
+_NIFTY_INDEX_TOKEN = 256265   # NSE:NIFTY 50 instrument token (fixed)
+_csv_write_lock    = threading.Lock()
+_last_appended_ts  = None     # guard against double-append
 
+
+def update_historical_data(broker, csv_path: str, lookback_days: int = 5):
+    """
+    Pull recent NIFTY 1-minute candles from Zerodha historical API and
+    append to the local CSV.  Called at startup and can be called any time.
+    """
+    try:
+        to_dt   = datetime.now()
+        from_dt = to_dt - timedelta(days=lookback_days)
+
+        logger.info(
+            f"[HIST] Fetching NIFTY 1m  {from_dt.date()} -> {to_dt.date()} ..."
+        )
+        raw = broker.kite.historical_data(
+            _NIFTY_INDEX_TOKEN, from_dt, to_dt, "minute", oi=False
+        )
+
+        if not raw:
+            logger.warning("[HIST] Zerodha returned no data — using existing CSV")
+            return
+
+        new_df = pd.DataFrame(raw)
+        # Zerodha timestamps may be tz-aware (Asia/Kolkata) — strip tz
+        col = pd.to_datetime(new_df["date"])
+        if col.dt.tz is not None:
+            col = col.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+        new_df["date"] = col
+        new_df = new_df[["date", "open", "high", "low", "close", "volume"]]
+
+        os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+
+        if os.path.exists(csv_path):
+            existing = pd.read_csv(csv_path)
+            existing["date"] = pd.to_datetime(existing["date"], format="mixed", dayfirst=False)
+            combined = pd.concat([existing, new_df], ignore_index=True)
+        else:
+            combined = new_df
+
+        combined = (
+            combined
+            .sort_values("date")
+            .drop_duplicates("date")
+            .reset_index(drop=True)
+        )
+        with _csv_write_lock:
+            combined.to_csv(csv_path, index=False)
+
+        logger.info(
+            f"[HIST] CSV updated: {len(combined):,} rows  "
+            f"latest={combined['date'].max()}"
+        )
+
+    except Exception as e:
+        logger.error(f"[HIST UPDATE] Failed (non-fatal): {e}")
+
+
+def _append_candle_to_csv(candle: dict, csv_path: str):
+    """Append one completed live candle to the historical CSV (no duplicates)."""
+    global _last_appended_ts
+    ts = candle.get("ts")
+    if ts is None or ts == _last_appended_ts:
+        return
+    _last_appended_ts = ts
+
+    try:
+        row = pd.DataFrame([{
+            "date":   ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            "open":   candle["open"],
+            "high":   candle["high"],
+            "low":    candle["low"],
+            "close":  candle["close"],
+            "volume": candle.get("volume", 0),
+        }])
+        with _csv_write_lock:
+            row.to_csv(csv_path, mode="a", header=False, index=False)
+    except Exception as e:
+        logger.debug(f"[HIST] Candle append failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# BROKER INIT
+# ══════════════════════════════════════════════════════════════════════
+def init_broker():
     from engine.execution.broker import ZerodhaBroker
 
     token = os.getenv("KITE_ACCESS_TOKEN", "").strip()
     if not token:
         raise RuntimeError("KITE_ACCESS_TOKEN missing in .env")
 
+    logger.info("Initializing ZerodhaBroker")
+
     broker = ZerodhaBroker()
-    # Pass NIFTY 50 index + NFO segment for WebSocket
+
+    if hasattr(broker, "has_open_position") and broker.has_open_position():
+        tg_force("🚨 SAFETY ALERT\nOpen position detected — engine blocked.")
+        raise RuntimeError("Open broker position exists.")
+
+    logger.info("Starting market feed")
     broker.start_feed(["NIFTY 50"])
-    time.sleep(3)   # allow WebSocket handshake
+
+    time.sleep(3)
+
+    logger.info("Feed ready")
     return broker
 
 
@@ -179,24 +273,53 @@ def init_candle_builder(broker) -> CandleBuilder:
 
 def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     logger.info("Engine loop started")
-    tg_force("⚡ Engine Loop Started — Monitoring Market...")
+    tg_force("Engine Loop Started — Monitoring Market...")
 
-    position   = None      # current open position dict
-    entry_time = None      # FIX-2: defined at entry, used for held_seconds
-    max_trades = ctx.config.MAX_TRADES_PER_DAY
+    position          = None    # current open position dict
+    entry_time        = None    # FIX-2: defined at entry, used for held_seconds
+    max_trades        = ctx.config.MAX_TRADES_PER_DAY
+    consecutive_stops = 0       # auto-pause trigger
+
+    def _status_cb():
+        import telegram.notifier as _tn
+        paused   = "PAUSED" if _tn.ENGINE_PAUSED else "ACTIVE"
+        stop_req = " | STOP REQUESTED" if _tn.ENGINE_STOP_REQUESTED else ""
+        ltp      = builder.ltp() or 0
+        pos_str  = (f"IN TRADE: {position['symbol']} @ {position['entry']:.1f}"
+                    if position else "NO POSITION")
+        ce_thr   = f"{_tn.CE_THRESHOLD_OVERRIDE:.2f}" if _tn.CE_THRESHOLD_OVERRIDE else "model"
+        pe_thr   = f"{_tn.PE_THRESHOLD_OVERRIDE:.2f}" if _tn.PE_THRESHOLD_OVERRIDE else "model"
+        return (
+            f"<b>Engine: {paused}{stop_req}</b>\n"
+            f"NIFTY LTP: {ltp:.1f}\n"
+            f"{pos_str}\n"
+            f"PnL: {ctx.pnl:.0f} | Trades: {ctx.trades_today}\n"
+            f"CE thr: {ce_thr}  PE thr: {pe_thr}"
+        )
 
     while True:
         try:
             ts  = datetime.now()
             now = ts.time()
 
-            # ── Poll manual exit button (every cycle) ─────────────────
-            # FIX-6: was never called
-            poll_manual_exit()
+            # ── Poll Telegram: buttons + text commands (every cycle) ──
+            poll_commands(status_cb=_status_cb)
+
+            # ── Engine stop requested by user (/stop command) ─────────
+            import telegram.notifier as _tn
+            if _tn.ENGINE_STOP_REQUESTED and position is None:
+                logger.info("[CONTROL] /stop received — engine halted cleanly")
+                tg_force("Engine halted by /stop command.")
+                break
 
             # ── Process latest WebSocket tick into candle buffer ──────
             # FIX-3: replaces CSV read every loop
-            builder.process_tick(ts)
+            new_candle_ready = builder.process_tick(ts)
+
+            # Persist each completed candle to historical CSV so the
+            # dataset grows continuously during the trading session.
+            if new_candle_ready:
+                _append_candle_to_csv(builder.latest_candle(), HIST_CSV)
 
             df_window = builder.get_window(120)
 
@@ -303,6 +426,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     position   = None
                     entry_time = None
 
+                    # Auto-pause after 3 consecutive stop losses
+                    if exit_reason in ("STOP", "Stop Loss", "Drawdown"):
+                        consecutive_stops += 1
+                        if consecutive_stops >= 3:
+                            import telegram.notifier as _tn
+                            _tn.ENGINE_PAUSED = True
+                            tg_force(
+                                "AUTO-PAUSE: 3 consecutive stops hit.\n"
+                                "Send /resume to re-enable entries."
+                            )
+                    else:
+                        consecutive_stops = 0
+
             # ══════════════════════════════════════════════════════════
             # DAILY LOSS KILL SWITCH — every cycle
             # FIX-11: was inside except block
@@ -321,6 +457,29 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # ══════════════════════════════════════════════════════════
             # ENTRY — only if no open position
             # ══════════════════════════════════════════════════════════
+
+            if decision is not None and position is None:
+
+                # /pause command — block all new entries
+                import telegram.notifier as _tn
+                if _tn.ENGINE_PAUSED:
+                    logger.debug("[GATE] Engine paused — skipping entry")
+                    decision = None
+
+            if decision is not None and position is None:
+
+                # Telegram threshold overrides (/ce X /pe X)
+                import telegram.notifier as _tn
+                _side    = decision.get("side", "")
+                _ml_prob = decision.get("ml_prob", 0.0)
+                _thr_ov  = (_tn.CE_THRESHOLD_OVERRIDE if _side == "CE"
+                            else _tn.PE_THRESHOLD_OVERRIDE)
+                if _thr_ov is not None and _ml_prob < _thr_ov:
+                    logger.info(
+                        f"[GATE] TG threshold override: {_side} prob={_ml_prob:.2f}"
+                        f" < override={_thr_ov:.2f}"
+                    )
+                    decision = None
 
             if decision is not None and position is None:
 
@@ -395,7 +554,25 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     current_pnl=ctx.pnl,
                 ) or 1
 
-                order = ctx.executor.execute_entry(symbol, side, qty * lot_size)
+                # ── Telegram confirmation (30s timeout → auto-execute) ─
+                _confirmed = ask_trade_permission(
+                    side    = side,
+                    price   = builder.ltp() or 0.0,
+                    ml_prob = decision["ml_prob"],
+                    stop    = decision.get("stop_loss", 0.0),
+                    target  = decision.get("target",    0.0),
+                )
+                if not _confirmed:
+                    logger.info(f"[GATE] Trade SKIPPED by user (Telegram SKIP)")
+                    decision = None  # fall through cleanly
+
+                if decision is not None:
+                    pass  # proceed to execute below
+
+                order = (
+                    ctx.executor.execute_entry(symbol, side, qty * lot_size)
+                    if decision is not None else None
+                )
 
                 if order and order.get("price", 0) > 0:
 
@@ -423,6 +600,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "features": decision.get("features", {}),
                         "regime":   decision.get("regime", "UNKNOWN"),
                         "reason":   decision.get("reason", ""),
+                        "entry_ts": ts,   # for held-time display in dashboard
                     }
                     entry_time = ts    # FIX-2
                     ctx.trades_today += 1
@@ -448,12 +626,30 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     logger.warning("[ENTRY] Order returned invalid fill — position not opened")
 
             # ══════════════════════════════════════════════════════════
-            # DASHBOARD (throttled — every 30 sec)
-            # FIX-7: rate limited
+            # DUAL DASHBOARD (two persistent edit-in-place messages)
             # ══════════════════════════════════════════════════════════
 
-            dash_msg = render_dashboard(ctx, market_data, decision)
-            tg_bot(dash_msg, key="dashboard", interval=30.0)
+            # Faster refresh when in a trade; slower when idle
+            dash_interval = 20.0 if position is not None else 60.0
+
+            if _tg.can_send("dashboard", dash_interval):
+                market_state = ctx.live_engine.get_market_state(ts)
+
+                # Dashboard 1: AI Engine — ML bias, technicals, decision
+                engine_msg = render_engine(ctx, market_state, ltp_current)
+                send_or_edit_engine_dashboard(engine_msg)
+
+                # Dashboard 2: Live Status — position card, ORB, internals
+                # Attach EXIT button only when in a position
+                if position is not None:
+                    market_msg = render_market(ctx, market_state, position, ltp_current)
+                    exit_kb    = {"inline_keyboard": [[
+                        {"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}
+                    ]]}
+                    send_or_edit_market_dashboard(market_msg, reply_markup=exit_kb)
+                else:
+                    market_msg = render_market(ctx, market_state, None, ltp_current)
+                    send_or_edit_market_dashboard(market_msg)
 
             # ── Health file update ────────────────────────────────────
             update_health(snapshot(ctx))
@@ -507,6 +703,11 @@ def main():
     except Exception as e:
         logger.critical(f"Broker init failed: {e}")
         return
+
+    # ── Historical data update (Zerodha → CSV before seeding) ─────────
+    # Must run after broker auth and before CandleBuilder seed so
+    # today's intraday candles warm up indicators from the first tick.
+    update_historical_data(broker, HIST_CSV)
 
     # ── Candle builder ────────────────────────────────────────────────
     try:

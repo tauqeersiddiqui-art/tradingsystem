@@ -155,11 +155,11 @@ class IntradayMLLearner:
         # Range classification
         range_pct = rng / open_p
 
-        if range_pct > 0.012:         # >0.6% range in 30 min = volatile
+        if range_pct > 0.006:         # >0.6% range in 30 min = volatile (~144pts on 24000)
             self.day_type = DAY_VOLATILE
         elif gap_size > 0.005:        # >0.5% gap = gap day
             self.day_type = DAY_GAP
-        elif trending and abs(move_pct) > 0.004:  # >0.4% trending
+        elif trending and abs(move_pct) > 0.003:  # >0.3% directional (was 0.4% — too strict)
             self.day_type = DAY_TREND
         else:
             self.day_type = DAY_RANGE
@@ -310,8 +310,8 @@ class IntradayMLLearner:
         if side == "PE" and self.pe_losses >= 4 and self.pe_wins == 0:
             return True, f"PE_LOSING_TODAY_{self.pe_losses}L_0W"
 
-        # Also block if consecutive losses >= 3
-        if self.consecutive_losses >= 3:
+        # Block after 2 consecutive losses (was 3 — too late, half daily limit gone)
+        if self.consecutive_losses >= 2:
             return True, f"CONSECUTIVE_LOSS_LOCK_{self.consecutive_losses}"
 
         return False, None

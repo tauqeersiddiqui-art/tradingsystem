@@ -42,8 +42,8 @@ class ExecutionEngine:
                 return int(inst["lot_size"])
         except Exception as e:
             logger.warning(f"[LOT SIZE] Could not fetch for {symbol}: {e}")
-        logger.warning(f"[LOT SIZE] Falling back to 75 for {symbol}")
-        return 75   # NIFTY default
+        logger.warning(f"[LOT SIZE] Falling back to 65 for {symbol}")
+        return 65   # NIFTY lot size from Jan 2026
 
     # ══════════════════════════════════════════════════════════════════
     # FILL VALIDATION

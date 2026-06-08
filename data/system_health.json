@@ -1,13 +1,13 @@
 {
-  "last_update": "2026-04-30 00:22:26.325227",
-  "pnl": 0,
+  "last_update": "2026-06-08 09:54:15.488590",
+  "pnl": 0.0,
   "positions": 0,
   "active_position": null,
   "win_rate": 0,
   "drawdown": 0,
   "regime": null,
   "signal": null,
-  "mode": "PAPER",
+  "mode": "UNKNOWN",
   "latency_ms": 0,
   "last_order": null
 }

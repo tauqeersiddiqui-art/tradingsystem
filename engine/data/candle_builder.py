@@ -6,6 +6,7 @@ import logging
 import threading
 from collections import deque
 from datetime import datetime, timedelta
+import os
 
 import pandas as pd
 
@@ -183,12 +184,10 @@ class CandleBuilder:
 
     def seed_from_csv(self, csv_path: str, n: int = 200):
         """
-        At startup, pre-fill the candle buffer from the historical CSV
-        so features are available from the first live tick.
-
-        Only seeds candles from BEFORE today (no stale intraday candles).
+        At startup, pre-fill the candle buffer from the historical CSV.
+        Includes today's intraday candles (up to 2 minutes ago) so
+        indicators warm up immediately after update_historical_data runs.
         """
-        import os
         if not os.path.exists(csv_path):
             logger.warning(f"[CandleBuilder] Seed CSV not found: {csv_path}")
             return
@@ -207,11 +206,10 @@ class CandleBuilder:
             df = df.dropna(subset=[date_col])
             df = df.sort_values(date_col)
 
-            # Only historical candles (before today market open)
-            today_open = datetime.now().replace(
-                hour=9, minute=15, second=0, microsecond=0
-            )
-            df = df[df[date_col] < today_open]
+            # Seed all candles up to 2 minutes ago (avoids incomplete current candle).
+            # Includes today's data because update_historical_data() runs before this.
+            cutoff = datetime.now() - timedelta(minutes=2)
+            df = df[df[date_col] <= cutoff]
 
             df = df.tail(n)
 

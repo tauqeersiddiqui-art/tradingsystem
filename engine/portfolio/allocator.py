@@ -1,6 +1,5 @@
 # engine/portfolio/allocator.py
 
-print("✅ allocator module loaded")  # DEBUG LINE
 
 class CapitalAllocator:
 

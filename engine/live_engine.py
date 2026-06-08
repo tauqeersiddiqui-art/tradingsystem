@@ -17,6 +17,7 @@ from datetime import datetime, time as dtime
 from ml.predictor_champion import ChampionPredictor
 from ml.feature_config import build_live_features, _safe_build_live_features, FEATURE_COLUMNS
 from ml.ml_intraday_learner import IntradayMLLearner
+from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
 from engine.risk.risk_manager import compute_entry_stops
 
@@ -27,6 +28,18 @@ _MARKET_OPEN  = dtime(9, 15)
 _ORB_END      = dtime(9, 30)   # ORB window: 9:15 – 9:29 (15 candles)
 _DAY_CLASS_AT = dtime(9, 45)   # Day classifier locks after 9:44
 _MARKET_CLOSE = dtime(15, 30)
+
+# ── Session filter — no new entries during lunch chop ─────────────────
+_LUNCH_START    = dtime(11,  0)
+_LUNCH_END      = dtime(12, 30)   # was 14:00 — 12:30-14:00 window recovered
+
+# ── Minimum expected PnL to accept a signal (capital safeguard) ───────
+_MIN_EXPECTED_PNL = 150.0
+
+# ── ML floor — never trade below this probability ─────────────────────
+# 0.50-0.60 bucket wins only 47% — money-loser at any stop size.
+# 0.62+ consistently wins 54-56% — positive expectancy with tight stops.
+_MIN_ML_FLOOR = 0.62
 
 # ── Try importing DayClassifier (model may not exist yet) ─────────────
 try:
@@ -57,6 +70,14 @@ class LiveEngine:
         self.orb_high: float | None = None
         self.orb_low:  float | None = None
         self.orb_done: bool = False
+        self.orb_ce_fired: bool = False   # one-shot per day per side
+        self.orb_pe_fired: bool = False
+
+        # ── VWAP accumulator (reset at session open) ──────────────────
+        self._vwap = VWAPAccumulator()
+
+        # ── Direction bias (+1 bullish, -1 bearish, 0 unclear) ────────
+        self._direction_bias: int = 0
 
         # ── Day classifier ────────────────────────────────────────────
         self._day_clf = DayClassifier() if _DAY_CLASSIFIER_AVAILABLE else None
@@ -66,6 +87,15 @@ class LiveEngine:
 
         # ── Intraday state ────────────────────────────────────────────
         self._open_price_set: bool = False
+
+        # ── Dashboard state (updated every cycle for rich display) ────
+        self._last_block_reason: str = "WARMING_UP"
+        self._last_ce_prob: float    = 0.0
+        self._last_pe_prob: float    = 0.0
+        self._last_ce_adj: float     = 0.0
+        self._last_pe_adj: float     = 0.0
+        self._last_features: dict    = {}
+        self._ml_history: list       = []   # rolling window for percentile scoring
 
         logger.info("[LiveEngine] Initialized")
 
@@ -106,7 +136,7 @@ class LiveEngine:
     def _maybe_classify_day(self, candle: dict, ts: datetime):
         """
         Collect first-30-min candles, classify once at 9:45.
-        Also feeds IntradayMLLearner.update_candle().
+        Also feeds IntradayMLLearner.update_candle() and accumulates VWAP.
         """
         now = ts.time()
 
@@ -116,6 +146,14 @@ class LiveEngine:
             high=candle["high"],
             low=candle["low"],
             ts=ts
+        )
+
+        # Accumulate VWAP from market open
+        self._vwap.update(
+            high=float(candle["high"]),
+            low=float(candle["low"]),
+            close=float(candle["close"]),
+            volume=float(candle.get("volume", 0)),
         )
 
         # Collect pre-9:45 candles for day classifier
@@ -146,7 +184,7 @@ class LiveEngine:
     # FEATURE BUILDING  (all 28 features via feature_config)
     # ══════════════════════════════════════════════════════════════════
 
-    def build_features(self, df_window) -> dict | None:
+    def build_features(self, df_window, ts=None) -> dict | None:
         """
         df_window: pandas DataFrame with columns [open, high, low, close, volume]
                    — last N rows from rolling candle buffer, sorted ascending.
@@ -162,16 +200,10 @@ class LiveEngine:
         lows    = df_window["low"].tolist()
         volumes = df_window["volume"].tolist() if "volume" in df_window.columns else [0] * len(closes)
 
-        # ── Build signal dict for feature_config ─────────────────────
-        # feature_config.build_live_features() requires a `signal` dict
-        # with pre-computed EMA/RSI/ATR values as inputs.
-        # We compute them here from the candle buffer.
-
         signal = self._compute_signal_dict(closes, highs, lows, df_window)
 
-        features = _safe_build_live_features(closes, opens, highs, lows, volumes, signal)
+        features = _safe_build_live_features(closes, opens, highs, lows, volumes, signal, ts=ts)
 
-        # Validate all 28 features present
         missing = [f for f in FEATURE_COLUMNS if f not in features]
         if missing:
             logger.error(f"[FEATURES] Still missing after build: {missing}")
@@ -181,8 +213,8 @@ class LiveEngine:
 
     def _compute_signal_dict(self, closes: list, highs: list, lows: list, df) -> dict:
         """
-        Compute EMAs, RSI, ATR, trend_strength for feature_config.
-        These must match what the model was trained on exactly.
+        Compute all signal indicators for feature_config.
+        Includes direction stack: Supertrend, ADX, VWAP bias, EMA alignment.
         """
         import numpy as np
 
@@ -221,15 +253,51 @@ class LiveEngine:
             atr_val = float(np.mean(tr))
         else:
             atr_val = abs(closes[-1] - closes[-2]) * 14 ** 0.5
+        atr_val = max(atr_val, 0.5)
 
         trend_strength = (ema20 - ema50) / closes[-1] if closes[-1] != 0 else 0.0
+
+        # ── Supertrend (10/3) over rolling window ─────────────────────
+        h_arr = np.array(highs, dtype=float)
+        l_arr = np.array(lows, dtype=float)
+        c_arr = np.array(closes, dtype=float)
+
+        st_dir_arr, st_line_arr = _compute_supertrend(h_arr, l_arr, c_arr, period=10, multiplier=3.0)
+        last_st_dir  = int(st_dir_arr[-1])
+        last_st_line = float(st_line_arr[-1])
+        st_dist      = (closes[-1] - last_st_line) / closes[-1] if closes[-1] != 0 else 0.0
+
+        # ── ADX (14) over rolling window ─────────────────────────────
+        adx_arr, di_plus, di_minus = _compute_adx(h_arr, l_arr, c_arr, period=14)
+        last_adx     = float(adx_arr[-1])
+        last_di_plus = float(di_plus[-1])
+        last_di_min  = float(di_minus[-1])
+
+        # ── VWAP bias ─────────────────────────────────────────────────
+        vwap_val     = self._vwap.value
+        price_vs_vwap = (closes[-1] - vwap_val) / closes[-1] if (closes[-1] != 0 and vwap_val > 0) else 0.0
+
+        # ── Update direction bias ─────────────────────────────────────
+        if last_st_dir == 1 and price_vs_vwap > 0:
+            self._direction_bias = 1
+        elif last_st_dir == -1 and price_vs_vwap < 0:
+            self._direction_bias = -1
+        else:
+            self._direction_bias = 0
 
         return {
             "ema20":          ema20,
             "ema50":          ema50,
             "rsi_1m":         rsi_1m,
-            "atr":            max(atr_val, 0.5),
+            "atr":            atr_val,
             "trend_strength": trend_strength,
+            # Direction stack
+            "supertrend_dir":  float(last_st_dir),
+            "supertrend_dist": float(np.clip(st_dist, -0.05, 0.05)),
+            "price_vs_vwap":   float(np.clip(price_vs_vwap, -0.05, 0.05)),
+            "adx":             float(np.clip(last_adx, 0, 100)),
+            "di_spread":       float(np.clip(last_di_plus - last_di_min, -60, 60)),
+            "ema_alignment":   float(1.0 if ema20 > ema50 else -1.0),
         }
 
     # ══════════════════════════════════════════════════════════════════
@@ -239,124 +307,224 @@ class LiveEngine:
     def check_entry(self, df_window, ts: datetime) -> dict | None:
         """
         Returns entry signal dict or None.
-
-        Signal dict keys:
-            side      : "CE" or "PE"
-            ml_prob   : float
-            features  : dict (28 features)
-            reason    : str
-            stop_loss : float
-            target    : float
+        Features + ML probs are ALWAYS computed (even when blocked) so the
+        dashboard always shows live values regardless of session state.
         """
+        import numpy as np
         now = ts.time()
 
-        # ── Time gate ─────────────────────────────────────────────────
-        if now < _ORB_END:
-            return None   # never trade during ORB construction window
-        if now >= dtime(15, 15):
-            return None   # no new entries after 15:15
+        # ══ STEP 1: Always build features + compute ML probs ════════════
+        # This runs unconditionally so the Telegram dashboard always shows
+        # live CE/PE probabilities even during ORB build or lunch filter.
+        features = self.build_features(df_window, ts)
+        if features:
+            self._last_features = features
+            _ce_p = self.predictor.predict(features, "CE")
+            _pe_p = self.predictor.predict(features, "PE")
+            if _ce_p is not None:
+                self._last_ce_prob = float(_ce_p)
+                self._ml_history.append(float(_ce_p))
+                if len(self._ml_history) > 500:
+                    self._ml_history.pop(0)
+            if _pe_p is not None:
+                self._last_pe_prob = float(_pe_p)
+            if _ce_p is not None and _pe_p is not None:
+                _ce_a, _pe_a = self.learner.get_adjusted_ml_prob(_ce_p, _pe_p, "CE")
+                self._last_ce_adj = float(_ce_a)
+                self._last_pe_adj = float(_pe_a)
 
-        # ── Day type gate ─────────────────────────────────────────────
-        # Do NOT hard-block here — that kills pure-ML entries (the main edge).
-        # Instead, only ORB threshold relaxation is gated to TREND days below.
+        # ══ STEP 2: Session gates ════════════════════════════════════════
+        if now < _ORB_END:
+            self._last_block_reason = "ORB_BUILD (9:15-9:30)"
+            return None
+        if now >= dtime(15, 15):
+            self._last_block_reason = "MARKET_CLOSING (after 15:15)"
+            return None
+        if _LUNCH_START <= now < _LUNCH_END:
+            self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
+            return None
+        if not features:
+            self._last_block_reason = "INSUFFICIENT_DATA (<26 candles)"
+            return None
+
+        # ══ STEP 3: Direction gate ═══════════════════════════════════════
+        direction_bias = self._direction_bias
+        if direction_bias == 0:
+            self._last_block_reason = "NO_DIRECTION (ST+VWAP conflict)"
+            logger.debug("[DIRECTION] No clear bias — skipping candle")
+            return None
+
+        # ══ STEP 4: Signal thresholds + ORB breakout ════════════════════
         orb_ok = bool(
             self._day_clf and self._day_classified and self._day_clf.should_trade_orb()
         )
 
-        features = self.build_features(df_window)
-        if not features:
-            return None
+        price     = df_window["close"].iloc[-1]
+        threshold = max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR)
 
-        price = df_window["close"].iloc[-1]
-
-        # ── Adaptive ML threshold from learner ────────────────────────
-        threshold = self.learner.get_ml_threshold()
-
-        # ── ORB breakout flags ────────────────────────────────────────
         ce_breakout = (
-            self.orb_done and
-            self.orb_high is not None and
-            price > self.orb_high
+            self.orb_done and self.orb_high is not None and
+            price > self.orb_high and not self.orb_ce_fired
         )
         pe_breakout = (
-            self.orb_done and
-            self.orb_low is not None and
-            price < self.orb_low
+            self.orb_done and self.orb_low is not None and
+            price < self.orb_low and not self.orb_pe_fired
         )
+        if ce_breakout: self.orb_ce_fired = True
+        if pe_breakout: self.orb_pe_fired = True
 
-        # ── ML predictions ────────────────────────────────────────────
-        ce_prob = self.predictor.predict(features, "CE")
-        pe_prob = self.predictor.predict(features, "PE")
+        # Pull from cached adjusted probs (set in Step 1)
+        ce_adj = self._last_ce_adj
+        pe_adj = self._last_pe_adj
 
-        if ce_prob is None or pe_prob is None:
-            logger.warning("[ML] Predictor returned None — skipping cycle")
-            return None
-
-        # ── Apply intraday learner adjustments ────────────────────────
-        ce_adj, pe_adj = self.learner.get_adjusted_ml_prob(ce_prob, pe_prob, "CE")
+        # Hard direction gate — zero out opposite side
+        if direction_bias != 1:
+            ce_adj = 0.0
+        if direction_bias != -1:
+            pe_adj = 0.0
 
         logger.debug(
-            f"[ML] CE={ce_adj:.3f}({ce_prob:.3f}) PE={pe_adj:.3f}({pe_prob:.3f}) "
+            f"[ML] CE={ce_adj:.3f}({self._last_ce_prob:.3f}) "
+            f"PE={pe_adj:.3f}({self._last_pe_prob:.3f}) "
             f"thr={threshold:.3f} ORB_CE={ce_breakout} ORB_PE={pe_breakout}"
         )
 
-        # ── Side selection ────────────────────────────────────────────
-        signal = None
+        # ══ STEP 5: Side selection ═══════════════════════════════════════
+        signal  = None
+        dir_str = "BULL" if direction_bias == 1 else "BEAR"
+        self._last_block_reason = (
+            f"ML_BELOW_THR ({dir_str} | CE={ce_adj:.2f} PE={pe_adj:.2f} thr={threshold:.2f})"
+        )
 
-        # CE check — ORB relaxes threshold by 0.03 ONLY on trend-qualified days
+        # CE — only on the actual ORB breakout candle
         ce_thr = threshold - 0.03 if (ce_breakout and orb_ok) else threshold
+        if not ce_breakout:
+            ce_adj = 0.0
         if ce_adj >= ce_thr:
             blocked, reason_block = self.learner.is_side_blocked("CE")
-            if not blocked:
+            if blocked:
+                self._last_block_reason = f"CE_BLOCKED ({reason_block})"
+            else:
                 reason = "ORB+ML_CE" if ce_breakout else "ML_CE"
-                signal = {
-                    "side":    "CE",
-                    "ml_prob": ce_adj,
-                    "features": features,
-                    "reason":  reason,
-                }
+                self._last_block_reason = f"SIGNAL_FIRE ({reason})"
+                signal = {"side": "CE", "ml_prob": ce_adj,
+                          "features": features, "reason": reason}
 
-        # PE check (only if CE not triggered — one trade at a time)
+        # PE (only if CE not triggered)
         if signal is None:
             pe_thr = threshold - 0.03 if (pe_breakout and orb_ok) else threshold
             if pe_adj >= pe_thr:
                 blocked, reason_block = self.learner.is_side_blocked("PE")
-                if not blocked:
+                if blocked:
+                    self._last_block_reason = f"PE_BLOCKED ({reason_block})"
+                else:
                     reason = "ORB+ML_PE" if pe_breakout else "ML_PE"
-                    signal = {
-                        "side":    "PE",
-                        "ml_prob": pe_adj,
-                        "features": features,
-                        "reason":  reason,
-                    }
+                    self._last_block_reason = f"SIGNAL_FIRE ({reason})"
+                    signal = {"side": "PE", "ml_prob": pe_adj,
+                              "features": features, "reason": reason}
 
         if signal is None:
             return None
 
-        # ── Compute entry stops via risk_manager ──────────────────────
-        atr_val = features.get("atr", price * 0.01)
-
-        # Derive regime from learner day type
+        # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
+        atr_val  = features.get("atr", price * 0.01)
         day_type = self.learner.get_day_type()
-        regime = (
+        regime   = (
             "EXPANSION" if "VOLATILE" in day_type else
-            "TREND"     if "TREND" in day_type else
+            "TREND"     if "TREND"    in day_type else
             "RANGE"
         )
-
         stop_loss, target, stop_pct = compute_entry_stops(price, atr_val, regime)
+        signal.update(stop_loss=stop_loss, target=target,
+                      stop_pct=stop_pct, regime=regime)
 
-        signal["stop_loss"] = stop_loss
-        signal["target"]    = target
-        signal["stop_pct"]  = stop_pct
-        signal["regime"]    = regime
+        lot_size     = getattr(getattr(self.ctx, "config", None), "LOT_SIZE", 65)
+        exp_win      = (target - price) * lot_size
+        exp_loss     = (price - stop_loss) * lot_size
+        expected_pnl = signal["ml_prob"] * exp_win - (1 - signal["ml_prob"]) * exp_loss
+        if expected_pnl < _MIN_EXPECTED_PNL:
+            logger.info(
+                f"[PNL GUARD] Expected Rs{expected_pnl:.0f} < Rs{_MIN_EXPECTED_PNL} — skipping"
+            )
+            self._last_block_reason = f"PNL_GUARD (exp=Rs{expected_pnl:.0f})"
+            return None
 
         logger.info(
             f"[ENTRY SIGNAL] {signal['side']} | reason={signal['reason']} | "
-            f"prob={signal['ml_prob']:.3f} | SL={stop_loss:.2f} | TP={target:.2f}"
+            f"prob={signal['ml_prob']:.3f} | SL={stop_loss:.2f} | TP={target:.2f} | "
+            f"ExpPnL=Rs{expected_pnl:.0f}"
         )
-
         return signal
+
+    def _ml_percentile(self, prob: float) -> int:
+        """Percentile rank of prob within today's ML history."""
+        if not self._ml_history:
+            return 0
+        import numpy as np
+        return int(np.sum(np.array(self._ml_history) <= prob) / len(self._ml_history) * 100)
+
+    # ══════════════════════════════════════════════════════════════════
+    # MARKET STATE  (snapshot for dashboard rendering)
+    # ══════════════════════════════════════════════════════════════════
+
+    def get_market_state(self, ts: datetime | None = None) -> dict:
+        """
+        Returns a snapshot of current market internals.
+        Safe to call every cycle — never triggers any trading logic.
+        """
+        if ts is None:
+            ts = datetime.now()
+        now = ts.time()
+
+        f = self._last_features or {}
+        ema20 = f.get("ema20", 0.0)
+        ema50 = f.get("ema50", 0.0)
+
+        # Session label
+        if now < _MARKET_OPEN:
+            session = "PRE-MARKET"
+        elif now < _ORB_END:
+            session = "ORB BUILD (9:15-9:30)"
+        elif _LUNCH_START <= now < _LUNCH_END:
+            session = "LUNCH FILTER"
+        elif now >= dtime(15, 15):
+            session = "CLOSING"
+        else:
+            session = "ACTIVE"
+
+        return {
+            "ts":              ts,
+            "session":         session,
+            "ema20":           ema20,
+            "ema50":           ema50,
+            "ema_direction":   "UP" if ema20 > ema50 else "DOWN",
+            "rsi_1m":          f.get("rsi_1m", 50.0),
+            "atr":             f.get("atr", 0.0),
+            "supertrend_dir":  int(f.get("supertrend_dir", 0)),
+            "supertrend_dist": f.get("supertrend_dist", 0.0),
+            "vwap":            self._vwap.value,
+            "price_vs_vwap":   f.get("price_vs_vwap", 0.0),
+            "adx":             f.get("adx", 0.0),
+            "di_spread":       f.get("di_spread", 0.0),
+            "direction_bias":  self._direction_bias,
+            "orb_high":        self.orb_high,
+            "orb_low":         self.orb_low,
+            "orb_done":        self.orb_done,
+            "ce_prob":         self._last_ce_prob,
+            "pe_prob":         self._last_pe_prob,
+            "ce_adj":          self._last_ce_adj,
+            "pe_adj":          self._last_pe_adj,
+            "ml_threshold":    max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR),
+            "block_reason":    self._last_block_reason,
+            # Scoring
+            "ml_percentile":   self._ml_percentile(max(self._last_ce_adj, self._last_pe_adj)),
+            "ml_score":        round(
+                max(self._last_ce_adj, self._last_pe_adj) * 50
+                + self._ml_percentile(max(self._last_ce_adj, self._last_pe_adj)) / 2,
+                1
+            ),
+            "score_required":  40.0,   # ≈ 0.62*50 + median_percentile/2
+        }
 
     # ══════════════════════════════════════════════════════════════════
     # EXIT LOGIC  (delegates to profit_manager)
@@ -390,6 +558,7 @@ class LiveEngine:
             stop_loss=stop_loss,
             max_pnl=max_pnl,
             ml_prob=ml_prob,
+            target=position.get("target"),
         )
 
         # Update position dict in-place so caller persists new SL
@@ -441,10 +610,12 @@ class LiveEngine:
         if candle is None or df_window is None:
             return None
 
-        # ── Set open price in learner (once) ──────────────────────────
+        # ── Set open price in learner (once) + reset VWAP ────────────
         now = ts.time()
         if not self._open_price_set and now >= _MARKET_OPEN:
             self.learner.set_open_price(candle["close"])
+            self._vwap.reset()           # fresh VWAP accumulator for new session
+            self._direction_bias = 0     # unknown direction at session start
             self._open_price_set = True
 
         # ── Update ORB ────────────────────────────────────────────────

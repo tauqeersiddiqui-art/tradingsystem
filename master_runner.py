@@ -51,6 +51,7 @@ from engine.live_engine import LiveEngine
 from engine.portfolio.allocator import CapitalAllocator
 from engine.execution.filters import has_oi_wall
 from engine.risk.risk_manager import compute_entry_stops
+from engine.services.trade_logger import log_trade, today_summary
 
 from ml.ml_intraday_learner import IntradayMLLearner
 
@@ -65,6 +66,7 @@ from telegram.notifier import (
     ask_trade_permission,
     send_or_edit_engine_dashboard,
     send_or_edit_market_dashboard,
+    send_eod_summary,
     MANUAL_EXIT_REQUESTED,
 )
 
@@ -181,6 +183,11 @@ def _append_candle_to_csv(candle: dict, csv_path: str):
     ts = candle.get("ts")
     if ts is None or ts == _last_appended_ts:
         return
+    # Only append real market-hours candles — not flat after-hours data
+    from datetime import time as dtime
+    t = ts.time() if hasattr(ts, "time") else None
+    if t and not (dtime(9, 15) <= t <= dtime(15, 31)):
+        return
     _last_appended_ts = ts
 
     try:
@@ -277,8 +284,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
     position          = None    # current open position dict
     entry_time        = None    # FIX-2: defined at entry, used for held_seconds
+    entry_order_rec   = None    # saved order dict for trade_logger
     max_trades        = ctx.config.MAX_TRADES_PER_DAY
     consecutive_stops = 0       # auto-pause trigger
+    _eod_sent         = False   # send EOD summary once at 15:30
+    _last_feed_warn   = 0.0     # watchdog: last time we warned about stale feed
 
     def _status_cb():
         import telegram.notifier as _tn
@@ -304,6 +314,24 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             # ── Poll Telegram: buttons + text commands (every cycle) ──
             poll_commands(status_cb=_status_cb)
+
+            # ── Feed watchdog: alert if WebSocket silent >60s in market hours ──
+            _mkt_open  = __import__("datetime").time(9, 15)
+            _mkt_close = __import__("datetime").time(15, 30)
+            if _mkt_open <= now <= _mkt_close:
+                _last_tick = getattr(ctx.broker, "_last_tick_time", 0)
+                _stale_s   = time.time() - _last_tick if _last_tick else 999
+                if _stale_s > 60 and time.time() - _last_feed_warn > 120:
+                    _last_feed_warn = time.time()
+                    logger.warning(f"[WATCHDOG] Feed stale {_stale_s:.0f}s — reconnecting")
+                    tg_bot(
+                        f"⚠️ Feed stale ({_stale_s:.0f}s) — reconnecting...",
+                        key="watchdog", interval=120.0
+                    )
+                    try:
+                        ctx.broker.start_feed(["NIFTY 50"])
+                    except Exception as _wde:
+                        logger.error(f"[WATCHDOG] Reconnect failed: {_wde}")
 
             # ── Engine stop requested by user (/stop command) ─────────
             import telegram.notifier as _tn
@@ -395,6 +423,22 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     ctx.pnl         += pnl
                     ctx.positions.append(pnl)
 
+                    # ── Persist trade to CSV ───────────────────────────
+                    try:
+                        import telegram.notifier as _tn
+                        log_trade(
+                            entry_order  = entry_order_rec or {},
+                            exit_price   = exit_price,
+                            exit_reason  = exit_reason,
+                            position     = position,
+                            entry_time   = entry_time,
+                            exit_time    = ts,
+                            ce_threshold = _tn.CE_THRESHOLD_OVERRIDE or 0.62,
+                            pe_threshold = _tn.PE_THRESHOLD_OVERRIDE or 0.66,
+                        )
+                    except Exception as _log_e:
+                        logger.warning(f"[TRADE LOG] Write failed: {_log_e}")
+
                     # FIX-9: record trade result in learner
                     ctx.ml_learner.record_trade_result(
                         side=position["side"],
@@ -423,8 +467,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f"pnl={pnl:.2f} | total={ctx.pnl:.2f}"
                     )
 
-                    position   = None
-                    entry_time = None
+                    position        = None
+                    entry_time      = None
+                    entry_order_rec = None
 
                     # Auto-pause after 3 consecutive stop losses
                     if exit_reason in ("STOP", "Stop Loss", "Drawdown"):
@@ -602,7 +647,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "reason":   decision.get("reason", ""),
                         "entry_ts": ts,   # for held-time display in dashboard
                     }
-                    entry_time = ts    # FIX-2
+                    entry_time      = ts    # FIX-2
+                    entry_order_rec = order
                     ctx.trades_today += 1
 
                     entry_msg = format_trade_entry({
@@ -651,6 +697,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     market_msg = render_market(ctx, market_state, None, ltp_current)
                     send_or_edit_market_dashboard(market_msg)
 
+            # ── EOD summary at 15:30 ─────────────────────────────────
+            if not _eod_sent and now >= __import__("datetime").time(15, 30):
+                _eod_sent = True
+                summary = today_summary()
+                send_eod_summary(summary)
+                logger.info(
+                    f"[EOD] Trades={summary['trades']} PnL=₹{summary['pnl']:.0f} "
+                    f"WR={summary.get('win_rate',0):.0f}%"
+                )
+
             # ── Health file update ────────────────────────────────────
             update_health(snapshot(ctx))
 
@@ -690,9 +746,27 @@ def main():
     logger.info("MASTER STARTED")
 
     # ── Startup Telegram ──────────────────────────────────────────────
-    mode_str = "PAPER MODE" if PAPER_MODE else "LIVE MODE"
+    from datetime import time as _dtime
+    _now_t    = datetime.now().time()
+    mode_str  = "PAPER MODE" if PAPER_MODE else "LIVE MODE (DRY_RUN)"
+    _is_early = _now_t < _dtime(9, 15)
+    _ready_msg = (
+        f"<b>AI Trading System Started</b>\n"
+        f"Mode: {mode_str}\n"
+        f"DRY_RUN: No real orders will be placed\n\n"
+        + (
+            "Ready for ORB capture at 9:15.\n"
+            "Engine will monitor 9:15–9:30 for ORB range,\n"
+            "then trade from 9:30 onward."
+            if _is_early else
+            f"Started after market open ({_now_t.strftime('%H:%M')}).\n"
+            "ORB will be locked — only PE ML-entries available.\n"
+            "CE ORB breakout entry: DISABLED (missed window)."
+        )
+        + "\n\n/help for commands"
+    )
     try:
-        tg_force(f"🚀 AI Trading System Started ({mode_str})")
+        tg_force(_ready_msg)
     except Exception as e:
         logger.warning(f"Telegram startup message failed: {e}")
 

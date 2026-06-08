@@ -1,0 +1,207 @@
+
+##########################################################
+  BACKTEST DIAGNOSTIC  --  Jun 2025 to Jun 2026
+##########################################################
+
+  Data: 13,410 rows | 203 trading days
+  Range: 2025-06-02 to 2026-06-08
+
+==========================================================
+  RUN 1 -- Current Strategy (entry=close, lunch=11-12:30)
+==========================================================
+
+===== TELEMETRY =====
+CE Raw Signals:              96
+PE Raw Signals:              90
+CE ML Pass:                  10
+PE ML Pass:                  157
+CE Blocked:                  0
+PE Blocked:                  47
+CE Executed:                 10
+PE Executed:                 106
+Signals Returned:            120
+Signals None:                9568
+Trend Candles:               60
+Range Candles:               3105
+Volatile Candles:            270
+Unknown Candles:             2801
+
+===== CONVERSION RATES =====
+CE Conversion Rate:          10.42%
+PE Conversion Rate:          117.78%
+CE ML Conversion Rate:       100.00%
+PE ML Conversion Rate:       67.52%
+  Total trades                         116
+  Win rate                             52.6%
+  Total PnL                            Rs15,348
+  Avg PnL/trade                        Rs132
+  Avg win                              Rs556
+  Avg loss                             Rs-337
+  Profit factor                        1.83
+  Max drawdown                         Rs-3,287
+  Sharpe                               3.69
+  Days killed                          0 / 203
+
+  Entry Time Breakdown:
+  Slot                         #       PnL      WR      Avg
+  --------------------------------------------------------
+  09:30-10:00                109     13674     53%      125
+  10:00-11:00                  1      1560    100%     1560
+  12:30-14:00                  6       113     33%       19
+
+  Strategy Breakdown:
+  Reason                #       PnL      WR      Avg
+  ----------------------------------------------
+  ML_PE                92     10117     54%      110
+  ORB+ML_PE            14      7195     64%      514
+  ORB+ML_CE            10     -1964     20%     -196
+
+  Exit Reason:
+  Reason                    #       PnL
+  --------------------------------------
+  STOP                     43    -17201
+  DAY_END                  40      5309
+  TARGET_HIT               16     19906
+  Drawdown                 12      7188
+  TIME_EXIT_WEAK            5       146
+
+  Hold time -- avg: 305s  wins: 357s  losses: 247s
+  CE: 10 trades  PnL=-1,964  WR=20%  avg=-196
+  PE: 106 trades  PnL=17,311  WR=56%  avg=163
+
+==========================================================
+  RUN 2 -- Late Entry Simulation (entry=next_open, lunch=11-12:30)
+==========================================================
+
+===== TELEMETRY =====
+CE Raw Signals:              96
+PE Raw Signals:              90
+CE ML Pass:                  10
+PE ML Pass:                  157
+CE Blocked:                  0
+PE Blocked:                  46
+CE Executed:                 10
+PE Executed:                 107
+Signals Returned:            121
+Signals None:                9540
+Trend Candles:               45
+Range Candles:               3104
+Volatile Candles:            270
+Unknown Candles:             2790
+
+===== CONVERSION RATES =====
+CE Conversion Rate:          10.42%
+PE Conversion Rate:          118.89%
+CE ML Conversion Rate:       100.00%
+PE ML Conversion Rate:       68.15%
+  Total trades                         117
+  Win rate                             52.1%
+  Total PnL                            Rs15,201
+  Avg PnL/trade                        Rs130
+  Avg win                              Rs572
+  Avg loss                             Rs-351
+  Profit factor                        1.77
+
+==========================================================
+  RUN 3 -- Old Lunch Filter (entry=close, lunch=11-14:00)
+==========================================================
+
+===== TELEMETRY =====
+CE Raw Signals:              96
+PE Raw Signals:              90
+CE ML Pass:                  10
+PE ML Pass:                  122
+CE Blocked:                  0
+PE Blocked:                  14
+CE Executed:                 10
+PE Executed:                 104
+Signals Returned:            118
+Signals None:                9597
+Trend Candles:               60
+Range Candles:               2862
+Volatile Candles:            180
+Unknown Candles:             2801
+
+===== CONVERSION RATES =====
+CE Conversion Rate:          10.42%
+PE Conversion Rate:          115.56%
+CE ML Conversion Rate:       100.00%
+PE ML Conversion Rate:       85.25%
+  Total trades                         114
+  Win rate                             51.8%
+  Total PnL                            Rs13,706
+  Avg PnL/trade                        Rs120
+  Profit factor                        1.73
+
+==========================================================
+  RUN 4 -- Tighter Filter (entry=close, ML floor=0.65, lunch=11-12:30)
+==========================================================
+
+===== TELEMETRY =====
+CE Raw Signals:              96
+PE Raw Signals:              91
+CE ML Pass:                  10
+PE ML Pass:                  141
+CE Blocked:                  0
+PE Blocked:                  41
+CE Executed:                 10
+PE Executed:                 97
+Signals Returned:            110
+Signals None:                9633
+Trend Candles:               60
+Range Candles:               3145
+Volatile Candles:            270
+Unknown Candles:             2816
+
+===== CONVERSION RATES =====
+CE Conversion Rate:          10.42%
+PE Conversion Rate:          106.59%
+CE ML Conversion Rate:       100.00%
+PE ML Conversion Rate:       68.79%
+  Total trades                         107
+  Win rate                             54.2%
+  Total PnL                            Rs14,906
+  Avg PnL/trade                        Rs139
+  Profit factor                        1.88
+
+  Entry Time Breakdown:
+  Slot                         #       PnL      WR      Avg
+  --------------------------------------------------------
+  09:30-10:00                100     13477     55%      135
+  10:00-11:00                  1      1560    100%     1560
+  12:30-14:00                  6      -131     33%      -22
+
+  Strategy Breakdown:
+  Reason                #       PnL      WR      Avg
+  ----------------------------------------------
+  ML_PE                84      9250     56%      110
+  ORB+ML_PE            13      7620     69%      586
+  ORB+ML_CE            10     -1964     20%     -196
+
+  Exit Reason:
+  Reason                    #       PnL
+  --------------------------------------
+  STOP                     39    -15934
+  DAY_END                  38      5249
+  TARGET_HIT               14     18222
+  Drawdown                 12      7188
+  TIME_EXIT_WEAK            4       181
+
+  Hold time -- avg: 304s  wins: 357s  losses: 241s
+  CE: 10 trades  PnL=-1,964  WR=20%  avg=-196
+  PE: 97 trades  PnL=16,870  WR=58%  avg=174
+
+==========================================================
+  SUMMARY COMPARISON
+==========================================================
+
+  Config                              Trades    WR%        PnL     PF  Sharpe
+  --------------------------------------------------------------------
+  1. Close entry + lunch12:30            116   52.6  Rs  15,348   1.83    3.69
+  2. NextOpen entry (late)               117   52.1  Rs  15,201   1.77    3.54
+  3. Close entry + lunch14:00            114   51.8  Rs  13,706   1.73    3.42
+  4. ML>=0.65 + lunch12:30               107   54.2  Rs  14,906   1.88    3.88
+
+  Saving Run 1 trade log to backtest/results/...
+  Done -- check backtest/results/trade_log.csv
+

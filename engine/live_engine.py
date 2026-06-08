@@ -37,9 +37,15 @@ _LUNCH_END      = dtime(12, 30)   # was 14:00 — 12:30-14:00 window recovered
 _MIN_EXPECTED_PNL = 150.0
 
 # ── ML floor — never trade below this probability ─────────────────────
-# 0.50-0.60 bucket wins only 47% — money-loser at any stop size.
-# 0.62+ consistently wins 54-56% — positive expectancy with tight stops.
-_MIN_ML_FLOOR = 0.62
+# Backtest (203 days): PE@0.65 WR=58% avg+174, CE ORB WR=20% avg-196.
+# Raised PE floor to 0.65 for better selectivity.
+_MIN_ML_FLOOR = 0.65
+
+# ── CE ORB DISABLED (backtest finding) ───────────────────────────────
+# ORB+CE has 20% WR, avg -Rs196/trade over 203 days = net money drain.
+# CE breakout signals fire too late (fill is above true breakout price).
+# Disable until CE model is retrained on 2026 data.
+_CE_ORB_ENABLED = False
 
 # ── Try importing DayClassifier (model may not exist yet) ─────────────
 try:
@@ -398,19 +404,24 @@ class LiveEngine:
             f"ML_BELOW_THR ({dir_str} | CE={ce_adj:.2f} PE={pe_adj:.2f} thr={threshold:.2f})"
         )
 
-        # CE — only on the actual ORB breakout candle
-        ce_thr = threshold - 0.03 if (ce_breakout and orb_ok) else threshold
-        if not ce_breakout:
+        # CE — disabled per backtest: ORB+CE had 20% WR, avg -Rs196/trade.
+        # Will re-enable when CE model is retrained on 2026 data.
+        if not _CE_ORB_ENABLED:
             ce_adj = 0.0
-        if ce_adj >= ce_thr:
-            blocked, reason_block = self.learner.is_side_blocked("CE")
-            if blocked:
-                self._last_block_reason = f"CE_BLOCKED ({reason_block})"
-            else:
-                reason = "ORB+ML_CE" if ce_breakout else "ML_CE"
-                self._last_block_reason = f"SIGNAL_FIRE ({reason})"
-                signal = {"side": "CE", "ml_prob": ce_adj,
-                          "features": features, "reason": reason}
+        else:
+            # CE — only on the actual ORB breakout candle
+            ce_thr = threshold - 0.03 if (ce_breakout and orb_ok) else threshold
+            if not ce_breakout:
+                ce_adj = 0.0
+            if ce_adj >= ce_thr:
+                blocked, reason_block = self.learner.is_side_blocked("CE")
+                if blocked:
+                    self._last_block_reason = f"CE_BLOCKED ({reason_block})"
+                else:
+                    reason = "ORB+ML_CE" if ce_breakout else "ML_CE"
+                    self._last_block_reason = f"SIGNAL_FIRE ({reason})"
+                    signal = {"side": "CE", "ml_prob": ce_adj,
+                              "features": features, "reason": reason}
 
         # PE (only if CE not triggered)
         if signal is None:

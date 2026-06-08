@@ -36,16 +36,16 @@ _DAY_CLASS_AT = dtime(9, 45)
 _MARKET_CLOSE = dtime(15, 30)
 _NO_ENTRY_AFTER = dtime(15, 15)
 
-# Institutional session filter — avoid lunch-hour chop (11:00–14:00)
+# Institutional session filter — avoid lunch-hour chop (11:00–12:30)
 _LUNCH_START    = dtime(11,  0)
-_LUNCH_END      = dtime(14,  0)
+_LUNCH_END      = dtime(12, 30)
 
 # Minimum expected PnL for any new trade (₹150 safeguard)
 _MIN_EXPECTED_PNL = 150.0
 
-# ML floor: never trade below 0.62 regardless of model threshold.
-# 0.50-0.60 bucket has 47% WR — money-loser. 0.62+ has 54-56% WR.
-_MIN_ML_FLOOR = 0.62
+# ML floor: never trade below 0.65 (backtest: PE@0.65 = 58% WR, avg +Rs174).
+# Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
+_MIN_ML_FLOOR = 0.65
 
 NIFTY_LOT_SIZE = 65          # current lot size (changed from 75 → 65 in Jan 2026)
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot

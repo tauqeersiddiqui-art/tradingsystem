@@ -106,10 +106,10 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         return None
 
 
-def _edit(message_id, text, parse_mode="HTML"):
-    """Edit a message. Per-slot dedup: skip if text unchanged since last edit."""
+def _edit(message_id, text, parse_mode="HTML") -> bool:
+    """Edit a message. Returns True on success, False if message is gone/invalid."""
     if _last_edited.get(message_id) == text:
-        return
+        return True
     try:
         r = requests.post(EDIT_MESSAGE_URL, json={
             "chat_id": BOT_CHAT_ID,
@@ -121,12 +121,16 @@ def _edit(message_id, text, parse_mode="HTML"):
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
+            return True
         elif "message is not modified" in str(d):
-            _last_edited[message_id] = text  # mark as synced
+            _last_edited[message_id] = text
+            return True
         else:
             print("[TG] Edit error:", d)
+            return False
     except Exception as e:
         print("[TG] Edit exception:", e)
+        return False
 
 
 def _answer_cb(callback_id, text=""):
@@ -163,7 +167,13 @@ def send_or_edit_engine_dashboard(text: str):
             _engine_msg_id = result["message_id"]
             _save_state()
     else:
-        _edit(_engine_msg_id, text)
+        ok = _edit(_engine_msg_id, text)
+        if not ok:
+            # Message was deleted or expired — create a fresh one
+            old_id = _engine_msg_id
+            _engine_msg_id = None
+            _last_edited.pop(old_id, None)
+            send_or_edit_engine_dashboard(text)
 
 
 def send_or_edit_market_dashboard(text: str, reply_markup=None):
@@ -175,22 +185,41 @@ def send_or_edit_market_dashboard(text: str, reply_markup=None):
             _market_msg_id = result["message_id"]
             _save_state()
     else:
+        ok = _edit_with_markup(_market_msg_id, text, reply_markup)
+        if not ok:
+            old_id = _market_msg_id
+            _market_msg_id = None
+            _last_edited.pop(old_id, None)
+            send_or_edit_market_dashboard(text, reply_markup)
+
+
+def _edit_with_markup(message_id, text, reply_markup=None) -> bool:
+    if _last_edited.get(message_id) == text and not reply_markup:
+        return True
+    try:
+        payload = {
+            "chat_id": BOT_CHAT_ID,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
         if reply_markup:
-            # Need to edit both text and markup
-            try:
-                requests.post(EDIT_MESSAGE_URL, json={
-                    "chat_id": BOT_CHAT_ID,
-                    "message_id": _market_msg_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "reply_markup": reply_markup,
-                    "disable_web_page_preview": True,
-                }, timeout=10)
-                _last_edited[_market_msg_id] = text
-            except Exception as e:
-                print("[TG] Market dashboard edit error:", e)
+            payload["reply_markup"] = reply_markup
+        r = requests.post(EDIT_MESSAGE_URL, json=payload, timeout=10)
+        d = r.json()
+        if d.get("ok"):
+            _last_edited[message_id] = text
+            return True
+        elif "message is not modified" in str(d):
+            _last_edited[message_id] = text
+            return True
         else:
-            _edit(_market_msg_id, text)
+            print("[TG] Market edit error:", d)
+            return False
+    except Exception as e:
+        print("[TG] Market edit exception:", e)
+        return False
 
 
 # Keep old single-dashboard name as alias for backward compat

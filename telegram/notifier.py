@@ -49,6 +49,62 @@ _pending_confirm_id   = None
 _pending_confirm_resp = None
 
 # ─────────────────────────────────────────────────────────────────────
+# BACKGROUND TELEGRAM THREAD
+# Telegram I/O runs in a daemon thread with a queue.
+# Engine loop calls are non-blocking — never stall trading.
+# ─────────────────────────────────────────────────────────────────────
+import queue
+import threading
+
+_tg_queue   = queue.Queue(maxsize=20)   # capped — drop if full (old data useless)
+_poll_interval = 3.0                    # poll getUpdates every 3s, not every 1s
+_last_poll_ts  = 0.0
+
+def _tg_worker():
+    """Background thread: drains the send queue and polls commands every 3s."""
+    global _last_poll_ts
+    while True:
+        try:
+            # Drain all pending sends first (non-blocking)
+            while True:
+                try:
+                    fn, args, kwargs = _tg_queue.get_nowait()
+                    fn(*args, **kwargs)
+                    _tg_queue.task_done()
+                except queue.Empty:
+                    break
+                except Exception as e:
+                    print("[TG-thread] send error:", e)
+
+            # Poll commands every 3 seconds
+            now = time.time()
+            if now - _last_poll_ts >= _poll_interval:
+                _last_poll_ts = now
+                _poll_commands_internal()
+
+        except Exception as e:
+            print("[TG-thread] worker error:", e)
+
+        time.sleep(0.5)
+
+_tg_thread = None
+
+def _ensure_thread():
+    global _tg_thread
+    if _tg_thread is None or not _tg_thread.is_alive():
+        _tg_thread = threading.Thread(target=_tg_worker, daemon=True)
+        _tg_thread.start()
+
+
+def _tg_enqueue(fn, *args, **kwargs):
+    """Non-blocking enqueue. Drops silently if queue is full (stale data)."""
+    _ensure_thread()
+    try:
+        _tg_queue.put_nowait((fn, args, kwargs))
+    except queue.Full:
+        pass
+
+# ─────────────────────────────────────────────────────────────────────
 # PERSISTENT MESSAGE IDs  — survives process restarts
 # ─────────────────────────────────────────────────────────────────────
 _engine_msg_id = None   # "AI ENGINE" dashboard
@@ -147,19 +203,19 @@ def _answer_cb(callback_id, text=""):
 # ─────────────────────────────────────────────────────────────────────
 
 def send_bot(message, parse_mode="HTML"):
-    return _send(BOT_CHAT_ID, message, parse_mode=parse_mode)
+    _tg_enqueue(_send, BOT_CHAT_ID, message, parse_mode=parse_mode)
 
 
 def send_trade_channel(message):
-    return _send(CHANNEL_ID, message, parse_mode="HTML")
+    _tg_enqueue(_send, CHANNEL_ID, message, parse_mode="HTML")
 
 
 # ─────────────────────────────────────────────────────────────────────
 # DUAL DASHBOARD  — two persistent edit-in-place messages
 # ─────────────────────────────────────────────────────────────────────
 
-def send_or_edit_engine_dashboard(text: str):
-    """AI Engine Status — ML bias, technicals, decision, expectancy."""
+def _do_send_or_edit_engine(text: str):
+    """Actual send/edit — runs inside background thread."""
     global _engine_msg_id
     if _engine_msg_id is None:
         result = _send(BOT_CHAT_ID, text)
@@ -169,15 +225,14 @@ def send_or_edit_engine_dashboard(text: str):
     else:
         ok = _edit(_engine_msg_id, text)
         if not ok:
-            # Message was deleted or expired — create a fresh one
             old_id = _engine_msg_id
             _engine_msg_id = None
             _last_edited.pop(old_id, None)
-            send_or_edit_engine_dashboard(text)
+            _do_send_or_edit_engine(text)
 
 
-def send_or_edit_market_dashboard(text: str, reply_markup=None):
-    """Live Market Status — position card, ORB, market internals."""
+def _do_send_or_edit_market(text: str, reply_markup=None):
+    """Actual send/edit — runs inside background thread."""
     global _market_msg_id
     if _market_msg_id is None:
         result = _send(BOT_CHAT_ID, text, reply_markup=reply_markup)
@@ -190,7 +245,17 @@ def send_or_edit_market_dashboard(text: str, reply_markup=None):
             old_id = _market_msg_id
             _market_msg_id = None
             _last_edited.pop(old_id, None)
-            send_or_edit_market_dashboard(text, reply_markup)
+            _do_send_or_edit_market(text, reply_markup)
+
+
+def send_or_edit_engine_dashboard(text: str):
+    """Non-blocking enqueue — returns instantly, thread does the actual I/O."""
+    _tg_enqueue(_do_send_or_edit_engine, text)
+
+
+def send_or_edit_market_dashboard(text: str, reply_markup=None):
+    """Non-blocking enqueue — returns instantly, thread does the actual I/O."""
+    _tg_enqueue(_do_send_or_edit_market, text, reply_markup)
 
 
 def _edit_with_markup(message_id, text, reply_markup=None) -> bool:
@@ -290,10 +355,10 @@ def ask_trade_permission(side: str, price: float, ml_prob: float,
 
     deadline = time.time() + 30
     while time.time() < deadline:
-        poll_commands()
+        # Background thread polls Telegram — just wait for it to set the response
         if _pending_confirm_resp is not None:
             break
-        time.sleep(0.5)
+        time.sleep(0.3)
 
     resp = _pending_confirm_resp
     _pending_confirm_id   = None
@@ -319,7 +384,8 @@ _HELP_TEXT = (
 )
 
 
-def poll_commands(status_cb=None):
+def _poll_commands_internal(status_cb=None):
+    """Called by background thread — never call directly from engine loop."""
     global _last_update_id, MANUAL_EXIT_REQUESTED, ENGINE_PAUSED
     global ENGINE_STOP_REQUESTED, CE_THRESHOLD_OVERRIDE, PE_THRESHOLD_OVERRIDE
     global _pending_confirm_resp
@@ -408,8 +474,9 @@ def poll_commands(status_cb=None):
                     send_bot("Dashboard reset — fresh messages will be created next cycle.")
 
                 elif cmd == "/status":
-                    info = status_cb() if status_cb else "Status unavailable."
-                    send_bot(info)
+                    cb   = status_cb or _status_callback
+                    info = cb() if cb else "Status unavailable."
+                    _send(BOT_CHAT_ID, info)
 
                 elif cmd == "/help":
                     send_bot(_HELP_TEXT)
@@ -421,5 +488,57 @@ def poll_commands(status_cb=None):
         print("[TG] poll_commands error:", e)
 
 
+_status_callback = None   # set by master_runner so /status works from thread
+
+def poll_commands(status_cb=None):
+    """
+    Called by engine loop every cycle. Intentionally instant — no network I/O.
+    The background thread handles all actual Telegram polling.
+    Optionally registers a status callback for /status command.
+    """
+    global _status_callback
+    if status_cb is not None:
+        _status_callback = status_cb
+
+
 def poll_manual_exit(status_cb=None):
     poll_commands(status_cb=status_cb)
+
+
+def send_eod_summary(summary: dict):
+    """
+    Send end-of-day trade summary to bot chat.
+    summary dict keys: trades, pnl, wins, losses, avg_win, avg_loss,
+                       best, worst, win_rate
+    """
+    from datetime import date
+    t      = summary.get("trades", 0)
+    pnl    = summary.get("pnl", 0)
+    wins   = summary.get("wins", 0)
+    losses = summary.get("losses", 0)
+    wr     = summary.get("win_rate", 0)
+    avg_w  = summary.get("avg_win", 0)
+    avg_l  = summary.get("avg_loss", 0)
+    best   = summary.get("best", 0)
+    worst  = summary.get("worst", 0)
+
+    pnl_str = f"+{pnl:,.0f}" if pnl >= 0 else f"{pnl:,.0f}"
+    status  = "PROFIT DAY" if pnl > 0 else ("BREAK EVEN" if pnl == 0 else "LOSS DAY")
+
+    msg = (
+        f"<b>END OF DAY — {date.today().strftime('%d %b %Y')}</b>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"Status    : {status}\n"
+        f"Total P&amp;L : <b>₹{pnl_str}</b>\n"
+        f"\n"
+        f"Trades    : {t}  ({wins}W / {losses}L)\n"
+        f"Win Rate  : {wr:.0f}%\n"
+        f"Avg Win   : +₹{avg_w:,.0f}\n"
+        f"Avg Loss  : ₹{avg_l:,.0f}\n"
+        f"Best      : +₹{best:,.0f}\n"
+        f"Worst     : ₹{worst:,.0f}\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"<i>DRY RUN — no real money</i>"
+    )
+    _tg_enqueue(_send, BOT_CHAT_ID, msg)
+    _tg_enqueue(_send, CHANNEL_ID, msg)

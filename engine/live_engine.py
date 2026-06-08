@@ -123,11 +123,13 @@ class LiveEngine:
                 self.orb_low  = min(self.orb_low,  candle["low"])
 
         elif now >= _ORB_END and not self.orb_done:
-            # Lock ORB after 9:30
             self.orb_done = True
-            logger.info(
-                f"[ORB LOCKED] High={self.orb_high:.2f}  Low={self.orb_low:.2f}"
-            )
+            if self.orb_high is not None and self.orb_low is not None:
+                logger.info(
+                    f"[ORB LOCKED] High={self.orb_high:.2f}  Low={self.orb_low:.2f}"
+                )
+            else:
+                logger.info("[ORB LOCKED] Engine started after 9:30 — no ORB data")
 
     # ══════════════════════════════════════════════════════════════════
     # DAY CLASSIFIER  (runs once at 9:45)

@@ -79,8 +79,9 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
     pe_adj = ms.get("pe_adj", 0.0)
     ce_raw = ms.get("ce_prob", 0.0)
     pe_raw = ms.get("pe_prob", 0.0)
-    thr    = ms.get("ml_threshold", 0.62)
-    ce_lbl = _bias_label(ce_adj, thr)
+    thr     = ms.get("ml_threshold", 0.65)   # PE threshold
+    ce_thr  = ms.get("ce_threshold", 0.70)   # CE threshold (higher)
+    ce_lbl = _bias_label(ce_adj, ce_thr)
     pe_lbl = _bias_label(pe_adj, thr)
 
     # Scoring
@@ -124,9 +125,8 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
         f"Supertrend: {st_str}   VWAP: {vwap:,.0f} ({pvwap:+.2f}%)\n"
         f"\n"
         f"<b>ML BIAS</b>\n"
-        f"CE  {ce_adj:.2f} {_bar(ce_adj)}  {ce_lbl}  (raw {ce_raw:.2f})\n"
-        f"PE  {pe_adj:.2f} {_bar(pe_adj)}  {pe_lbl}  (raw {pe_raw:.2f})\n"
-        f"Threshold: {thr:.2f}\n"
+        f"CE  {ce_adj:.2f} {_bar(ce_adj)}  {ce_lbl}  (raw {ce_raw:.2f})  thr={ce_thr:.2f}\n"
+        f"PE  {pe_adj:.2f} {_bar(pe_adj)}  {pe_lbl}  (raw {pe_raw:.2f})  thr={thr:.2f}\n"
         f"\n"
         f"<b>SCORING</b>\n"
         f"Score:  {score:.1f}  {'[PASS]' if score_ok else '[FAIL]'}  (req {score_r:.0f})\n"

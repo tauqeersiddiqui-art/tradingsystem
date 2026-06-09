@@ -386,13 +386,29 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # ══════════════════════════════════════════════════════════
 
             if position is not None:
-                pos_ltp      = builder.ltp() or position["entry"]
+                # CRITICAL FIX: use option premium LTP, NOT NIFTY spot.
+                # builder.ltp() returns NIFTY 50 spot (~23500) which is always
+                # above the option target (~42), causing TARGET_HIT every cycle.
+                _opt_ltp = ctx.broker.ltp(position["symbol"])
+                pos_ltp  = _opt_ltp if (_opt_ltp and _opt_ltp > 0) else position["entry"]
                 held_seconds = (ts - entry_time).total_seconds() if entry_time else 0
 
                 # ── Trailing / profit_manager via live_engine.check_exit ──
                 exit_flag, exit_reason = ctx.live_engine.check_exit(
                     position, pos_ltp, held_seconds
                 )
+
+                # ── Minimum ₹250 profit gate — never exit on profit-taking
+                #    until this trade has made at least ₹250
+                if exit_flag and exit_reason in ("TARGET_HIT", "Drawdown"):
+                    _cur_pnl = (pos_ltp - position["entry"]) * position["qty"]
+                    if _cur_pnl < 250:
+                        logger.info(
+                            f"[GATE] MIN_PROFIT blocked {exit_reason}: "
+                            f"pnl={_cur_pnl:.0f} < 250 (holding)"
+                        )
+                        exit_flag  = False
+                        exit_reason = ""
 
                 # ── Hard stop loss (belt + suspenders) ────────────────
                 if pos_ltp <= position.get("stop_loss", position["entry"] * 0.90):
@@ -472,15 +488,17 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     position        = None
                     entry_time      = None
                     entry_order_rec = None
+                    # Stamp exit time for re-entry cooldown in live_engine
+                    ctx.live_engine._last_exit_ts = time.time()
 
-                    # Auto-pause after 3 consecutive stop losses
+                    # Auto-pause after 2 consecutive stop losses
                     if exit_reason in ("STOP", "Stop Loss", "Drawdown"):
                         consecutive_stops += 1
-                        if consecutive_stops >= 3:
+                        if consecutive_stops >= 2:
                             import telegram.notifier as _tn
                             _tn.ENGINE_PAUSED = True
                             tg_force(
-                                "AUTO-PAUSE: 3 consecutive stops hit.\n"
+                                "AUTO-PAUSE: 2 consecutive stops hit.\n"
                                 "Send /resume to re-enable entries."
                             )
                     else:
@@ -534,6 +552,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if ctx.trades_today >= max_trades:
                     logger.debug(f"[GATE] Max trades reached: {ctx.trades_today}")
                     decision = None
+
+            if decision is not None and position is None:
+                # Re-entry cooldown guard (defence against async execution queue bypass)
+                _exit_ts = getattr(ctx.live_engine, "_last_exit_ts", 0.0)
+                if _exit_ts > 0:
+                    _secs = time.time() - _exit_ts
+                    if _secs < 180:
+                        logger.info(f"[GATE] COOLDOWN — {int(180-_secs)}s remaining since last exit")
+                        decision = None
 
             if decision is not None and position is None:
 

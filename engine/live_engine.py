@@ -11,6 +11,7 @@
 #   FIX-7 : check_exit() now delegates to profit_manager.manage_position()
 
 import os
+import time
 import logging
 from datetime import datetime, time as dtime
 
@@ -38,11 +39,12 @@ _MIN_EXPECTED_PNL = 150.0
 
 # ── ML floors — per-side thresholds ──────────────────────────────────
 # PE: 0.65 (backtest WR=58%, avg+174 at this level)
-# CE: 0.70 — raised from 0.55. War/bearish regime makes CE harder;
-#     only take CE when ML is highly confident (sharp bounce / recovery).
-#     Backtest CE ORB at 0.55 had 20% WR. At 0.70+ only strongest signals fire.
+# CE: 0.78 — raised from 0.70. Model is CE-biased (outputs 0.80-0.96 all day
+#     even on bear days). Higher floor forces only truly exceptional signals.
+#     On RANGE regime days, CE_ML_FLOOR rises further to 0.85 (see STEP 5).
 _MIN_ML_FLOOR    = 0.65   # PE floor
-_CE_ML_FLOOR     = 0.70   # CE needs higher confidence
+_CE_ML_FLOOR     = 0.78   # CE needs high confidence — model is CE-biased
+_REENTRY_COOLDOWN = 180.0  # seconds to wait after any exit before next entry
 _CE_ORB_ENABLED  = True   # CE allowed but gated by _CE_ML_FLOOR
 
 # ── Try importing DayClassifier (model may not exist yet) ─────────────
@@ -91,6 +93,10 @@ class LiveEngine:
 
         # ── Intraday state ────────────────────────────────────────────
         self._open_price_set: bool = False
+
+        # ── Re-entry cooldown ─────────────────────────────────────────
+        self._last_exit_ts: float = 0.0   # epoch seconds of last trade exit
+        _COOLDOWN_SECS = 180              # 3-minute cooldown after any exit
 
         # ── Dashboard state (updated every cycle for rich display) ────
         self._last_block_reason: str = "WARMING_UP"
@@ -284,12 +290,18 @@ class LiveEngine:
         price_vs_vwap = (closes[-1] - vwap_val) / closes[-1] if (closes[-1] != 0 and vwap_val > 0) else 0.0
 
         # ── Update direction bias ─────────────────────────────────────
-        if last_st_dir == 1 and price_vs_vwap > 0:
+        # Paper trading: SuperTrend is the primary direction gate.
+        # VWAP agreement is tracked but not required — re-enable strict
+        # gate (both must agree) when switching to live capital.
+        vwap_confirms = (last_st_dir == 1 and price_vs_vwap > 0) or \
+                        (last_st_dir == -1 and price_vs_vwap < 0)
+        if last_st_dir == 1:
             self._direction_bias = 1
-        elif last_st_dir == -1 and price_vs_vwap < 0:
+        elif last_st_dir == -1:
             self._direction_bias = -1
         else:
             self._direction_bias = 0
+        self._vwap_confirms = vwap_confirms  # stored for dashboard/logging
 
         return {
             "ema20":          ema20,
@@ -346,18 +358,29 @@ class LiveEngine:
         if now >= dtime(15, 15):
             self._last_block_reason = "MARKET_CLOSING (after 15:15)"
             return None
-        if _LUNCH_START <= now < _LUNCH_END:
-            self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
-            return None
+        # LUNCH_FILTER disabled — re-enable when switching to live capital
+        # if _LUNCH_START <= now < _LUNCH_END:
+        #     self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
+        #     return None
         if not features:
             self._last_block_reason = "INSUFFICIENT_DATA (<26 candles)"
             return None
 
+        # ── Re-entry cooldown ────────────────────────────────────────────
+        _secs_since_exit = time.time() - self._last_exit_ts
+        if self._last_exit_ts > 0 and _secs_since_exit < _REENTRY_COOLDOWN:
+            _wait = int(_REENTRY_COOLDOWN - _secs_since_exit)
+            self._last_block_reason = f"COOLDOWN ({_wait}s remaining)"
+            return None
+
         # ══ STEP 3: Direction gate ═══════════════════════════════════════
         direction_bias = self._direction_bias
+        vwap_confirms  = getattr(self, "_vwap_confirms", False)
+        _dir_str = "BULL" if direction_bias == 1 else ("BEAR" if direction_bias == -1 else "NONE")
+        _vwap_str = "VWAP✓" if vwap_confirms else "VWAP✗"
+        logger.info(f"[DIRECTION] dir={_dir_str} ST={features.get('supertrend_dir',0):.0f} {_vwap_str} pvwap={features.get('price_vs_vwap',0):.4f} CE={self._last_ce_adj:.3f} PE={self._last_pe_adj:.3f}")
         if direction_bias == 0:
-            self._last_block_reason = "NO_DIRECTION (ST+VWAP conflict)"
-            logger.debug("[DIRECTION] No clear bias — skipping candle")
+            self._last_block_reason = "NO_DIRECTION (ST=0)"
             return None
 
         # ══ STEP 4: Signal thresholds + ORB breakout ════════════════════
@@ -404,26 +427,36 @@ class LiveEngine:
             f"ML_BELOW_THR ({dir_str} | CE={ce_adj:.2f} PE={pe_adj:.2f} thr={threshold:.2f})"
         )
 
-        # CE — only on the actual ORB breakout candle, with higher ML floor (0.70)
-        # War/bearish regime: CE needs stronger conviction than PE.
-        # Only the ORB breakout candle qualifies; pure ML_CE follow-on is blocked.
-        if not _CE_ORB_ENABLED or not ce_breakout:
+        # CE entry — requires BULL direction + VWAP confirmation.
+        # VWAP✗ on a BULL ST signal = false bounce, not a real uptrend.
+        # On RANGE days, pure ML_CE floor rises to 0.85 (model fires too freely on chop).
+        if not _CE_ORB_ENABLED:
             ce_adj = 0.0
         else:
-            # Use higher of: model threshold or CE-specific floor (0.70)
-            ce_thr = max(threshold - 0.03 if orb_ok else threshold, _CE_ML_FLOOR)
-            if ce_adj >= ce_thr:
-                blocked, reason_block = self.learner.is_side_blocked("CE")
-                if blocked:
-                    self._last_block_reason = f"CE_BLOCKED ({reason_block})"
-                else:
-                    self._last_block_reason = f"SIGNAL_FIRE (ORB+ML_CE)"
-                    signal = {"side": "CE", "ml_prob": ce_adj,
-                              "features": features, "reason": "ORB+ML_CE"}
+            # Block CE if VWAP does not confirm direction (price below VWAP)
+            if direction_bias == 1 and not vwap_confirms:
+                self._last_block_reason = "CE_VWAP_FAIL (BULL but price below VWAP)"
+                ce_adj = 0.0
             else:
-                self._last_block_reason = (
-                    f"CE_WEAK (ce_adj={ce_adj:.2f} < floor={ce_thr:.2f})"
-                )
+                _pure_ml_ce = not ce_breakout
+                # On RANGE days, require extra-high CE confidence — model is noisy in chop
+                _regime_str = str(self.learner.get_day_type()).upper()
+                _is_range   = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
+                _ce_floor   = 0.85 if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
+                ce_thr = max(threshold - 0.03 if (ce_breakout and orb_ok) else threshold, _ce_floor)
+                if ce_adj >= ce_thr:
+                    blocked, reason_block = self.learner.is_side_blocked("CE")
+                    if blocked:
+                        self._last_block_reason = f"CE_BLOCKED ({reason_block})"
+                    else:
+                        reason = "ML_CE" if _pure_ml_ce else "ORB+ML_CE"
+                        self._last_block_reason = f"SIGNAL_FIRE ({reason})"
+                        signal = {"side": "CE", "ml_prob": ce_adj,
+                                  "features": features, "reason": reason}
+                else:
+                    self._last_block_reason = (
+                        f"CE_WEAK (ce_adj={ce_adj:.2f} < floor={ce_thr:.2f})"
+                    )
 
         # PE (only if CE not triggered)
         if signal is None:

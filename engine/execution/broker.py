@@ -34,8 +34,9 @@ class ZerodhaBroker:
             key = (inst["strike"], inst["instrument_type"])
             self.option_index.setdefault(key, []).append(inst)
 
-        self.ticker      = None
-        self._last_ticks = {}
+        self.ticker          = None
+        self._last_ticks     = {}
+        self._last_tick_time = time.time()   # grace period: watchdog won't alarm until 60s after start
 
     # ── websocket ────────────────────────────────────────────────────────────
 
@@ -46,6 +47,14 @@ class ZerodhaBroker:
         ]
         if not tokens:
             print("[BROKER] No tokens for feed"); return
+
+        # Close existing ticker before creating a new one
+        if self.ticker is not None:
+            try:
+                self.ticker.close()
+            except Exception:
+                pass
+            self.ticker = None
 
         self.ticker = KiteTicker(self.api_key, self.access_token)
 

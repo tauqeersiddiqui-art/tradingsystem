@@ -319,19 +319,21 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             _mkt_open  = __import__("datetime").time(9, 15)
             _mkt_close = __import__("datetime").time(15, 30)
             if _mkt_open <= now <= _mkt_close:
-                _last_tick = getattr(ctx.broker, "_last_tick_time", 0)
-                _stale_s   = time.time() - _last_tick if _last_tick else 999
-                if _stale_s > 60 and time.time() - _last_feed_warn > 120:
-                    _last_feed_warn = time.time()
-                    logger.warning(f"[WATCHDOG] Feed stale {_stale_s:.0f}s — reconnecting")
-                    tg_bot(
-                        f"⚠️ Feed stale ({_stale_s:.0f}s) — reconnecting...",
-                        key="watchdog", interval=120.0
-                    )
-                    try:
-                        ctx.broker.start_feed(["NIFTY 50"])
-                    except Exception as _wde:
-                        logger.error(f"[WATCHDOG] Reconnect failed: {_wde}")
+                # Only watch after first tick received (skip startup grace period)
+                if getattr(ctx.broker, "_last_ticks", {}):
+                    _last_tick = getattr(ctx.broker, "_last_tick_time", time.time())
+                    _stale_s   = time.time() - _last_tick
+                    if _stale_s > 60 and time.time() - _last_feed_warn > 120:
+                        _last_feed_warn = time.time()
+                        logger.warning(f"[WATCHDOG] Feed stale {_stale_s:.0f}s — reconnecting")
+                        tg_bot(
+                            f"⚠️ Feed stale ({_stale_s:.0f}s) — reconnecting...",
+                            key="watchdog", interval=120.0
+                        )
+                        try:
+                            ctx.broker.start_feed(["NIFTY 50"])
+                        except Exception as _wde:
+                            logger.error(f"[WATCHDOG] Reconnect failed: {_wde}")
 
             # ── Engine stop requested by user (/stop command) ─────────
             import telegram.notifier as _tn

@@ -36,16 +36,14 @@ _LUNCH_END      = dtime(12, 30)   # was 14:00 — 12:30-14:00 window recovered
 # ── Minimum expected PnL to accept a signal (capital safeguard) ───────
 _MIN_EXPECTED_PNL = 150.0
 
-# ── ML floor — never trade below this probability ─────────────────────
-# Backtest (203 days): PE@0.65 WR=58% avg+174, CE ORB WR=20% avg-196.
-# Raised PE floor to 0.65 for better selectivity.
-_MIN_ML_FLOOR = 0.65
-
-# ── CE ORB DISABLED (backtest finding) ───────────────────────────────
-# ORB+CE has 20% WR, avg -Rs196/trade over 203 days = net money drain.
-# CE breakout signals fire too late (fill is above true breakout price).
-# Disable until CE model is retrained on 2026 data.
-_CE_ORB_ENABLED = False
+# ── ML floors — per-side thresholds ──────────────────────────────────
+# PE: 0.65 (backtest WR=58%, avg+174 at this level)
+# CE: 0.70 — raised from 0.55. War/bearish regime makes CE harder;
+#     only take CE when ML is highly confident (sharp bounce / recovery).
+#     Backtest CE ORB at 0.55 had 20% WR. At 0.70+ only strongest signals fire.
+_MIN_ML_FLOOR    = 0.65   # PE floor
+_CE_ML_FLOOR     = 0.70   # CE needs higher confidence
+_CE_ORB_ENABLED  = True   # CE allowed but gated by _CE_ML_FLOOR
 
 # ── Try importing DayClassifier (model may not exist yet) ─────────────
 try:
@@ -367,8 +365,10 @@ class LiveEngine:
             self._day_clf and self._day_classified and self._day_clf.should_trade_orb()
         )
 
-        price     = df_window["close"].iloc[-1]
-        threshold = max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR)
+        price      = df_window["close"].iloc[-1]
+        threshold  = max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR)
+        # CE uses a higher independent floor — weaker CE signals skipped
+        ce_floor   = max(threshold, _CE_ML_FLOOR)
 
         ce_breakout = (
             self.orb_done and self.orb_high is not None and
@@ -404,24 +404,26 @@ class LiveEngine:
             f"ML_BELOW_THR ({dir_str} | CE={ce_adj:.2f} PE={pe_adj:.2f} thr={threshold:.2f})"
         )
 
-        # CE — disabled per backtest: ORB+CE had 20% WR, avg -Rs196/trade.
-        # Will re-enable when CE model is retrained on 2026 data.
-        if not _CE_ORB_ENABLED:
+        # CE — only on the actual ORB breakout candle, with higher ML floor (0.70)
+        # War/bearish regime: CE needs stronger conviction than PE.
+        # Only the ORB breakout candle qualifies; pure ML_CE follow-on is blocked.
+        if not _CE_ORB_ENABLED or not ce_breakout:
             ce_adj = 0.0
         else:
-            # CE — only on the actual ORB breakout candle
-            ce_thr = threshold - 0.03 if (ce_breakout and orb_ok) else threshold
-            if not ce_breakout:
-                ce_adj = 0.0
+            # Use higher of: model threshold or CE-specific floor (0.70)
+            ce_thr = max(threshold - 0.03 if orb_ok else threshold, _CE_ML_FLOOR)
             if ce_adj >= ce_thr:
                 blocked, reason_block = self.learner.is_side_blocked("CE")
                 if blocked:
                     self._last_block_reason = f"CE_BLOCKED ({reason_block})"
                 else:
-                    reason = "ORB+ML_CE" if ce_breakout else "ML_CE"
-                    self._last_block_reason = f"SIGNAL_FIRE ({reason})"
+                    self._last_block_reason = f"SIGNAL_FIRE (ORB+ML_CE)"
                     signal = {"side": "CE", "ml_prob": ce_adj,
-                              "features": features, "reason": reason}
+                              "features": features, "reason": "ORB+ML_CE"}
+            else:
+                self._last_block_reason = (
+                    f"CE_WEAK (ce_adj={ce_adj:.2f} < floor={ce_thr:.2f})"
+                )
 
         # PE (only if CE not triggered)
         if signal is None:
@@ -528,6 +530,7 @@ class LiveEngine:
             "ce_adj":          self._last_ce_adj,
             "pe_adj":          self._last_pe_adj,
             "ml_threshold":    max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR),
+            "ce_threshold":    max(self.learner.get_ml_threshold(), _CE_ML_FLOOR),
             "block_reason":    self._last_block_reason,
             # Scoring
             "ml_percentile":   self._ml_percentile(max(self._last_ce_adj, self._last_pe_adj)),

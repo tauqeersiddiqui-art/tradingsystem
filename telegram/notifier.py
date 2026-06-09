@@ -57,12 +57,15 @@ import queue
 import threading
 
 _tg_queue   = queue.Queue(maxsize=20)   # capped — drop if full (old data useless)
-_poll_interval = 3.0                    # poll getUpdates every 3s, not every 1s
-_last_poll_ts  = 0.0
+_poll_interval     = 3.0   # poll getUpdates every 3s when healthy
+_poll_interval_max = 60.0  # back off to 60s after consecutive failures
+_last_poll_ts      = 0.0
+_poll_fail_count   = 0
 
 def _tg_worker():
     """Background thread: drains the send queue and polls commands every 3s."""
-    global _last_poll_ts
+    global _last_poll_ts, _poll_fail_count
+    current_interval = _poll_interval
     while True:
         try:
             # Drain all pending sends first (non-blocking)
@@ -76,11 +79,18 @@ def _tg_worker():
                 except Exception as e:
                     print("[TG-thread] send error:", e)
 
-            # Poll commands every 3 seconds
+            # Poll commands with exponential backoff on failure
             now = time.time()
-            if now - _last_poll_ts >= _poll_interval:
+            if now - _last_poll_ts >= current_interval:
                 _last_poll_ts = now
+                before = _poll_fail_count
                 _poll_commands_internal()
+                if _poll_fail_count > before:
+                    # failure — back off (double interval, cap at max)
+                    current_interval = min(current_interval * 2, _poll_interval_max)
+                else:
+                    # success — reset to normal interval
+                    current_interval = _poll_interval
 
         except Exception as e:
             print("[TG-thread] worker error:", e)
@@ -388,7 +398,7 @@ def _poll_commands_internal(status_cb=None):
     """Called by background thread — never call directly from engine loop."""
     global _last_update_id, MANUAL_EXIT_REQUESTED, ENGINE_PAUSED
     global ENGINE_STOP_REQUESTED, CE_THRESHOLD_OVERRIDE, PE_THRESHOLD_OVERRIDE
-    global _pending_confirm_resp
+    global _pending_confirm_resp, _poll_fail_count
 
     try:
         params = {"timeout": 0, "allowed_updates": ["message", "callback_query"]}
@@ -485,7 +495,11 @@ def _poll_commands_internal(status_cb=None):
                     send_bot(f"Unknown: {cmd}\n" + _HELP_TEXT)
 
     except Exception as e:
-        print("[TG] poll_commands error:", e)
+        _poll_fail_count += 1
+        if _poll_fail_count == 1 or _poll_fail_count % 10 == 0:
+            print(f"[TG] poll_commands error (#{_poll_fail_count}):", e)
+    else:
+        _poll_fail_count = 0
 
 
 _status_callback = None   # set by master_runner so /status works from thread

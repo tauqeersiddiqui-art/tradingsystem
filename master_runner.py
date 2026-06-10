@@ -1153,7 +1153,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     current_pnl=ctx.pnl,
                 ) or 1
 
-                # ── Telegram confirmation (30s timeout → auto-execute) ─
+                # ── Telegram confirmation (3s timeout → auto-execute) ──
                 _confirmed = ask_trade_permission(
                     side    = side,
                     price   = builder.ltp() or 0.0,

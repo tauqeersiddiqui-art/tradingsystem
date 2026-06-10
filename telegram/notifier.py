@@ -392,7 +392,7 @@ def _do_repost_engine(text: str):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# TRADE CONFIRMATION  — YES / SKIP with 30s auto-execute timeout
+# TRADE CONFIRMATION  — YES / SKIP with 3s auto-execute timeout
 # ─────────────────────────────────────────────────────────────────────
 
 def ask_trade_permission(side: str, price: float, ml_prob: float,
@@ -407,7 +407,7 @@ def ask_trade_permission(side: str, price: float, ml_prob: float,
         f"<b>SIGNAL: {side}</b>\n"
         f"Entry ~{price:.1f}  |  ML {ml_prob:.0%}\n"
         f"SL {stop:.1f}  Target {target:.1f}\n"
-        f"<i>Auto-execute in 30s</i>"
+        f"<i>Auto-execute in 3s</i>"
     )
     kb = {"inline_keyboard": [[
         {"text": "YES — Execute", "callback_data": f"trade_yes_{uid}"},
@@ -415,7 +415,7 @@ def ask_trade_permission(side: str, price: float, ml_prob: float,
     ]]}
     _send(BOT_CHAT_ID, msg, reply_markup=kb)
 
-    deadline = time.time() + 30
+    deadline = time.time() + 3
     while time.time() < deadline:
         # Background thread polls Telegram — just wait for it to set the response
         if _pending_confirm_resp is not None:

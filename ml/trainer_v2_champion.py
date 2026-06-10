@@ -54,9 +54,22 @@ def get_features(df):
     return FEATURE_COLUMNS, df
 
 
-def make_sample_weights(y):
+def make_sample_weights(y, timestamps=None, recency_multiplier=3.0, recency_cutoff='2024-01-01'):
+    """
+    Base weights: winning labels get LOSS_COST_WEIGHT (unchanged).
+    Recency: rows from recency_cutoff onward get recency_multiplier applied.
+    This recalibrates CE model toward 2024-2026 market regime where NIFTY
+    has been declining — CE signals trained on 2020-2022 bull-market patterns
+    are misfiring in the current environment (live CE WR=14% vs in-sample 80%).
+    """
     w = np.ones(len(y))
     w[y == 1] = LOSS_COST_WEIGHT
+    if timestamps is not None:
+        cutoff = pd.Timestamp(recency_cutoff)
+        recent_mask = pd.to_datetime(timestamps) >= cutoff
+        w[recent_mask] *= recency_multiplier
+        n_recent = recent_mask.sum()
+        print(f"  [RECENCY] {n_recent:,} rows >= {recency_cutoff} weighted x{recency_multiplier}")
     return w
 
 
@@ -127,7 +140,7 @@ def validate_label_balance(df, label_col):
     print(f"  [CHECK] {label_col} rate={rate:.1%} - OK")
 
 
-def train_direction(df, features, label_col, model_name):
+def train_direction(df, features, label_col, model_name, use_recency_weight=False):
     print(f"\n{'-'*56}")
     print(f"  Training: {model_name}  |  Label: {label_col}")
     print(f"{'-'*56}")
@@ -136,7 +149,10 @@ def train_direction(df, features, label_col, model_name):
 
     X = df[features].values
     y = df[label_col].values
-    print(f"  Positive rate: {y.mean():.1%}  |  Samples: {len(y):,}")
+    # Timestamps for recency weighting — use 'timestamp' or 'date' column
+    ts_col = 'timestamp' if 'timestamp' in df.columns else ('date' if 'date' in df.columns else None)
+    timestamps = df[ts_col].values if (ts_col and use_recency_weight) else None
+    print(f"  Positive rate: {y.mean():.1%}  |  Samples: {len(y):,}  |  recency_weight={use_recency_weight}")
 
     params = dict(
         n_estimators=500, learning_rate=0.02, max_depth=6, num_leaves=31,
@@ -153,7 +169,8 @@ def train_direction(df, features, label_col, model_name):
     print("  Walk-forward CV:")
     for fold, (tr_idx, va_idx) in enumerate(tscv.split(X)):
         m = lgb.LGBMClassifier(**params)
-        m.fit(X[tr_idx], y[tr_idx], sample_weight=make_sample_weights(y[tr_idx]))
+        ts_fold = timestamps[tr_idx] if timestamps is not None else None
+        m.fit(X[tr_idx], y[tr_idx], sample_weight=make_sample_weights(y[tr_idx], ts_fold))
         if y[va_idx].sum() > 0:
             auc = roc_auc_score(y[va_idx], m.predict_proba(X[va_idx])[:, 1])
             X_va_df = pd.DataFrame(X[va_idx], columns=features)
@@ -170,7 +187,7 @@ def train_direction(df, features, label_col, model_name):
     print("  Training final model on full dataset...")
     X_df = pd.DataFrame(X, columns=features)
     final_model = lgb.LGBMClassifier(**params)
-    final_model.fit(X_df, y, sample_weight=make_sample_weights(y))
+    final_model.fit(X_df, y, sample_weight=make_sample_weights(y, timestamps))
 
     # FIX-4: calibration on rolling holdout (TimeSeriesSplit last fold)
     tscv_cal = TimeSeriesSplit(n_splits=5)
@@ -189,9 +206,8 @@ def train_direction(df, features, label_col, model_name):
     X30_df  = pd.DataFrame(X[split30:], columns=features)
     thresh_info = find_threshold(calibrated, X30_df, y[split30:])
 
-    # Offset PE threshold slightly higher (PE signals noisier)
-    if label_col == "label_pe":
-        thresh_info["threshold"] = max(0.20, round(thresh_info["threshold"] + 0.02, 2))
+    # Note: PE threshold bump removed — PE is the profitable side (PF=2.17 live)
+    # and artificial restriction reduces its edge. Threshold is now purely data-driven.
 
     print(f"  Optimal threshold: {thresh_info}")
 
@@ -248,8 +264,10 @@ def main():
         df_ce = df
         df_pe = df
 
-    ce = train_direction(df_ce, features, "label_ce", "champion_ce_lgbm.pkl")
-    pe = train_direction(df_pe, features, "label_pe", "champion_pe_lgbm.pkl")
+    # CE: recency-weighted (3x for 2024-2026) to recalibrate toward current declining market
+    # PE: no recency weighting — PE edge is stable across regimes (PF=2.17 live)
+    ce = train_direction(df_ce, features, "label_ce", "champion_ce_lgbm.pkl", use_recency_weight=True)
+    pe = train_direction(df_pe, features, "label_pe", "champion_pe_lgbm.pkl", use_recency_weight=False)
 
     print(f"\n{'='*60}")
     print(f"  CE: AUC={ce['mean_auc']:.3f}  Threshold={ce['threshold']}  Expectancy=Rs{ce['expectancy']}")

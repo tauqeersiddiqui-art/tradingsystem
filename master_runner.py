@@ -54,14 +54,35 @@ from engine.risk.risk_manager import compute_entry_stops
 from engine.services.trade_logger import log_trade, today_summary
 from engine.diagnostics import TradeJournal, generate_eod_report
 
+# Analytics suite (Features 1–8) — observational only, no trading logic
+from engine.analytics.trade_replay import TradeReplay
+from engine.analytics.slippage import log_slip, slippage_stats
+from engine.analytics.performance import (
+    eod_review,
+    regime_breakdown,
+    ml_bucket_breakdown,
+    drift_check,
+    setup_breakdown,
+    equity_curve_stats,
+)
+
 from ml.ml_intraday_learner import IntradayMLLearner
 
 from engine.services.dashboard import render_engine, render_market
 
-from telegram.messages import format_trade_entry, format_trade_exit
+from telegram.messages import (
+    format_trade_entry,
+    format_trade_exit,
+    format_trade_live,
+    format_engine_dashboard,
+)
 from telegram.notifier import (
     send_trade_entry_with_exit_button,
+    update_trade_live,
+    delete_trade_message,
+    repost_engine_dashboard,
     send_bot,
+    send_trade_channel,
     remove_exit_button,
     poll_commands,
     ask_trade_permission,
@@ -96,8 +117,234 @@ class _TelegramThrottle:
 
 _tg = _TelegramThrottle()
 
+_WATCHDOG_MAX_RESTARTS = int(os.getenv("WATCHDOG_MAX_RESTARTS", "5"))
+_WATCHDOG_INTERVAL_S   = 30
 
-def tg_bot(msg: str, key: str = "generic", interval: float = 10.0):
+
+# ══════════════════════════════════════════════════════════════════════
+# F1 — ENGINE WATCHDOG
+# ══════════════════════════════════════════════════════════════════════
+
+class EngineWatchdog:
+    """
+    Supervisor thread: monitors _engine_thread every 30 s, auto-restarts
+    on death/crash. Respects three safety guards before any restart:
+      - open broker position  - daily loss lock  - emergency /stop
+    Stops permanently after WATCHDOG_MAX_RESTARTS consecutive restarts.
+    """
+
+    def __init__(self, ctx: TradingContext, builder):
+        self._ctx      = ctx
+        self._builder  = builder
+        self._restarts = 0
+        self._active   = True
+        self._thread   = threading.Thread(
+            target=self._loop, name="engine-watchdog", daemon=True
+        )
+        self._thread.start()
+        logger.info("[ENGINE WATCHDOG] Engine healthy")
+
+    def stop(self):
+        self._active = False
+
+    def _safe_to_restart(self) -> tuple:
+        import telegram.notifier as _tn
+        if _tn.ENGINE_STOP_REQUESTED:
+            return False, "emergency_shutdown"
+        daily_limit = getattr(self._ctx.config, "DAILY_LOSS_LIMIT", -99999)
+        if self._ctx.pnl <= daily_limit:
+            return False, "daily_loss_lock"
+        try:
+            if self._ctx.broker.has_open_position():
+                return False, "open_position"
+        except Exception:
+            return False, "broker_check_failed"
+        return True, ""
+
+    def _loop(self):
+        while self._active:
+            time.sleep(_WATCHDOG_INTERVAL_S)
+            if not self._active:
+                break
+            if _engine_thread is None or not _engine_thread.is_alive():
+                reason = "thread_died"
+                if self._restarts >= _WATCHDOG_MAX_RESTARTS:
+                    msg = (
+                        f"[ENGINE WATCHDOG] Max restarts ({_WATCHDOG_MAX_RESTARTS})"
+                        " reached — manual intervention required"
+                    )
+                    logger.critical(msg)
+                    tg_force(msg)
+                    self._active = False
+                    break
+                ok, guard = self._safe_to_restart()
+                if not ok:
+                    logger.warning(
+                        f"[ENGINE WATCHDOG] Thread dead — NOT restarting: {guard}"
+                    )
+                    tg_force(
+                        f"[ENGINE WATCHDOG]\nEngine dead — NOT restarting\nReason: {guard}"
+                    )
+                    continue
+                self._restarts += 1
+                logger.warning(
+                    f"[ENGINE RECOVERY] Reason={reason} "
+                    f"Restart={self._restarts}/{_WATCHDOG_MAX_RESTARTS}"
+                )
+                tg_force(
+                    f"[ENGINE RECOVERY]\n"
+                    f"Reason={reason}\n"
+                    f"Restart={self._restarts}/{_WATCHDOG_MAX_RESTARTS}"
+                )
+                start_engine(self._ctx, self._builder)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# F2 — WEEKEND RETRAIN LOCK
+# ══════════════════════════════════════════════════════════════════════
+
+def _retrain_lock_path() -> str:
+    from datetime import date
+    today = date.today()
+    year, week, _ = today.isocalendar()
+    os.makedirs("data", exist_ok=True)
+    return os.path.join("data", f".retrain_lock_{year}_W{week:02d}")
+
+
+def retrain_lock_exists() -> bool:
+    """True if this weekend's retrain has already been completed."""
+    return os.path.exists(_retrain_lock_path())
+
+
+def write_retrain_lock():
+    """Call after a successful weekend retrain to prevent duplicate runs."""
+    path = _retrain_lock_path()
+    with open(path, "w") as f:
+        f.write(datetime.now().isoformat())
+    logger.info(f"[RETRAIN] Lock written: {path}")
+
+
+def check_retrain_lock() -> bool:
+    """Log and return True if retrain should be skipped."""
+    if retrain_lock_exists():
+        logger.info("[RETRAIN] Already completed this weekend — skipping")
+        return True
+    return False
+
+
+# ══════════════════════════════════════════════════════════════════════
+# F5/F6 — EXIT ANALYTICS HELPERS
+# ══════════════════════════════════════════════════════════════════════
+
+def _classify_exit_type(reason: str, stop_loss: float, entry: float) -> str:
+    if reason in ("STOP", "Stop Loss"):
+        diff = stop_loss - entry
+        if diff > 0.5:
+            return "TRAILING_STOP"
+        if abs(diff) <= 0.5:
+            return "BREAK_EVEN_STOP"
+        return "STOP_LOSS_HIT"
+    _map = {
+        "Drawdown":       "PROFIT_PROTECTION",
+        "TARGET_HIT":     "TARGET_HIT",
+        "TIME_EXIT_WEAK": "TIME_EXIT",
+        "MANUAL":         "MANUAL_EXIT",
+    }
+    if reason in _map:
+        return _map[reason]
+    if any(x in reason for x in ("ML_", "FAST_REVERSAL", "VOLATILE_DAY",
+                                   "RANGE_DAY", "TREND_DAY", "ML_EDGE")):
+        return "ML_EXIT"
+    return "OTHER"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# F7 — PROFIT RETENTION SIMULATION  (analysis-only, never changes exits)
+# ══════════════════════════════════════════════════════════════════════
+
+_LADDER_LEVELS = [
+    (2.0,  0.0),   # +2 pts → break-even
+    (4.0,  1.0),   # +4 pts → lock +1 pt
+    (6.0,  3.0),   # +6 pts → lock +3 pts
+    (10.0, 6.0),   # +10 pts → lock +6 pts
+]
+
+
+def _profit_retention_sim(ctx: TradingContext) -> str | None:
+    ea = getattr(ctx, "exit_analytics", None)
+    if not ea or not ea.get("realized_list"):
+        return None
+    n = len(ea["realized_list"])
+
+    actual_total = sum(ea["realized_list"])
+    sim_total    = 0.0
+    lines        = []
+
+    for i in range(n):
+        actual   = ea["realized_list"][i]
+        mfe_pts  = ea.get("mfe_pts_list", [0] * n)[i]
+        qty      = ea.get("qty_list",     [65] * n)[i]
+
+        best_lock_pts = None
+        for trigger_pts, lock_pts in reversed(_LADDER_LEVELS):
+            if mfe_pts >= trigger_pts:
+                best_lock_pts = lock_pts
+                break
+
+        sim_pnl = (
+            max(actual, best_lock_pts * qty)
+            if best_lock_pts is not None
+            else actual
+        )
+        sim_total += sim_pnl
+
+        act_str = f"+Rs{actual:,.0f}" if actual >= 0 else f"-Rs{abs(actual):,.0f}"
+        sim_str = f"+Rs{sim_pnl:,.0f}" if sim_pnl >= 0 else f"-Rs{abs(sim_pnl):,.0f}"
+        chg     = f"  → {sim_str}" if abs(sim_pnl - actual) > 1 else "  (same)"
+        lines.append(f"T{i+1}: MFE {mfe_pts:+.1f}pt  {act_str}{chg}")
+
+    diff  = sim_total - actual_total
+    sign  = "+" if diff >= 0 else ""
+    diff_str = f"{sign}Rs{abs(diff):,.0f}" if diff >= 0 else f"-Rs{abs(diff):,.0f}"
+    act_str  = f"+Rs{actual_total:,.0f}" if actual_total >= 0 else f"-Rs{abs(actual_total):,.0f}"
+    sim_str  = f"+Rs{sim_total:,.0f}" if sim_total >= 0 else f"-Rs{abs(sim_total):,.0f}"
+
+    return (
+        "📊 <b>PROFIT RETENTION SIMULATION</b>\n"
+        "<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        "Ladder: +2→BE | +4→+1pt | +6→+3pt | +10→+6pt\n\n"
+        + "\n".join(lines)
+        + f"\n\n<b>Current PnL     : {act_str}</b>\n"
+        f"<b>Simulated PnL   : {sim_str}</b>\n"
+        f"<b>Difference      : {diff_str}</b>\n"
+        "<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        "<i>Simulation only — no live behavior changed</i>"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# F8 — FEED HEALTH SNAPSHOT
+# ══════════════════════════════════════════════════════════════════════
+
+def _get_feed_health(broker) -> dict:
+    od = {}
+    try:
+        od = broker.get_option_feed_diagnostics()
+    except Exception:
+        pass
+    ws_connected = broker.ticker is not None
+    last_tick    = getattr(broker, "_last_tick_time", time.time())
+    return {
+        "ws_connected":  ws_connected,
+        "tick_age_s":    round(time.time() - last_tick, 1),
+        "token_count":   len(getattr(broker, "_option_tokens", [])) + 1,
+        "chain_live":    od.get("chain_tokens_live", 0),
+        "chain_total":   od.get("chain_tokens_total", 0),
+        "ce_oi":         od.get("ce_oi", 0),
+        "pe_oi":         od.get("pe_oi", 0),
+    }
+
+
     """Rate-limited send_bot wrapper."""
     if _tg.can_send(key, interval):
         try:
@@ -315,6 +562,18 @@ def build_context(broker) -> TradingContext:
     ctx.cycle_count  = 0
     ctx.trades_today = 0
 
+    # F5 — profit capture analytics
+    ctx.exit_analytics = {
+        "mfe_rs_list":  [],
+        "mae_rs_list":  [],
+        "mfe_pts_list": [],
+        "realized_list":[],
+        "capture_list": [],
+        "qty_list":     [],
+    }
+    # F6 — exit type counts
+    ctx.exit_type_counts: dict = {}
+
     # Diagnostics journal — observability only, zero strategy impact
     ctx.journal = TradeJournal()
     ctx.journal.log_startup(ctx.config)
@@ -359,6 +618,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _journal_id       = None    # diagnostics journal id for current open trade
     _last_atm_check   = 0.0     # epoch time of last ATM drift check
     _last_opt_diag    = 0.0     # epoch time of last [OPTION FEED] log
+    _last_heartbeat   = 0.0     # epoch time of last alive-ping to Telegram
+    ltp_current       = 0.0     # last known NIFTY spot LTP (avoids UnboundLocalError on first tick)
 
     def _status_cb():
         import telegram.notifier as _tn
@@ -420,6 +681,23 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         )
                 except Exception as _atm_e:
                     logger.warning(f"[ATM DRIFT] Check failed (non-fatal): {_atm_e}")
+
+            # ── Alive heartbeat (every 15 min in market hours) ───────
+            # New message (not edit) so the phone buzzes to confirm the bot is live.
+            if (time.time() - _last_heartbeat > 900
+                    and _mkt_open <= now <= _mkt_close):
+                _last_heartbeat = time.time()
+                import telegram.notifier as _tn
+                _hb_pos = (
+                    f"IN TRADE: {position['symbol']} @ {position['entry']:.1f}"
+                    if position else "No open position"
+                )
+                _hb_paused = " | PAUSED" if _tn.ENGINE_PAUSED else ""
+                tg_force(
+                    f"💓 Engine alive — {ts.strftime('%H:%M')}\n"
+                    f"NIFTY {ltp_current:,.1f} | PnL ₹{ctx.pnl:+.0f}\n"
+                    f"{_hb_pos}{_hb_paused}"
+                )
 
             # ── [OPTION FEED] periodic diagnostics (every 60 s) ──────
             if (time.time() - _last_opt_diag > 60
@@ -518,6 +796,21 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if _journal_id:
                     ctx.journal.on_tick(_journal_id, pos_ltp, position)
 
+                # F1: replay tick (observational — no effect on pos mgmt)
+                if position.get("_replay"):
+                    try:
+                        position["_replay"].on_tick(ts, pos_ltp, position)
+                    except Exception:
+                        pass
+
+                # ── Live trade card update (every 20s) ───────────────
+                if _tg.can_send("trade_live", 20.0) and entry_time is not None:
+                    try:
+                        live_msg = format_trade_live(position, pos_ltp, entry_time)
+                        update_trade_live(live_msg)
+                    except Exception as _lm_e:
+                        logger.debug(f"[TG] live update failed: {_lm_e}")
+
                 # ── Trailing / profit_manager via live_engine.check_exit ──
                 exit_flag, exit_reason = ctx.live_engine.check_exit(
                     position, pos_ltp, held_seconds
@@ -550,6 +843,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 # ── Execute exit ───────────────────────────────────────
                 if exit_flag:
+                    # F5: capture exit signal price before market order
+                    _exit_signal_ltp = pos_ltp
+
                     exit_order = ctx.executor.execute_exit(
                         symbol=position["symbol"],
                         qty=position["qty"],
@@ -594,6 +890,27 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _mfe_pts = position.get("max_pnl", 0.0) / max(position["qty"], 1)
                     _mae_pts = position.get("min_pnl", 0.0) / max(position["qty"], 1)
 
+                    # F5 — profit capture analytics
+                    _mfe_rs   = position.get("max_pnl", 0.0)
+                    _mae_rs   = position.get("min_pnl", 0.0)
+                    _capture  = round(pnl / _mfe_rs, 3) if _mfe_rs > 0.01 else 0.0
+                    ctx.exit_analytics["mfe_rs_list"].append(_mfe_rs)
+                    ctx.exit_analytics["mae_rs_list"].append(_mae_rs)
+                    ctx.exit_analytics["mfe_pts_list"].append(_mfe_pts)
+                    ctx.exit_analytics["realized_list"].append(pnl)
+                    ctx.exit_analytics["capture_list"].append(_capture)
+                    ctx.exit_analytics["qty_list"].append(position["qty"])
+
+                    # F6 — exit type classification
+                    _exit_type = _classify_exit_type(
+                        exit_reason,
+                        position.get("stop_loss", 0.0),
+                        position.get("entry", 0.0),
+                    )
+                    ctx.exit_type_counts[_exit_type] = (
+                        ctx.exit_type_counts.get(_exit_type, 0) + 1
+                    )
+
                     exit_msg = format_trade_exit({
                         "symbol":        position["symbol"],
                         "side":          position["side"],
@@ -610,8 +927,21 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "mae_pts":       _mae_pts,
                         "held_seconds":  held_seconds,
                     })
+                    # Delete live trade card, post clean exit card
+                    delete_trade_message()
                     tg_force(exit_msg)
-                    remove_exit_button()
+                    send_trade_channel(exit_msg)
+                    # Repost engine dashboard so it appears fresh at bottom
+                    try:
+                        _ms_exit = ctx.live_engine.get_market_state(ts)
+                        try:
+                            _ms_exit["feed_health"] = _get_feed_health(ctx.broker)
+                        except Exception:
+                            pass
+                        _eng_msg = format_engine_dashboard(ctx, _ms_exit, ltp_current)
+                        repost_engine_dashboard(_eng_msg)
+                    except Exception as _edash_e:
+                        logger.debug(f"[TG] engine repost failed: {_edash_e}")
 
                     _held_str = f"{int(held_seconds)//60}m {int(held_seconds)%60:02d}s"
                     logger.info(
@@ -645,6 +975,34 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         except Exception as _je:
                             logger.warning(f"[JOURNAL] on_exit failed (non-fatal): {_je}")
                         _journal_id = None
+
+                    # F1: finalize replay timeline + send to Telegram
+                    if position is not None and position.get("_replay"):
+                        try:
+                            position["_replay"].on_exit(
+                                ts, exit_price, exit_reason, pnl, _mae_pts
+                            )
+                            position["_replay"].save(str(ctx.trades_today))
+                            _replay_msg = position["_replay"].format_timeline()
+                            tg_force(_replay_msg)
+                        except Exception as _r_e:
+                            logger.warning(f"[REPLAY] Finalize failed: {_r_e}")
+
+                    # F5: log complete round-trip slippage record
+                    if position is not None:
+                        try:
+                            log_slip(
+                                symbol       = position["symbol"],
+                                side         = position["side"],
+                                entry_signal = position.get("_signal_entry_ltp", 0.0),
+                                entry_fill   = position["entry"],
+                                exit_signal  = _exit_signal_ltp,
+                                exit_fill    = exit_price,
+                                qty          = position["qty"],
+                                entry_time   = entry_time,
+                            )
+                        except Exception as _slip_e:
+                            logger.debug(f"[SLIP] Log failed: {_slip_e}")
 
                     position        = None
                     entry_time      = None
@@ -690,6 +1048,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 import telegram.notifier as _tn
                 if _tn.ENGINE_PAUSED:
                     logger.debug("[GATE] Engine paused — skipping entry")
+                    ctx.live_engine.record_block("PAUSED")
                     decision = None
 
             if decision is not None and position is None:
@@ -705,6 +1064,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f"[GATE] TG threshold override: {_side} prob={_ml_prob:.2f}"
                         f" < override={_thr_ov:.2f}"
                     )
+                    ctx.live_engine.record_block("TG_THRESHOLD")
                     decision = None
 
             if decision is not None and position is None:
@@ -712,6 +1072,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # FIX-8: max trades per day guard
                 if ctx.trades_today >= max_trades:
                     logger.debug(f"[GATE] Max trades reached: {ctx.trades_today}")
+                    ctx.live_engine.record_block("MAX_TRADES")
                     decision = None
 
             if decision is not None and position is None:
@@ -721,6 +1082,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _secs = time.time() - _exit_ts
                     if _secs < 180:
                         logger.info(f"[GATE] COOLDOWN — {int(180-_secs)}s remaining since last exit")
+                        ctx.live_engine.record_block("COOLDOWN")
                         decision = None
 
             if decision is not None and position is None:
@@ -749,6 +1111,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     option_chain = ctx.broker.get_option_chain_near_atm(strikes_range=5)
                     if has_oi_wall(option_chain, atm_strike, side):
                         logger.info(f"[GATE] OI wall blocked {side} entry")
+                        ctx.live_engine.record_block("OI_WALL")
                         decision = None
                 except Exception as _oi_e:
                     logger.warning(f"[OI FILTER] Error (non-fatal): {_oi_e}")
@@ -772,6 +1135,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 if qty <= 0:
                     logger.info(f"[GATE] Allocator returned qty=0 — skipping")
+                    ctx.live_engine.record_block("ALLOC_ZERO")
                     decision = None
 
             if decision is not None and position is None:
@@ -799,10 +1163,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 )
                 if not _confirmed:
                     logger.info(f"[GATE] Trade SKIPPED by user (Telegram SKIP)")
+                    ctx.live_engine.record_block("TG_SKIP")
                     decision = None  # fall through cleanly
 
                 if decision is not None:
                     pass  # proceed to execute below
+
+                # F5: capture option LTP just before market order (slippage baseline)
+                _signal_opt_ltp = 0.0
+                if decision is not None:
+                    try:
+                        _signal_opt_ltp = ctx.broker.ltp(symbol) or 0.0
+                    except Exception:
+                        pass
 
                 order = (
                     ctx.executor.execute_entry(symbol, side, qty * lot_size)
@@ -842,13 +1215,37 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     entry_order_rec = order
                     ctx.trades_today += 1
 
+                    # F1: start replay timeline (observational)
+                    try:
+                        _ms_entry = ctx.live_engine.get_market_state(ts)
+                        position["_replay"] = TradeReplay(
+                            position, ts, ltp_current, _ms_entry
+                        )
+                        # also store signal price for slippage (F5)
+                        position["_signal_entry_ltp"] = _signal_opt_ltp
+                    except Exception as _rep_e:
+                        logger.debug(f"[REPLAY] Init failed: {_rep_e}")
+
+                    # Fix empty journal: wire on_entry so diagnostics CSV populates
+                    try:
+                        _ms_j   = ctx.live_engine.get_market_state(ts)
+                        _jid    = ctx.journal.on_entry(
+                            position    = position,
+                            market_state= _ms_j,
+                            ts          = ts,
+                            nifty_spot  = ltp_current,
+                        )
+                        _journal_id = _jid
+                    except Exception as _je:
+                        logger.debug(f"[JOURNAL] on_entry failed: {_je}")
+
                     entry_msg = format_trade_entry({
                         "symbol":  symbol,
                         "side":    side,
                         "price":   position["entry"],
                         "qty":     order["qty"],
                         "stop":    stop_loss,
-                        "sl_pct":  f"{((stop_loss / position['entry']) - 1) * 100:.1f}",
+                        "target":  target,
                         "ml_prob": position["ml_prob"],
                         "regime":  position["regime"],
                     })
@@ -871,20 +1268,29 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if _tg.can_send("dashboard", dash_interval):
                 market_state = ctx.live_engine.get_market_state(ts)
+                # F8 — augment with live feed health + orb mode
+                try:
+                    market_state["feed_health"] = _get_feed_health(ctx.broker)
+                    _orb_mode = (
+                        "RECONSTRUCTED" if (ctx.live_engine.orb_done and
+                                            ctx.live_engine.orb_high is not None)
+                        else ("BUILDING" if not ctx.live_engine.orb_done else "UNAVAIL")
+                    )
+                    market_state["orb_mode"] = _orb_mode
+                except Exception:
+                    pass
 
-                # Dashboard 1: AI Engine — ML bias, technicals, decision
-                engine_msg = render_engine(ctx, market_state, ltp_current)
-                send_or_edit_engine_dashboard(engine_msg)
+                # Dashboard 1: AI Engine — delete old, post fresh at bottom
+                # Uses format_engine_dashboard (rich, emoji) not render_engine
+                try:
+                    engine_msg = format_engine_dashboard(ctx, market_state, ltp_current)
+                    repost_engine_dashboard(engine_msg)
+                except Exception as _ed_e:
+                    logger.debug(f"[TG] engine dashboard failed: {_ed_e}")
 
                 # Dashboard 2: Live Status — position card, ORB, internals
-                # Attach EXIT button only when in a position
-                if position is not None:
-                    market_msg = render_market(ctx, market_state, position, ltp_current)
-                    exit_kb    = {"inline_keyboard": [[
-                        {"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}
-                    ]]}
-                    send_or_edit_market_dashboard(market_msg, reply_markup=exit_kb)
-                else:
+                # Only shown when no active trade (trade card takes its place in-trade)
+                if position is None:
                     market_msg = render_market(ctx, market_state, None, ltp_current)
                     send_or_edit_market_dashboard(market_msg)
 
@@ -897,6 +1303,55 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     f"[EOD] Trades={summary['trades']} PnL=₹{summary['pnl']:.0f} "
                     f"WR={summary.get('win_rate',0):.0f}%"
                 )
+
+                # ── F2: comprehensive daily review ─────────────────────
+                try:
+                    tg_force(eod_review())
+                except Exception as _e2:
+                    logger.warning(f"[EOD F2] {_e2}")
+
+                # ── F7: profit retention simulation ────────────────────
+                try:
+                    _ret_report = _profit_retention_sim(ctx)
+                    if _ret_report:
+                        tg_force(_ret_report)
+                except Exception as _rr_e:
+                    logger.warning(f"[EOD F7 SIM] {_rr_e}")
+
+                # ── F6: strategy drift check (alert if degrading) ──────
+                try:
+                    _drift_rpt, _drift_alerts = drift_check()
+                    if _drift_alerts:
+                        tg_force(_drift_rpt)
+                        for _da in _drift_alerts:
+                            logger.warning(f"[DRIFT] {_da}")
+                except Exception as _e6:
+                    logger.warning(f"[EOD F6] {_e6}")
+
+                # ── F8: equity curve drawdown alert ────────────────────
+                try:
+                    _eq_rpt, _eq_alerts = equity_curve_stats()
+                    if _eq_alerts:
+                        for _ea in _eq_alerts:
+                            tg_force(_ea)
+                except Exception as _e8:
+                    logger.warning(f"[EOD F8] {_e8}")
+
+                # ── F5: slippage summary ────────────────────────────────
+                try:
+                    _slip_rpt = slippage_stats(n_trades=50)
+                    if _slip_rpt and "No slippage" not in _slip_rpt:
+                        tg_force(_slip_rpt)
+                except Exception as _e5:
+                    logger.warning(f"[EOD F5] {_e5}")
+
+                # ── F3/F4/F7 deep analytics — log only (not Telegram spam)
+                try:
+                    logger.info("[EOD F3 REGIME]\n" + regime_breakdown())
+                    logger.info("[EOD F4 ML_BUCKETS]\n" + ml_bucket_breakdown())
+                    logger.info("[EOD F7 SETUP]\n" + setup_breakdown())
+                except Exception as _e34:
+                    logger.warning(f"[EOD F3/F4/F7] {_e34}")
 
             # ── Health file update ────────────────────────────────────
             update_health(snapshot(ctx))
@@ -1044,6 +1499,16 @@ def main():
     except Exception as e:
         logger.critical(f"Engine start failed: {e}")
         return
+
+    # ── F1: Engine watchdog (starts after engine thread) ─────────────
+    try:
+        _watchdog = EngineWatchdog(ctx, builder)
+        logger.info(
+            f"[ENGINE WATCHDOG] Supervisor started — "
+            f"interval={_WATCHDOG_INTERVAL_S}s max_restarts={_WATCHDOG_MAX_RESTARTS}"
+        )
+    except Exception as _wd_e:
+        logger.warning(f"[ENGINE WATCHDOG] Failed to start (non-fatal): {_wd_e}")
 
     # ── Startup feed health report ────────────────────────────────────
     try:

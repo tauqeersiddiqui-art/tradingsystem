@@ -38,6 +38,16 @@ class ZerodhaBroker:
         self._last_ticks     = {}
         self._last_tick_time = time.time()   # grace period: watchdog won't alarm until 60s after start
 
+        # Option-chain subscription state.  Populated by subscribe_options();
+        # persisted so on_connect can re-subscribe after a watchdog reconnect.
+        self._option_tokens:  list = []   # integer instrument tokens
+        self._option_symbols: list = []   # tradingsymbols (for logging only)
+
+        # ATM-specific tracking for subscription drift detection and diagnostics
+        self._subscribed_atm:  int        = 0     # ATM strike used for last subscription
+        self._atm_ce_token:    int | None = None  # instrument_token of the ATM CE
+        self._atm_pe_token:    int | None = None  # instrument_token of the ATM PE
+
     # ── websocket ────────────────────────────────────────────────────────────
 
     def start_feed(self, symbols):
@@ -47,6 +57,7 @@ class ZerodhaBroker:
         ]
         if not tokens:
             print("[BROKER] No tokens for feed"); return
+        print(f"[BROKER] start_feed tokens: {dict(zip(symbols, tokens))}")
 
         # Close existing ticker before creating a new one
         if self.ticker is not None:
@@ -70,6 +81,17 @@ class ZerodhaBroker:
             # silently drops the tick on some Zerodha gateway versions.
             # Use MODE_QUOTE which reliably includes last_price for indices.
             ws.set_mode(ws.MODE_QUOTE, tokens)
+            # Restore option-chain subscriptions after any reconnect.
+            # On the first connect this list is empty; once subscribe_options()
+            # has run, every subsequent reconnect re-applies the same set so OI
+            # and option LTPs resume without restarting the engine.
+            if self._option_tokens:
+                ws.subscribe(self._option_tokens)
+                ws.set_mode(ws.MODE_QUOTE, self._option_tokens)
+                print(
+                    f"[BROKER] on_connect: re-subscribed {len(self._option_tokens)}"
+                    " option tokens"
+                )
 
         def on_close(ws, code, reason):
             print(f"[BROKER] Feed closed: {reason}")
@@ -82,6 +104,134 @@ class ZerodhaBroker:
         self.ticker.on_close   = on_close
         self.ticker.on_error   = on_error
         self.ticker.connect(threaded=True)
+
+    # ── option-chain subscriptions ───────────────────────────────────────────
+
+    def subscribe_options(self, strikes_range: int = 5) -> None:
+        """
+        Subscribe ATM CE/PE options and nearby strikes to the live WebSocket.
+
+        Computes the current ATM from NIFTY LTP, then subscribes the nearest
+        weekly/monthly expiry for every strike in [ATM - strikes_range*50 …
+        ATM + strikes_range*50] for both CE and PE (11 strikes × 2 sides = 22
+        tokens plus the NIFTY index already subscribed = 23 total).
+
+        MODE_QUOTE is used so ticks carry both `last_price` and `oi`.
+        Once subscribed, `get_option_chain_near_atm()` will return live OI
+        values instead of zero.
+
+        Safe to call at any time after start_feed(); idempotent — re-calling
+        refreshes the ATM and re-subscribes to the updated strike set.
+        """
+        spot = self.ltp("NSE:NIFTY 50")
+        if not spot:
+            print("[OPTIONS FEED] Cannot compute ATM — no NIFTY spot price yet")
+            return
+
+        atm = round(spot / 50) * 50
+        self._subscribed_atm = atm
+
+        tokens_to_sub:  list = []
+        symbols_to_sub: list = []
+        atm_ce_token:   int | None = None
+        atm_pe_token:   int | None = None
+        atm_ce_sym:     str = "n/a"
+        atm_pe_sym:     str = "n/a"
+
+        for i in range(-strikes_range, strikes_range + 1):
+            strike = atm + i * 50
+            for opt_type in ("CE", "PE"):
+                opts = self.option_index.get((strike, opt_type))
+                if not opts:
+                    continue
+                # Nearest expiry first
+                inst = sorted(opts, key=lambda x: x["expiry"])[0]
+                tok  = inst["instrument_token"]
+                sym  = inst["tradingsymbol"]
+                tokens_to_sub.append(tok)
+                symbols_to_sub.append(sym)
+                if strike == atm and opt_type == "CE":
+                    atm_ce_token = tok
+                    atm_ce_sym   = sym
+                if strike == atm and opt_type == "PE":
+                    atm_pe_token = tok
+                    atm_pe_sym   = sym
+
+        if not tokens_to_sub:
+            print("[OPTIONS FEED] No option tokens found near ATM — instrument list may be stale")
+            return
+
+        self._option_tokens  = tokens_to_sub
+        self._option_symbols = symbols_to_sub
+        self._atm_ce_token   = atm_ce_token
+        self._atm_pe_token   = atm_pe_token
+
+        # Push subscriptions onto the live WebSocket connection (if up).
+        # If the ticker is not yet connected, tokens are stored and on_connect
+        # will apply them on first/next connect.
+        if self.ticker is not None:
+            try:
+                self.ticker.subscribe(tokens_to_sub)
+                self.ticker.set_mode(self.ticker.MODE_QUOTE, tokens_to_sub)
+            except Exception as exc:
+                print(f"[OPTIONS FEED] subscribe() call failed: {exc}")
+                return
+
+        nifty_token  = 256265
+        chain_count  = len(tokens_to_sub) - (
+            (1 if atm_ce_token else 0) + (1 if atm_pe_token else 0)
+        )
+        total_tokens = len(tokens_to_sub) + 1   # +1 for NIFTY 50
+
+        print(f"[WS SUBSCRIBED]")
+        print(f"  NIFTY      token={nifty_token}")
+        print(f"  ATM CE     token={atm_ce_token}  ({atm_ce_sym})")
+        print(f"  ATM PE     token={atm_pe_token}  ({atm_pe_sym})")
+        print(f"  CHAIN TOKENS={chain_count}  (±{strikes_range} strikes excluding ATM)")
+        print(f"  TOTAL TOKENS={total_tokens}")
+
+    def refresh_atm_if_drifted(self, drift_points: int = 100) -> bool:
+        """
+        Re-subscribe options if NIFTY ATM has moved by drift_points since the
+        last subscribe_options() call.  Call periodically from the engine loop.
+        Returns True if a re-subscription was triggered, False otherwise.
+        """
+        if not self._subscribed_atm:
+            return False
+        spot = self.ltp("NSE:NIFTY 50")
+        if not spot:
+            return False
+        current_atm = round(spot / 50) * 50
+        if abs(current_atm - self._subscribed_atm) >= drift_points:
+            print(
+                f"[OPTIONS FEED] ATM drifted: {self._subscribed_atm} → {current_atm} "
+                f"— refreshing subscriptions"
+            )
+            self.subscribe_options()
+            return True
+        return False
+
+    def get_option_feed_diagnostics(self) -> dict:
+        """
+        Return a snapshot of live option-feed health.
+        Used for periodic [OPTION FEED] log in the engine loop.
+        """
+        ce_oi = (
+            self._last_ticks.get(self._atm_ce_token, {}).get("oi", 0)
+            if self._atm_ce_token else 0
+        )
+        pe_oi = (
+            self._last_ticks.get(self._atm_pe_token, {}).get("oi", 0)
+            if self._atm_pe_token else 0
+        )
+        chain_live = sum(1 for t in self._option_tokens if t in self._last_ticks)
+        return {
+            "ce_oi":             ce_oi,
+            "pe_oi":             pe_oi,
+            "chain_tokens_live": chain_live,
+            "chain_tokens_total": len(self._option_tokens),
+            "atm":               self._subscribed_atm,
+        }
 
     # ── prices ───────────────────────────────────────────────────────────────
 

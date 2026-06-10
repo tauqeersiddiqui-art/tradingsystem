@@ -114,6 +114,13 @@ class LiveEngine:
         self._last_features: dict    = {}
         self._ml_history: list       = []   # rolling window for percentile scoring
 
+        # F3 — block analytics (reset daily)
+        self._block_counts: dict     = {}
+        self._block_date              = None
+        self._last_counted_key: str  = ""
+        # F4 — ML edge |CE_adj - PE_adj|
+        self._last_ml_edge: float    = 0.0
+
         logger.info("[LiveEngine] Initialized")
 
     # ══════════════════════════════════════════════════════════════════
@@ -467,6 +474,8 @@ class LiveEngine:
                 _ce_a, _pe_a = self.learner.get_adjusted_ml_prob(_ce_p, _pe_p, "CE")
                 self._last_ce_adj = float(_ce_a)
                 self._last_pe_adj = float(_pe_a)
+                # F4 — live ML edge
+                self._last_ml_edge = round(abs(self._last_ce_adj - self._last_pe_adj), 3)
 
         # ══ STEP 2: Session gates ════════════════════════════════════════
         if now < _ORB_END:
@@ -487,6 +496,7 @@ class LiveEngine:
         _secs_since_exit = time.time() - self._last_exit_ts
         if self._last_exit_ts > 0 and _secs_since_exit < _REENTRY_COOLDOWN:
             _wait = int(_REENTRY_COOLDOWN - _secs_since_exit)
+            self._count_block("COOLDOWN")
             self._last_block_reason = f"COOLDOWN ({_wait}s remaining)"
             return None
 
@@ -497,6 +507,7 @@ class LiveEngine:
         _vwap_str = "VWAP✓" if vwap_confirms else "VWAP✗"
         logger.info(f"[DIRECTION] dir={_dir_str} ST={features.get('supertrend_dir',0):.0f} {_vwap_str} pvwap={features.get('price_vs_vwap',0):.4f} CE={self._last_ce_adj:.3f} PE={self._last_pe_adj:.3f}")
         if direction_bias == 0:
+            self._count_block("NO_DIRECTION")
             self._last_block_reason = "NO_DIRECTION (ST=0)"
             return None
 
@@ -552,6 +563,7 @@ class LiveEngine:
         else:
             # Block CE if VWAP does not confirm direction (price below VWAP)
             if direction_bias == 1 and not vwap_confirms:
+                self._count_block("VWAP_FAIL")
                 self._last_block_reason = "CE_VWAP_FAIL (BULL but price below VWAP)"
                 ce_adj = 0.0
             else:
@@ -569,6 +581,7 @@ class LiveEngine:
                     _ema60 = float(np.mean(_closes[-60:]))
                     _htf_bullish = _ema30 > _ema60
                 if not _htf_bullish:
+                    self._count_block("HTF_FAIL")
                     self._last_block_reason = "CE_HTF_FAIL (30m EMA bearish vs 60m)"
                     ce_adj = 0.0
                 else:
@@ -581,6 +594,7 @@ class LiveEngine:
                     if ce_adj >= ce_thr:
                         blocked, reason_block = self.learner.is_side_blocked("CE")
                         if blocked:
+                            self._count_block("ML_BLOCKED")
                             self._last_block_reason = f"CE_BLOCKED ({reason_block})"
                         else:
                             reason = "ML_CE" if _pure_ml_ce else "ORB+ML_CE"
@@ -588,6 +602,7 @@ class LiveEngine:
                             signal = {"side": "CE", "ml_prob": ce_adj,
                                       "features": features, "reason": reason}
                     else:
+                        self._count_block("CE_WEAK")
                         self._last_block_reason = (
                             f"CE_WEAK (ce_adj={ce_adj:.2f} < floor={ce_thr:.2f})"
                         )
@@ -598,6 +613,7 @@ class LiveEngine:
             if pe_adj >= pe_thr:
                 blocked, reason_block = self.learner.is_side_blocked("PE")
                 if blocked:
+                    self._count_block("ML_BLOCKED")
                     self._last_block_reason = f"PE_BLOCKED ({reason_block})"
                 else:
                     reason = "ORB+ML_PE" if pe_breakout else "ML_PE"
@@ -606,6 +622,15 @@ class LiveEngine:
                               "features": features, "reason": reason}
 
         if signal is None:
+            # F3: count final block reason (signal evaluated but nothing fired)
+            _br = self._last_block_reason
+            if   "VWAP"    in _br: _bk = "VWAP_FAIL"
+            elif "HTF"     in _br: _bk = "HTF_FAIL"
+            elif "BLOCKED" in _br: _bk = "ML_BLOCKED"
+            elif "WEAK"    in _br: _bk = "ML_BELOW_THR"
+            elif "ML_BELOW" in _br: _bk = "ML_BELOW_THR"
+            else:                  _bk = "ML_BELOW_THR"
+            self._count_block(_bk)
             return None
 
         # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
@@ -628,6 +653,7 @@ class LiveEngine:
             logger.info(
                 f"[PNL GUARD] Expected Rs{expected_pnl:.0f} < Rs{_MIN_EXPECTED_PNL} — skipping"
             )
+            self._count_block("PNL_GUARD")
             self._last_block_reason = f"PNL_GUARD (exp=Rs{expected_pnl:.0f})"
             return None
 
@@ -644,6 +670,28 @@ class LiveEngine:
             return 0
         import numpy as np
         return int(np.sum(np.array(self._ml_history) <= prob) / len(self._ml_history) * 100)
+
+    # F3 ─────────────────────────────────────────────────────────────
+    def _count_block(self, key: str) -> None:
+        """
+        Increment block counter for `key`.
+        Deduplicates transitions: only counts when the key changes from the
+        previous call, so a sustained 3-minute COOLDOWN counts as 1, not 180.
+        Resets all counts at midnight.
+        """
+        from datetime import date as _date
+        today = _date.today()
+        if today != self._block_date:
+            self._block_counts    = {}
+            self._block_date      = today
+            self._last_counted_key = ""
+        if key != self._last_counted_key:
+            self._block_counts[key]  = self._block_counts.get(key, 0) + 1
+            self._last_counted_key   = key
+
+    def record_block(self, key: str) -> None:
+        """Public — called from master_runner for OI_WALL, PAUSED, etc."""
+        self._count_block(key)
 
     # ══════════════════════════════════════════════════════════════════
     # MARKET STATE  (snapshot for dashboard rendering)
@@ -707,6 +755,10 @@ class LiveEngine:
                 1
             ),
             "score_required":  40.0,   # ≈ 0.62*50 + median_percentile/2
+            # F3 — block analytics
+            "block_counts":    dict(self._block_counts),
+            # F4 — ML edge
+            "ml_edge":         self._last_ml_edge,
         }
 
     # ══════════════════════════════════════════════════════════════════

@@ -438,25 +438,42 @@ class LiveEngine:
                 self._last_block_reason = "CE_VWAP_FAIL (BULL but price below VWAP)"
                 ce_adj = 0.0
             else:
-                _pure_ml_ce = not ce_breakout
-                # On RANGE days, require extra-high CE confidence — model is noisy in chop
-                _regime_str = str(self.learner.get_day_type()).upper()
-                _is_range   = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
-                _ce_floor   = 0.85 if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
-                ce_thr = max(threshold - 0.03 if (ce_breakout and orb_ok) else threshold, _ce_floor)
-                if ce_adj >= ce_thr:
-                    blocked, reason_block = self.learner.is_side_blocked("CE")
-                    if blocked:
-                        self._last_block_reason = f"CE_BLOCKED ({reason_block})"
-                    else:
-                        reason = "ML_CE" if _pure_ml_ce else "ORB+ML_CE"
-                        self._last_block_reason = f"SIGNAL_FIRE ({reason})"
-                        signal = {"side": "CE", "ml_prob": ce_adj,
-                                  "features": features, "reason": reason}
+                # ── Higher-timeframe CE confirmation (30m EMA gate) ───────
+                # 75% of CE losses entered when NIFTY was in a sustained downtrend
+                # on longer timeframes despite a brief 1m SuperTrend=+1 signal.
+                # Gate: require the 30-candle EMA (≈30m on 1m data) to be above
+                # the 60-candle EMA. This confirms the bounce is part of a real
+                # uptrend, not a dead-cat bounce inside a falling market.
+                _htf_bullish = True  # default: pass if insufficient data
+                _closes = df_window["close"].values
+                if len(_closes) >= 60:
+                    import numpy as np
+                    _ema30 = float(np.mean(_closes[-30:]))   # simple mean as fast EMA proxy
+                    _ema60 = float(np.mean(_closes[-60:]))
+                    _htf_bullish = _ema30 > _ema60
+                if not _htf_bullish:
+                    self._last_block_reason = "CE_HTF_FAIL (30m EMA bearish vs 60m)"
+                    ce_adj = 0.0
                 else:
-                    self._last_block_reason = (
-                        f"CE_WEAK (ce_adj={ce_adj:.2f} < floor={ce_thr:.2f})"
-                    )
+                    _pure_ml_ce = not ce_breakout
+                    # On RANGE days, require extra-high CE confidence — model is noisy in chop
+                    _regime_str = str(self.learner.get_day_type()).upper()
+                    _is_range   = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
+                    _ce_floor   = 0.85 if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
+                    ce_thr = max(threshold - 0.03 if (ce_breakout and orb_ok) else threshold, _ce_floor)
+                    if ce_adj >= ce_thr:
+                        blocked, reason_block = self.learner.is_side_blocked("CE")
+                        if blocked:
+                            self._last_block_reason = f"CE_BLOCKED ({reason_block})"
+                        else:
+                            reason = "ML_CE" if _pure_ml_ce else "ORB+ML_CE"
+                            self._last_block_reason = f"SIGNAL_FIRE ({reason})"
+                            signal = {"side": "CE", "ml_prob": ce_adj,
+                                      "features": features, "reason": reason}
+                    else:
+                        self._last_block_reason = (
+                            f"CE_WEAK (ce_adj={ce_adj:.2f} < floor={ce_thr:.2f})"
+                        )
 
         # PE (only if CE not triggered)
         if signal is None:

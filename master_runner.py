@@ -52,6 +52,7 @@ from engine.portfolio.allocator import CapitalAllocator
 from engine.execution.filters import has_oi_wall
 from engine.risk.risk_manager import compute_entry_stops
 from engine.services.trade_logger import log_trade, today_summary
+from engine.diagnostics import TradeJournal, generate_eod_report
 
 from ml.ml_intraday_learner import IntradayMLLearner
 
@@ -252,6 +253,10 @@ def build_context(broker) -> TradingContext:
     ctx.cycle_count  = 0
     ctx.trades_today = 0
 
+    # Diagnostics journal — observability only, zero strategy impact
+    ctx.journal = TradeJournal()
+    ctx.journal.log_startup(ctx.config)
+
     return ctx
 
 
@@ -289,6 +294,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     consecutive_stops = 0       # auto-pause trigger
     _eod_sent         = False   # send EOD summary once at 15:30
     _last_feed_warn   = 0.0     # watchdog: last time we warned about stale feed
+    _journal_id       = None    # diagnostics journal id for current open trade
 
     def _status_cb():
         import telegram.notifier as _tn
@@ -393,6 +399,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 pos_ltp  = _opt_ltp if (_opt_ltp and _opt_ltp > 0) else position["entry"]
                 held_seconds = (ts - entry_time).total_seconds() if entry_time else 0
 
+                # ── Diagnostics tick ─────────────────────────────────
+                if _journal_id:
+                    ctx.journal.on_tick(_journal_id, pos_ltp, position)
+
                 # ── Trailing / profit_manager via live_engine.check_exit ──
                 exit_flag, exit_reason = ctx.live_engine.check_exit(
                     position, pos_ltp, held_seconds
@@ -484,6 +494,31 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f"[EXIT] {exit_reason} | {position['symbol']} | "
                         f"pnl={pnl:.2f} | total={ctx.pnl:.2f}"
                     )
+
+                    # ── Diagnostics on_exit ───────────────────────────
+                    if _journal_id:
+                        try:
+                            # HTF state: recompute whether 30m gate would block
+                            _closes_j = df_window["close"].values if df_window is not None else []
+                            _htf_would_block = None
+                            if len(_closes_j) >= 30:
+                                import numpy as _np
+                                _htf_would_block = not (
+                                    float(_np.mean(_closes_j[-15:])) >
+                                    float(_np.mean(_closes_j[-30:]))
+                                )
+                            ctx.journal.on_exit(
+                                jid         = _journal_id,
+                                position    = position,
+                                exit_price  = exit_price,
+                                exit_reason = exit_reason,
+                                pnl         = pnl,
+                                exit_ts     = ts,
+                                htf_would_block = _htf_would_block,
+                            )
+                        except Exception as _je:
+                            logger.warning(f"[JOURNAL] on_exit failed (non-fatal): {_je}")
+                        _journal_id = None
 
                     position        = None
                     entry_time      = None

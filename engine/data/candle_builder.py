@@ -97,6 +97,12 @@ class CandleBuilder:
         df = df.sort_values("ts").reset_index(drop=True)
         return df
 
+    def current_wip(self) -> dict | None:
+        """Current in-progress (incomplete) candle for the active minute.
+        Returns a copy of the WIP dict or None if not started yet."""
+        with self._lock:
+            return dict(self._wip) if self._wip is not None else None
+
     def candle_count(self) -> int:
         with self._lock:
             return len(self._candles)
@@ -119,11 +125,18 @@ class CandleBuilder:
         tick = self.broker._last_ticks.get(self.instrument_token)
 
         if tick is None:
-            # No tick yet — try to get from REST ltp once
+            # WebSocket has not delivered a tick for this token yet.
+            # Fall back to REST once to avoid a cold-start stall, but this
+            # WILL produce flat candles (high==low) until the WS feeds.
+            # Log at WARNING so the operator can see the feed is not live.
             price = self.ltp()
             if price is None:
                 return False
-            # Synthesise a minimal tick dict
+            logger.warning(
+                f"[CandleBuilder] No WS tick for token={self.instrument_token} "
+                f"— using cached/REST price={price:.2f}. "
+                "Candles will be flat until WebSocket feed recovers."
+            )
             tick = {
                 "instrument_token": self.instrument_token,
                 "last_price": price,

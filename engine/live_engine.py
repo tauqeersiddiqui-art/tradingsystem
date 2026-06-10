@@ -98,6 +98,10 @@ class LiveEngine:
         self._last_exit_ts: float = 0.0   # epoch seconds of last trade exit
         _COOLDOWN_SECS = 180              # 3-minute cooldown after any exit
 
+        # ── Per-minute dedup guards (learner + VWAP update once per minute) ──
+        self._last_classify_minute: datetime | None = None
+        self._last_vwap_minute: datetime | None = None
+
         # ── Dashboard state (updated every cycle for rich display) ────
         self._last_block_reason: str = "WARMING_UP"
         self._last_ce_prob: float    = 0.0
@@ -152,24 +156,35 @@ class LiveEngine:
         """
         now = ts.time()
 
-        # Feed learner every candle (adaptive threshold)
-        self.learner.update_candle(
-            close=candle["close"],
-            high=candle["high"],
-            low=candle["low"],
-            ts=ts
-        )
+        # Deduplicate per-minute operations — engine_loop fires every second
+        # but candles complete once per minute.  Without this guard, the learner
+        # and VWAP would accumulate 60 identical entries per minute, inflating
+        # first_30min_closes to ~1800 entries and making day-type detection wrong.
+        _candle_minute = ts.replace(second=0, microsecond=0)
+        _new_minute    = (_candle_minute != self._last_classify_minute)
 
-        # Accumulate VWAP from market open
-        self._vwap.update(
-            high=float(candle["high"]),
-            low=float(candle["low"]),
-            close=float(candle["close"]),
-            volume=float(candle.get("volume", 0)),
-        )
+        # Feed learner once per completed minute
+        if _new_minute:
+            self._last_classify_minute = _candle_minute
+            self.learner.update_candle(
+                close=candle["close"],
+                high=candle["high"],
+                low=candle["low"],
+                ts=ts,
+            )
 
-        # Collect pre-9:45 candles for day classifier
-        if not self._day_classified and now < _DAY_CLASS_AT:
+        # Accumulate VWAP from market open — once per minute
+        if _candle_minute != self._last_vwap_minute:
+            self._last_vwap_minute = _candle_minute
+            self._vwap.update(
+                high=float(candle["high"]),
+                low=float(candle["low"]),
+                close=float(candle["close"]),
+                volume=float(candle.get("volume", 0)),
+            )
+
+        # Collect pre-9:45 candles for day classifier — once per minute
+        if not self._day_classified and now < _DAY_CLASS_AT and _new_minute:
             self._day_candles_30m.append({
                 "open":   candle["open"],
                 "high":   candle["high"],

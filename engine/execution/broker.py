@@ -65,7 +65,11 @@ class ZerodhaBroker:
 
         def on_connect(ws, _):
             ws.subscribe(tokens)
-            ws.set_mode(ws.MODE_FULL, tokens)
+            # NIFTY 50 index (token 256265) does not carry bid/ask depth.
+            # MODE_FULL on an index token either returns 0 for last_price or
+            # silently drops the tick on some Zerodha gateway versions.
+            # Use MODE_QUOTE which reliably includes last_price for indices.
+            ws.set_mode(ws.MODE_QUOTE, tokens)
 
         def on_close(ws, code, reason):
             print(f"[BROKER] Feed closed: {reason}")

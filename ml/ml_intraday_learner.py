@@ -80,6 +80,9 @@ class IntradayMLLearner:
         self.first_30min_closes = []
         self.day_detected_at    = None
 
+        # Dedup guard: only accept one candle per minute in the 30-min window
+        self._last_candle_minute = None
+
         # Consecutive state
         self.consecutive_losses = 0
         self.consecutive_wins   = 0
@@ -107,14 +110,22 @@ class IntradayMLLearner:
         """
         Feed each candle during the first 30 minutes.
         After 09:45, detect day type once and lock it.
+
+        Deduplication: only one entry per minute is recorded.  The engine loop
+        fires every second; without this guard first_30min_closes would contain
+        ~1800 entries by 9:45 (60/min × 30 min) instead of 30, making
+        range_pct / move_pct / trending completely wrong.
         """
         if self.day_type_locked:
             return
 
         if ts.hour == 9 and ts.minute < 45:
-            self.first_30min_closes.append(close)
-            self.first_30min_high = max(self.first_30min_high, high)
-            self.first_30min_low  = min(self.first_30min_low, low)
+            candle_minute = ts.replace(second=0, microsecond=0)
+            if candle_minute != self._last_candle_minute:
+                self._last_candle_minute = candle_minute
+                self.first_30min_closes.append(close)
+                self.first_30min_high = max(self.first_30min_high, high)
+                self.first_30min_low  = min(self.first_30min_low, low)
 
         elif ts.hour == 9 and ts.minute >= 45 and not self.day_type_locked:
             self._detect_day_type()
@@ -134,9 +145,10 @@ class IntradayMLLearner:
         last   = closes[-1]
         rng    = self.first_30min_high - self.first_30min_low
 
-        # Gap detection: if open is >0.5% away from yesterday close
-        # (approximate — we check if open vs first close is large)
-        gap_size = abs(open_p - closes[0]) / open_p if closes else 0
+        # Gap detection: compare today's open to the first close seen at session
+        # start.  True gap vs yesterday requires prev_close which is not tracked
+        # here; this approximation catches large opening gaps well enough.
+        gap_size = abs(open_p - closes[0]) / open_p if (closes and open_p > 0) else 0
 
         # Trend strength in first 30 min
         if len(closes) >= 5:

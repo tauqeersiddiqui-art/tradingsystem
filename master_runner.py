@@ -227,9 +227,25 @@ def init_broker():
     logger.info("Starting market feed")
     broker.start_feed(["NIFTY 50"])
 
-    time.sleep(3)
+    # Wait up to 10 s for the first tick so the engine doesn't start
+    # with a stale/flat REST price in the candle buffer.
+    _nifty_token = _NIFTY_INDEX_TOKEN
+    _waited = 0
+    while _waited < 10:
+        time.sleep(1)
+        _waited += 1
+        if _nifty_token in broker._last_ticks:
+            _ltp_check = broker._last_ticks[_nifty_token].get("last_price", 0)
+            if _ltp_check > 0:
+                logger.info(f"Feed ready — first tick received: NIFTY={_ltp_check:.2f}")
+                break
+    else:
+        logger.warning(
+            "[BROKER] No live tick received in 10 s after WebSocket connect. "
+            "This is expected outside market hours (9:15–15:30 IST). "
+            "CandleBuilder will fall back to REST price until ticks flow."
+        )
 
-    logger.info("Feed ready")
     return broker
 
 
@@ -365,14 +381,29 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 continue
 
             ltp_current = builder.ltp() or df_window["close"].iloc[-1]
-            latest_candle = {
-                "open":   float(df_window["open"].iloc[-1]),
-                "high":   float(df_window["high"].iloc[-1]),
-                "low":    float(df_window["low"].iloc[-1]),
-                "close":  ltp_current,
-                "volume": int(df_window["volume"].iloc[-1]) if "volume" in df_window.columns else 0,
-                "ts":     ts,
-            }
+
+            # Use the live WIP (in-progress) candle for OHLC so that
+            # intrabar highs/lows are visible to the learner and VWAP.
+            # Falling back to the last completed candle only if WIP is absent.
+            _wip = builder.current_wip()
+            if _wip is not None:
+                latest_candle = {
+                    "open":   float(_wip["open"]),
+                    "high":   float(_wip["high"]),
+                    "low":    float(_wip["low"]),
+                    "close":  ltp_current,
+                    "volume": int(_wip.get("volume", 0)),
+                    "ts":     ts,
+                }
+            else:
+                latest_candle = {
+                    "open":   float(df_window["open"].iloc[-1]),
+                    "high":   float(df_window["high"].iloc[-1]),
+                    "low":    float(df_window["low"].iloc[-1]),
+                    "close":  ltp_current,
+                    "volume": int(df_window["volume"].iloc[-1]) if "volume" in df_window.columns else 0,
+                    "ts":     ts,
+                }
 
             market_data = {
                 "candle":    latest_candle,

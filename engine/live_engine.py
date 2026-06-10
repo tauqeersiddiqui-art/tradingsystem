@@ -27,6 +27,9 @@ logger = logging.getLogger("live_engine")
 # ── Market session constants ──────────────────────────────────────────
 _MARKET_OPEN  = dtime(9, 15)
 _ORB_END      = dtime(9, 30)   # ORB window: 9:15 – 9:29 (15 candles)
+
+# Zerodha instrument token for NIFTY 50 index (used in ORB reconstruction)
+_NIFTY_INDEX_TOKEN = 256265
 _DAY_CLASS_AT = dtime(9, 45)   # Day classifier locks after 9:44
 _MARKET_CLOSE = dtime(15, 30)
 
@@ -144,6 +147,105 @@ class LiveEngine:
                 )
             else:
                 logger.info("[ORB LOCKED] Engine started after 9:30 — no ORB data")
+
+    # ══════════════════════════════════════════════════════════════════
+    # ORB RECONSTRUCTION  (called once at startup when window is missed)
+    # ══════════════════════════════════════════════════════════════════
+
+    def reconstruct_orb_if_needed(self, broker, ts: datetime | None = None) -> None:
+        """
+        Fetch today's 9:15–9:29 NIFTY 1-minute candles from Zerodha and
+        populate orb_high / orb_low so ORB breakout signals work even when
+        the engine starts after the window has closed.
+
+        Safe to call at any time:
+        - No-op if before market open (9:15).
+        - No-op if ORB was already built from live ticks.
+        - If startup is *during* the window (9:15–9:29), seeds whatever
+          candles are already complete and lets the live feed add the rest.
+        - If startup is *after* the window (≥9:30), fetches the full range
+          and locks orb_done so no further accumulation occurs.
+        - On any API failure, logs a warning and leaves ORB empty rather
+          than crashing — ML-only entries still work in that case.
+        """
+        if ts is None:
+            ts = datetime.now()
+        now = ts.time()
+
+        # Nothing to do before the market opens
+        if now < _MARKET_OPEN:
+            return
+
+        # ORB already populated by live ticks — nothing to reconstruct
+        if self.orb_high is not None and self.orb_low is not None:
+            return
+
+        today        = ts.date()
+        orb_start_dt = datetime.combine(today, _MARKET_OPEN)
+        # Request up to 9:30 so the Zerodha API includes the full window;
+        # we filter strictly to <9:30 below.
+        orb_end_dt   = datetime.combine(today, _ORB_END)
+
+        try:
+            raw = broker.kite.historical_data(
+                _NIFTY_INDEX_TOKEN, orb_start_dt, orb_end_dt,
+                "minute", oi=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[ORB RECONSTRUCT] Zerodha API call failed: {exc} "
+                "— ORB unavailable; ML-only entries still active."
+            )
+            if now >= _ORB_END:
+                self.orb_done = True
+            return
+
+        if not raw:
+            logger.warning(
+                "[ORB RECONSTRUCT] API returned no candles for today's "
+                "9:15–9:29 window — ORB unavailable."
+            )
+            if now >= _ORB_END:
+                self.orb_done = True
+            return
+
+        # Strip timezone and filter strictly to 9:15:00–9:29:59
+        orb_candles = []
+        for c in raw:
+            dt = c["date"]
+            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+                try:
+                    import pytz as _tz
+                    dt = dt.astimezone(_tz.timezone("Asia/Kolkata")).replace(tzinfo=None)
+                except Exception:
+                    dt = dt.replace(tzinfo=None)
+            t = dt.time() if hasattr(dt, "time") else None
+            if t and _MARKET_OPEN <= t < _ORB_END:
+                orb_candles.append(c)
+
+        if not orb_candles:
+            logger.warning(
+                "[ORB RECONSTRUCT] No candles found in 9:15–9:29 range "
+                "(market may have been closed or data unavailable) — ORB unavailable."
+            )
+            if now >= _ORB_END:
+                self.orb_done = True
+            return
+
+        highs = [float(c["high"]) for c in orb_candles]
+        lows  = [float(c["low"])  for c in orb_candles]
+        self.orb_high = max(highs)
+        self.orb_low  = min(lows)
+
+        # Lock ORB only when the full window has passed; if we are still
+        # inside the window the live update_orb() loop will keep adding.
+        if now >= _ORB_END:
+            self.orb_done = True
+
+        logger.info(
+            f"[ORB RECONSTRUCTED] High={self.orb_high:.2f}  Low={self.orb_low:.2f}"
+            f"  (candles={len(orb_candles)}, window=9:15-9:29)"
+        )
 
     # ══════════════════════════════════════════════════════════════════
     # DAY CLASSIFIER  (runs once at 9:45)

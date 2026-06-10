@@ -114,6 +114,42 @@ def tg_force(msg: str):
         logger.warning(f"[TELEGRAM] force send failed: {e}")
 
 
+def _log_feed_health(broker, ctx, builder) -> None:
+    """
+    Log and Telegram a single startup feed-health snapshot.
+    Called once after all initialisation is complete.
+    """
+    ws_connected    = broker.ticker is not None
+    ws_mode         = "CONNECTED" if ws_connected else "DISCONNECTED"
+    tick_ts         = (
+        datetime.fromtimestamp(broker._last_tick_time).strftime("%H:%M:%S")
+        if broker._last_ticks else "none"
+    )
+    subscribed_cnt  = len(broker._option_tokens) + 1   # +1 NIFTY 50
+    orb_status      = (
+        "RECONSTRUCTED" if (ctx.live_engine.orb_done and
+                            ctx.live_engine.orb_high is not None)
+        else ("LIVE-BUILD" if not ctx.live_engine.orb_done else "UNAVAILABLE")
+    )
+    wip             = builder.current_wip()
+    learner_candles = len(ctx.ml_learner.first_30min_closes)
+    clf_candles     = len(ctx.live_engine._day_candles_30m)
+
+    lines = [
+        "[FEED HEALTH]",
+        f"  WS mode             : {ws_mode}",
+        f"  First tick received : {tick_ts}",
+        f"  Subscribed tokens   : {subscribed_cnt}",
+        f"  ORB status          : {orb_status}",
+        f"  WIP candle active   : {'YES' if wip else 'NO'}",
+        f"  Learner candles     : {learner_candles}",
+        f"  Day clf candles     : {clf_candles}",
+    ]
+    report = "\n".join(lines)
+    logger.info(report)
+    tg_bot(report, key="feed_health", interval=0.0)
+
+
 # ══════════════════════════════════════════════════════════════════════
 # HISTORICAL DATA — fetch from Zerodha + append live candles
 # ══════════════════════════════════════════════════════════════════════
@@ -246,6 +282,16 @@ def init_broker():
             "CandleBuilder will fall back to REST price until ticks flow."
         )
 
+    # Subscribe ATM option chain (±5 strikes, CE + PE) to the live WebSocket.
+    # Requires a valid NIFTY spot price; safe to call even if ticks haven't
+    # arrived yet — falls back to REST LTP for ATM computation.
+    # Once subscribed, get_option_chain_near_atm() will return live OI values
+    # from _last_ticks instead of defaulting to zero.
+    try:
+        broker.subscribe_options(strikes_range=5)
+    except Exception as _opt_e:
+        logger.warning(f"[OPTIONS FEED] Subscription failed (non-fatal): {_opt_e}")
+
     return broker
 
 
@@ -311,6 +357,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _eod_sent         = False   # send EOD summary once at 15:30
     _last_feed_warn   = 0.0     # watchdog: last time we warned about stale feed
     _journal_id       = None    # diagnostics journal id for current open trade
+    _last_atm_check   = 0.0     # epoch time of last ATM drift check
+    _last_opt_diag    = 0.0     # epoch time of last [OPTION FEED] log
 
     def _status_cb():
         import telegram.notifier as _tn
@@ -356,6 +404,38 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             ctx.broker.start_feed(["NIFTY 50"])
                         except Exception as _wde:
                             logger.error(f"[WATCHDOG] Reconnect failed: {_wde}")
+
+            # ── Dynamic ATM re-subscription (every 5 min, market hours) ──
+            # When NIFTY drifts ≥100 pts the subscribed option-chain becomes
+            # stale.  Re-subscribe without restarting the engine.
+            if (time.time() - _last_atm_check > 300
+                    and _mkt_open <= now <= _mkt_close):
+                _last_atm_check = time.time()
+                try:
+                    _refreshed = ctx.broker.refresh_atm_if_drifted(drift_points=100)
+                    if _refreshed:
+                        logger.info(
+                            f"[ATM DRIFT] Re-subscribed options; "
+                            f"new ATM={ctx.broker._subscribed_atm}"
+                        )
+                except Exception as _atm_e:
+                    logger.warning(f"[ATM DRIFT] Check failed (non-fatal): {_atm_e}")
+
+            # ── [OPTION FEED] periodic diagnostics (every 60 s) ──────
+            if (time.time() - _last_opt_diag > 60
+                    and _mkt_open <= now <= _mkt_close):
+                _last_opt_diag = time.time()
+                try:
+                    _od = ctx.broker.get_option_feed_diagnostics()
+                    logger.info(
+                        f"[OPTION FEED] "
+                        f"ce_oi={_od.get('ce_oi', 0):,}  "
+                        f"pe_oi={_od.get('pe_oi', 0):,}  "
+                        f"chain_tokens_live={_od.get('chain_tokens_live', 0)}"
+                        f"/{_od.get('chain_tokens_total', 0)}"
+                    )
+                except Exception as _od_e:
+                    logger.warning(f"[OPTION FEED] Diagnostics failed (non-fatal): {_od_e}")
 
             # ── Engine stop requested by user (/stop command) ─────────
             import telegram.notifier as _tn
@@ -842,22 +922,33 @@ def main():
 
     # ── Startup Telegram ──────────────────────────────────────────────
     from datetime import time as _dtime
-    _now_t    = datetime.now().time()
-    mode_str  = "PAPER MODE" if PAPER_MODE else "LIVE MODE (DRY_RUN)"
-    _is_early = _now_t < _dtime(9, 15)
+    _now_t       = datetime.now().time()
+    mode_str     = "PAPER MODE" if PAPER_MODE else "LIVE MODE (DRY_RUN)"
+    _is_early    = _now_t < _dtime(9, 15)
+    _mid_orb     = _dtime(9, 15) <= _now_t < _dtime(9, 30)
+    _after_orb   = _now_t >= _dtime(9, 30)
+    if _is_early:
+        _orb_line = (
+            "Ready for ORB capture at 9:15.\n"
+            "Engine will monitor 9:15–9:30 for ORB range,\n"
+            "then trade from 9:30 onward."
+        )
+    elif _mid_orb:
+        _orb_line = (
+            f"Started mid-ORB window ({_now_t.strftime('%H:%M')}).\n"
+            "Partial ORB seeded from Zerodha — live ticks will complete it."
+        )
+    else:
+        _orb_line = (
+            f"Started after ORB window ({_now_t.strftime('%H:%M')}).\n"
+            "ORB will be reconstructed from Zerodha historical candles.\n"
+            "CE + PE ORB breakout entries remain active."
+        )
     _ready_msg = (
         f"<b>AI Trading System Started</b>\n"
         f"Mode: {mode_str}\n"
         f"DRY_RUN: No real orders will be placed\n\n"
-        + (
-            "Ready for ORB capture at 9:15.\n"
-            "Engine will monitor 9:15–9:30 for ORB range,\n"
-            "then trade from 9:30 onward."
-            if _is_early else
-            f"Started after market open ({_now_t.strftime('%H:%M')}).\n"
-            "ORB will be locked — only PE ML-entries available.\n"
-            "CE ORB breakout entry: DISABLED (missed window)."
-        )
+        + _orb_line
         + "\n\n/help for commands"
     )
     try:
@@ -896,6 +987,40 @@ def main():
         logger.critical(f"Context build failed: {e}")
         return
 
+    # ── ORB reconstruction ────────────────────────────────────────────
+    # If startup is after 9:30 (or mid-window), fetch today's 9:15–9:29
+    # candles from Zerodha so ORB breakout signals are available
+    # immediately rather than staying disabled all day.
+    try:
+        ctx.live_engine.reconstruct_orb_if_needed(broker)
+    except Exception as e:
+        logger.warning(f"[ORB] Reconstruction failed (non-fatal): {e}")
+
+    # ── Post-reconstruction Telegram status ──────────────────────────
+    # Send a second, accurate ORB status message now that reconstruction
+    # has either succeeded or failed, so the operator sees the real state.
+    try:
+        _le = ctx.live_engine
+        if _le.orb_done and _le.orb_high is not None and _le.orb_low is not None:
+            _orb_result_msg = (
+                f"<b>ORB RECONSTRUCTED</b>\n"
+                f"High={_le.orb_high:.2f}  Low={_le.orb_low:.2f}\n"
+                f"CE + PE breakout entries active."
+            )
+        elif datetime.now().time() >= __import__("datetime").time(9, 30):
+            _orb_result_msg = (
+                "⚠️ <b>ORB UNAVAILABLE</b>\n"
+                "Zerodha API returned no candles for 9:15-9:29.\n"
+                "ML-only entries remain active."
+            )
+        else:
+            _orb_result_msg = None   # Before 9:30 — no follow-up needed
+
+        if _orb_result_msg:
+            tg_force(_orb_result_msg)
+    except Exception as _orb_tg_e:
+        logger.warning(f"[ORB] Telegram status failed (non-fatal): {_orb_tg_e}")
+
     # ── Engine thread ─────────────────────────────────────────────────
     try:
         start_engine(ctx, builder)
@@ -903,6 +1028,12 @@ def main():
     except Exception as e:
         logger.critical(f"Engine start failed: {e}")
         return
+
+    # ── Startup feed health report ────────────────────────────────────
+    try:
+        _log_feed_health(broker, ctx, builder)
+    except Exception as _fh_e:
+        logger.warning(f"[FEED HEALTH] Report failed (non-fatal): {_fh_e}")
 
     # ── Keep-alive ────────────────────────────────────────────────────
     try:

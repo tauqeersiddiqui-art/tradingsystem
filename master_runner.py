@@ -510,6 +510,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 pos_ltp  = _opt_ltp if (_opt_ltp and _opt_ltp > 0) else position["entry"]
                 held_seconds = (ts - entry_time).total_seconds() if entry_time else 0
 
+                # ── Track MAE (maximum adverse excursion) ────────────
+                _cycle_pnl = (pos_ltp - position["entry"]) * position["qty"]
+                position["min_pnl"] = min(position.get("min_pnl", 0.0), _cycle_pnl)
+
                 # ── Diagnostics tick ─────────────────────────────────
                 if _journal_id:
                     ctx.journal.on_tick(_journal_id, pos_ltp, position)
@@ -587,23 +591,34 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         reason=exit_reason,
                     )
 
+                    _mfe_pts = position.get("max_pnl", 0.0) / max(position["qty"], 1)
+                    _mae_pts = position.get("min_pnl", 0.0) / max(position["qty"], 1)
+
                     exit_msg = format_trade_exit({
-                        "symbol":      position["symbol"],
-                        "side":        position["side"],
-                        "entry_price": position["entry"],
-                        "exit_price":  exit_price,
-                        "qty":         position["qty"],
-                        "pnl":         pnl,
-                        "ml_prob":     position.get("ml_prob", 0),
-                        "reason":      exit_reason,
-                        "regime":      position.get("regime", "UNKNOWN"),
+                        "symbol":        position["symbol"],
+                        "side":          position["side"],
+                        "entry_price":   position["entry"],
+                        "exit_price":    exit_price,
+                        "trigger_price": pos_ltp,
+                        "qty":           position["qty"],
+                        "pnl":           pnl,
+                        "ml_prob":       position.get("ml_prob", 0),
+                        "reason":        exit_reason,
+                        "regime":        position.get("regime", "UNKNOWN"),
+                        "stop_level":    position.get("stop_loss", 0),
+                        "mfe_pts":       _mfe_pts,
+                        "mae_pts":       _mae_pts,
+                        "held_seconds":  held_seconds,
                     })
                     tg_force(exit_msg)
                     remove_exit_button()
 
+                    _held_str = f"{int(held_seconds)//60}m {int(held_seconds)%60:02d}s"
                     logger.info(
                         f"[EXIT] {exit_reason} | {position['symbol']} | "
-                        f"pnl={pnl:.2f} | total={ctx.pnl:.2f}"
+                        f"pnl={pnl:.2f} | MFE={_mfe_pts:+.1f}pts | "
+                        f"MAE={_mae_pts:+.1f}pts | held={_held_str} | "
+                        f"total={ctx.pnl:.2f}"
                     )
 
                     # ── Diagnostics on_exit ───────────────────────────

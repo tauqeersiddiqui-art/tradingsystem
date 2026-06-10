@@ -3,6 +3,7 @@
 #   render_engine(ctx, market_state)      — AI engine, ML bias, decision
 #   render_market(ctx, market_state, pos) — live position, market internals
 
+import html as _html
 from datetime import datetime
 
 
@@ -91,9 +92,10 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
     score_g = round(score - score_r, 1)
     score_ok = score >= score_r
 
-    # Block reason / decision
-    block = ms.get("block_reason", "WARMING_UP")
-    if block.startswith("SIGNAL_FIRE"):
+    # Block reason / decision — escape raw reason so <CE<0.62> etc. don't break HTML
+    block     = _html.escape(ms.get("block_reason", "WARMING_UP"))
+    block_raw = ms.get("block_reason", "WARMING_UP")
+    if block_raw.startswith("SIGNAL_FIRE"):
         decision_line = f"\U0001f7e2 FIRING — {block.split('(')[-1].rstrip(')')}"
     else:
         decision_line = f"\U0001f534 WAITING — {block}"
@@ -184,7 +186,7 @@ def render_market(ctx, market_state: dict, position: dict | None,
         pnl_rs   = pnl_pts * qty
         peak_pts = max_pnl / max(qty, 1) if qty > 0 else 0
 
-        # Trail lock description
+        # Trail lock description — mirrors profit_manager.py ladder
         if peak_pts >= 40:
             lock_pct = "80%"
         elif peak_pts >= 25:
@@ -192,7 +194,9 @@ def render_market(ctx, market_state: dict, position: dict | None,
         elif peak_pts >= 15:
             lock_pct = "40%"
         elif peak_pts >= 8:
-            lock_pct = "BE"
+            lock_pct = "+400/lot"
+        elif peak_pts >= 4:
+            lock_pct = "+200/lot"
         else:
             lock_pct = "--"
 

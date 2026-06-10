@@ -10,9 +10,12 @@
 
 import os
 import json
+import logging
 import time
 import requests
 from dotenv import load_dotenv
+
+_log = logging.getLogger("tg.notifier")
 
 PROJECT_ROOT = os.getcwd()
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=True)
@@ -77,7 +80,7 @@ def _tg_worker():
                 except queue.Empty:
                     break
                 except Exception as e:
-                    print("[TG-thread] send error:", e)
+                    _log.warning("[TG-thread] send error: %s", e)
 
             # Poll commands with exponential backoff on failure
             now = time.time()
@@ -93,7 +96,7 @@ def _tg_worker():
                     current_interval = _poll_interval
 
         except Exception as e:
-            print("[TG-thread] worker error:", e)
+            _log.warning("[TG-thread] worker error: %s", e)
 
         time.sleep(0.5)
 
@@ -164,11 +167,11 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         r = requests.post(SEND_URL, json=payload, timeout=10)
         d = r.json()
         if not d.get("ok"):
-            print("[TG] Send error:", d)
+            _log.warning("[TG] Send error: %s", d)
             return None
         return d.get("result")
     except Exception as e:
-        print("[TG] Send exception:", e)
+        _log.warning("[TG] Send exception: %s", e)
         return None
 
 
@@ -192,10 +195,10 @@ def _edit(message_id, text, parse_mode="HTML") -> bool:
             _last_edited[message_id] = text
             return True
         else:
-            print("[TG] Edit error:", d)
+            _log.warning("[TG] Edit error: %s", d)
             return False
     except Exception as e:
-        print("[TG] Edit exception:", e)
+        _log.warning("[TG] Edit exception: %s", e)
         return False
 
 
@@ -290,10 +293,10 @@ def _edit_with_markup(message_id, text, reply_markup=None) -> bool:
             _last_edited[message_id] = text
             return True
         else:
-            print("[TG] Market edit error:", d)
+            _log.warning("[TG] Market edit error: %s", d)
             return False
     except Exception as e:
-        print("[TG] Market edit exception:", e)
+        _log.warning("[TG] Market edit exception: %s", e)
         return False
 
 
@@ -312,31 +315,80 @@ def reset_dashboard():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# TRADE ENTRY  — EXIT button attached to trade message
+# TRADE ENTRY  — EXIT button attached; live-edited while trade is open
 # ─────────────────────────────────────────────────────────────────────
 
 def send_trade_entry_with_exit_button(message):
+    """Send new trade entry card. Saves message_id so we can live-edit it."""
     global _trade_msg_id
     kb = {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]}
     result = _send(BOT_CHAT_ID, message, reply_markup=kb)
     send_trade_channel(message)
     if result:
         _trade_msg_id = result["message_id"]
+        # Invalidate dedup cache so first live-edit always goes through
+        _last_edited.pop(_trade_msg_id, None)
 
 
-def remove_exit_button():
+def update_trade_live(message: str):
+    """Edit the open trade card in-place with latest LTP / PnL. Non-blocking."""
+    if not _trade_msg_id:
+        return
+    _tg_enqueue(_edit_with_markup, _trade_msg_id, message,
+                {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]})
+
+
+def delete_trade_message():
+    """Delete the open trade card when the trade closes."""
     global _trade_msg_id
     if not _trade_msg_id:
         return
+    mid = _trade_msg_id
+    _trade_msg_id = None
+    _last_edited.pop(mid, None)
     try:
-        requests.post(EDIT_MARKUP_URL, json={
-            "chat_id": BOT_CHAT_ID,
-            "message_id": _trade_msg_id,
-            "reply_markup": {"inline_keyboard": []},
-        }, timeout=10)
+        requests.post(
+            f"{API_URL}/deleteMessage",
+            json={"chat_id": BOT_CHAT_ID, "message_id": mid},
+            timeout=10,
+        )
     except Exception:
         pass
-    _trade_msg_id = None
+
+
+def remove_exit_button():
+    """Legacy — kept for call-site compatibility. Use delete_trade_message() on exit."""
+    delete_trade_message()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# ENGINE DASHBOARD — delete old message, post fresh one at bottom
+# ─────────────────────────────────────────────────────────────────────
+
+def repost_engine_dashboard(text: str):
+    """Delete the old engine dashboard message and send a fresh one at bottom."""
+    _tg_enqueue(_do_repost_engine, text)
+
+
+def _do_repost_engine(text: str):
+    global _engine_msg_id
+    # Delete old message silently
+    if _engine_msg_id:
+        try:
+            requests.post(
+                f"{API_URL}/deleteMessage",
+                json={"chat_id": BOT_CHAT_ID, "message_id": _engine_msg_id},
+                timeout=10,
+            )
+        except Exception:
+            pass
+        _last_edited.pop(_engine_msg_id, None)
+        _engine_msg_id = None
+    # Post fresh
+    result = _send(BOT_CHAT_ID, text)
+    if result:
+        _engine_msg_id = result["message_id"]
+        _save_state()
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -497,7 +549,7 @@ def _poll_commands_internal(status_cb=None):
     except Exception as e:
         _poll_fail_count += 1
         if _poll_fail_count == 1 or _poll_fail_count % 10 == 0:
-            print(f"[TG] poll_commands error (#{_poll_fail_count}):", e)
+            _log.warning("[TG] poll_commands error (#%d): %s", _poll_fail_count, e)
     else:
         _poll_fail_count = 0
 

@@ -204,8 +204,8 @@ class ZerodhaBroker:
         current_atm = round(spot / 50) * 50
         if abs(current_atm - self._subscribed_atm) >= drift_points:
             print(
-                f"[OPTIONS FEED] ATM drifted: {self._subscribed_atm} → {current_atm} "
-                f"— refreshing subscriptions"
+                f"[OPTIONS FEED] ATM drifted: {self._subscribed_atm} -> {current_atm} "
+                f"- refreshing subscriptions"
             )
             self.subscribe_options()
             return True

@@ -816,6 +816,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "stop_loss": stop_loss,
                         "target":   target,
                         "max_pnl":  0.0,
+                        "min_pnl":  0.0,   # tracks MAE (maximum adverse excursion)
                         "ml_prob":  decision.get("ml_prob", 0.0),
                         "features": decision.get("features", {}),
                         "regime":   decision.get("regime", "UNKNOWN"),

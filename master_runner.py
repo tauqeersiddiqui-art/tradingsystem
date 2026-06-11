@@ -25,6 +25,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import time
 import logging
 import threading
+import collections
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -34,6 +35,10 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+_fh = logging.FileHandler("logs/master_runner.log", mode="a", encoding="utf-8")
+_fh.setLevel(logging.INFO)
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
+logging.getLogger().addHandler(_fh)
 logger = logging.getLogger("master")
 
 # ── ENV flags ─────────────────────────────────────────────────────────
@@ -53,6 +58,7 @@ from engine.execution.filters import has_oi_wall
 from engine.risk.risk_manager import compute_entry_stops
 from engine.services.trade_logger import log_trade, today_summary
 from engine.diagnostics import TradeJournal, generate_eod_report
+from engine.scalping.scalp_engine import ScalpEngine
 
 # Analytics suite (Features 1–8) — observational only, no trading logic
 from engine.analytics.trade_replay import TradeReplay
@@ -345,6 +351,7 @@ def _get_feed_health(broker) -> dict:
     }
 
 
+def tg_bot(msg: str, key: str = "", interval: float = 10.0):
     """Rate-limited send_bot wrapper."""
     if _tg.can_send(key, interval):
         try:
@@ -620,6 +627,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _last_opt_diag    = 0.0     # epoch time of last [OPTION FEED] log
     _last_heartbeat   = 0.0     # epoch time of last alive-ping to Telegram
     ltp_current       = 0.0     # last known NIFTY spot LTP (avoids UnboundLocalError on first tick)
+    scalp_position        = None                              # active scalp trade dict (flat when main trades)
+    _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of NIFTY spot
 
     def _status_cb():
         import telegram.notifier as _tn
@@ -1260,6 +1269,103 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     logger.warning("[ENTRY] Order returned invalid fill — position not opened")
 
             # ══════════════════════════════════════════════════════════
+            # SCALP ENGINE — momentum layer (only when main is flat)
+            # ══════════════════════════════════════════════════════════
+
+            if ctx.scalp_engine and position is None:
+                # Append spot LTP to rolling 120-second history
+                if ltp_current > 0:
+                    _scalp_ltp_history.append((ts, ltp_current))
+
+                # ── Scalp exit management ─────────────────────────────
+                if scalp_position is not None:
+                    _s_ltp = ctx.broker.ltp(scalp_position["symbol"]) or scalp_position["entry"]
+                    scalp_position["max_pnl"] = max(
+                        scalp_position.get("max_pnl", 0.0),
+                        (_s_ltp - scalp_position["entry"]) * scalp_position["qty"],
+                    )
+                    scalp_position["min_pnl"] = min(
+                        scalp_position.get("min_pnl", 0.0),
+                        (_s_ltp - scalp_position["entry"]) * scalp_position["qty"],
+                    )
+                    _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
+                    if _s_exit:
+                        _s_exit_order = ctx.executor.execute_exit(
+                            scalp_position["symbol"],
+                            scalp_position["qty"],
+                            side=scalp_position["side"],
+                        )
+                        _s_fill = _s_exit_order["price"] if _s_exit_order else _s_ltp
+                        _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
+                        ctx.pnl          += _s_pnl
+                        ctx.trades_today += 1
+                        try:
+                            log_trade(
+                                entry_order  = {"symbol": scalp_position["symbol"],
+                                                "price":  scalp_position["entry"],
+                                                "qty":    scalp_position["qty"]},
+                                exit_price   = _s_fill,
+                                exit_reason  = f"SCALP_{_s_reason}",
+                                position     = scalp_position,
+                                entry_time   = scalp_position["entry_ts"],
+                                exit_time    = ts,
+                                ce_threshold = 0.0,
+                                pe_threshold = 0.0,
+                            )
+                        except Exception as _sl_e:
+                            logger.warning(f"[SCALP] log_trade failed: {_sl_e}")
+                        logger.info(
+                            f"[SCALP EXIT] {_s_reason} | {scalp_position['symbol']} "
+                            f"| pnl={_s_pnl:+.0f} | day={ctx.pnl:+.0f}"
+                        )
+                        tg_force(
+                            f"[SCALP] {_s_reason} {scalp_position['side']} "
+                            f"pnl=₹{_s_pnl:+.0f} | Day=₹{ctx.pnl:+.0f}"
+                        )
+                        scalp_position = None
+                        ctx.scalp_engine.on_exit()
+
+                # ── Scalp entry ───────────────────────────────────────
+                if (scalp_position is None
+                        and ctx.trades_today < max_trades
+                        and ctx.pnl > ctx.config.DAILY_LOSS_LIMIT):
+                    _s_sig = ctx.scalp_engine.check_entry(
+                        ltp_current, _scalp_ltp_history, ts
+                    )
+                    if _s_sig:
+                        _s_side   = _s_sig["side"]
+                        _s_symbol, _s_opt_ltp = ctx.broker.get_atm_option(_s_side)
+                        if _s_symbol and _s_opt_ltp:
+                            _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, 65)
+                            if _s_order:
+                                scalp_position = {
+                                    "symbol":    _s_symbol,
+                                    "side":      _s_side,
+                                    "qty":       65,
+                                    "lot_size":  65,
+                                    "entry":     _s_order["price"],
+                                    "stop_loss": _s_order["price"] - ctx.config.SCALP_SL_PTS,
+                                    "target":    _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
+                                    "max_pnl":   0.0,
+                                    "min_pnl":   0.0,
+                                    "ml_prob":   0.0,
+                                    "regime":    "SCALP",
+                                    "reason":    _s_sig["reason"],
+                                    "entry_ts":  ts,
+                                }
+                                logger.info(
+                                    f"[SCALP ENTRY] {_s_side} {_s_symbol} "
+                                    f"@ {_s_order['price']:.1f} "
+                                    f"| NIFTY move={_s_sig['move_pts']:+.1f}pt"
+                                )
+                                tg_force(
+                                    f"[SCALP] {_s_side} @ {_s_order['price']:.1f} "
+                                    f"NIFTY {_s_sig['move_pts']:+.1f}pt | "
+                                    f"SL={scalp_position['stop_loss']:.1f} "
+                                    f"T={scalp_position['target']:.1f}"
+                                )
+
+            # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)
             # ══════════════════════════════════════════════════════════
 
@@ -1457,6 +1563,12 @@ def main():
     except Exception as e:
         logger.critical(f"Context build failed: {e}")
         return
+
+    # ── Scalp engine init ─────────────────────────────────────────────
+    if ctx.config.SCALP_ENABLED:
+        ctx.scalp_engine = ScalpEngine(ctx.config)
+    else:
+        logger.info("[SCALP] Scalp engine disabled (SCALP_ENABLED=0)")
 
     # ── ORB reconstruction ────────────────────────────────────────────
     # If startup is after 9:30 (or mid-window), fetch today's 9:15–9:29

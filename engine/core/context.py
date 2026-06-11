@@ -25,6 +25,7 @@ class TradingContext:
         self.risk = None
         self.state = None
         self.options = None
+        self.scalp_engine = None
 
         # Config / Env
         self.config = None

@@ -26,4 +26,13 @@ class Config:
         # ML
         self.CHAMPION_THRESHOLD = float(os.getenv("CHAMPION_THRESHOLD", 0.42))
 
+        # Scalping layer
+        self.SCALP_ENABLED            = os.getenv("SCALP_ENABLED", "1") == "1"
+        self.SCALP_SL_PTS             = float(os.getenv("SCALP_SL_PTS", "3.0"))
+        self.SCALP_TARGET_PTS         = float(os.getenv("SCALP_TARGET_PTS", "5.0"))
+        self.SCALP_MAX_HOLD_SECONDS   = int(os.getenv("SCALP_MAX_HOLD_SECONDS", "180"))
+        self.SCALP_MOMENTUM_WINDOW    = int(os.getenv("SCALP_MOMENTUM_WINDOW", "30"))
+        self.SCALP_MOMENTUM_THRESHOLD = float(os.getenv("SCALP_MOMENTUM_THRESHOLD", "12.0"))
+        self.SCALP_COOLDOWN           = int(os.getenv("SCALP_COOLDOWN", "60"))
+
         print(f"[CONFIG] Capital={self.INITIAL_CAPITAL} | DRY_RUN={self.DRY_RUN} | LOT_SIZE={self.LOT_SIZE}")

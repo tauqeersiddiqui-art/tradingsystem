@@ -58,6 +58,7 @@ class TradeReplay:
         self._side       = position.get("side", "")
         self._last_stop  = position.get("stop_loss", 0.0)
         self._last_mfe   = 0.0
+        self._exit_summary: dict = {}   # Task 10 — verification fields, filled on_exit
 
         ms = market_state or {}
         self.events: list = [{
@@ -95,13 +96,18 @@ class TradeReplay:
         # Record stop-level changes (ladder activations)
         if abs(current_stop - self._last_stop) > 0.01:
             diff = round(current_stop - self._entry, 2)
+            # Label by the rupee ladder (single source of truth) for consistency
+            # with profit_manager.  max_pnl is in Rs on the actual qty.
+            from engine.execution.profit_manager import ladder_locked_rs
+            _locked_rs, _stage = ladder_locked_rs(position.get("max_pnl", 0.0))
             self.events.append({
                 "t":          ts.strftime("%H:%M:%S"),
                 "type":       "STOP_MOVE",
-                "label":      _ladder_label(mfe_pts),
+                "label":      _stage,
                 "new_stop":   round(current_stop, 2),
                 "pts_locked": diff,
                 "mfe_pts":    round(mfe_pts, 2),
+                "locked_rs":  round(_locked_rs, 2),
             })
             self._last_stop = current_stop
 
@@ -112,8 +118,34 @@ class TradeReplay:
         exit_reason: str,
         pnl: float,
         mae_pts: float,
+        position: dict | None = None,
     ):
-        """Call once at trade exit to close the timeline."""
+        """Call once at trade exit to close the timeline.
+
+        Task 10 — also captures verification fields so we can later PROVE the
+        profit lock worked: max_pnl, mae, ladder_stage, locked_profit,
+        retained_profit_pct, exit_reason, final stop_loss.
+        """
+        pos        = position or {}
+        max_pnl_rs = pos.get("max_pnl", self._last_mfe * self._qty)
+        final_stop = pos.get("stop_loss", self._last_stop)
+        from engine.execution.profit_manager import ladder_locked_rs
+        locked_rs, stage = ladder_locked_rs(max_pnl_rs)
+        retained = round(pnl / max_pnl_rs, 3) if max_pnl_rs > 0.01 else 0.0
+
+        self._exit_summary = {
+            "max_pnl":             round(max_pnl_rs, 2),
+            "mae_rs":              round(pos.get("min_pnl", 0.0), 2),
+            "mae_pts":             round(mae_pts, 2),
+            "ladder_stage":        stage,
+            "locked_profit":       round(locked_rs, 2),
+            "retained_profit_pct": retained,
+            "exit_reason":         exit_reason,
+            "exit_price":          round(exit_price, 2),
+            "final_stop_loss":     round(final_stop, 2),
+            "pnl":                 round(pnl, 2),
+        }
+
         self.events.append({
             "t":        ts.strftime("%H:%M:%S"),
             "type":     "EXIT",
@@ -183,6 +215,7 @@ class TradeReplay:
                     "side":   self._side,
                     "entry":  self._entry,
                     "qty":    self._qty,
+                    "summary": self._exit_summary,   # Task 10 — lock-verification fields
                     "events": self.events,
                 }, f, indent=2)
         except Exception as exc:

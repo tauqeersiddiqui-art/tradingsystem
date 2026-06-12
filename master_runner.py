@@ -56,6 +56,8 @@ from engine.live_engine import LiveEngine
 from engine.portfolio.allocator import CapitalAllocator
 from engine.execution.filters import has_oi_wall
 from engine.risk.risk_manager import compute_entry_stops
+from engine.execution.profit_manager import ladder_stop
+from engine.core.state_store import save_state, load_state, deserialize_position
 from engine.services.trade_logger import log_trade, today_summary
 from engine.diagnostics import TradeJournal, generate_eod_report
 from engine.scalping.scalp_engine import ScalpEngine
@@ -128,6 +130,143 @@ class _TelegramThrottle:
 
 _tg = _TelegramThrottle()
 
+
+def _log_stop_audit(tag: str, ltp: float, position: dict) -> None:
+    """Task 5 — prove which stop was active at a stop-based exit.
+
+    Logs LTP / stop_loss / entry / max_pnl / current pnl just before exit.
+    """
+    try:
+        entry = position.get("entry", 0.0)
+        sl    = position.get("stop_loss", 0.0)
+        qty   = position.get("qty", position.get("lot_size", 1))
+        mp    = position.get("max_pnl", 0.0)
+        cur   = (ltp - entry) * qty
+        logger.info(
+            f"[{tag}]\nLTP={ltp:.2f}\nSL={sl:.2f}\nENTRY={entry:.2f}\n"
+            f"MAXPNL={mp:.0f}\nCURPNL={cur:.0f}"
+        )
+    except Exception:
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════════
+# BROKER-SIDE PROTECTIVE STOP LIFECYCLE  (true stop enforcement)
+# ══════════════════════════════════════════════════════════════════════
+# Wraps ExecutionEngine SL-M primitives with audit logging + failsafe.
+# Failsafe policy (FAILSAFE spec): on any create/modify/repair failure ->
+# CRITICAL log + Telegram alert + PAUSE new entries, while KEEPING the
+# existing protection (virtual polling stop, and any prior broker stop) so a
+# position is never left unprotected.
+
+def _sl_pause_entries() -> None:
+    try:
+        import telegram.notifier as _tn
+        _tn.ENGINE_PAUSED = True
+    except Exception:
+        pass
+
+
+def _sl_failsafe(op: str, position: dict) -> None:
+    sym = position.get("symbol", "")
+    sl  = position.get("stop_loss", 0.0)
+    logger.critical(
+        f"[BROKER SL FAILSAFE] {op} FAILED for {sym} SL={sl:.2f} — "
+        f"virtual stop retained, NEW ENTRIES PAUSED"
+    )
+    try:
+        tg_force(
+            f"🚨 BROKER STOP {op.upper()} FAILED\n{sym}  SL={sl:.2f}\n"
+            f"Virtual stop still active. Entries PAUSED — send /resume."
+        )
+    except Exception:
+        pass
+    _sl_pause_entries()
+
+
+def _sl_create(ctx, position: dict) -> None:
+    """Place the protective SL-M when a trade opens."""
+    try:
+        oid = ctx.executor.place_protective_stop(
+            position["symbol"], position["qty"], position["stop_loss"]
+        )
+    except Exception as e:
+        logger.critical(f"[BROKER SL CREATED] exception: {e}")
+        oid = None
+    if oid:
+        position["sl_order_id"] = oid
+        logger.info(
+            f"[BROKER SL CREATED]\n{position['symbol']}  "
+            f"trigger={position['stop_loss']:.2f}  id={oid}"
+        )
+    else:
+        position["sl_order_id"] = None
+        _sl_failsafe("create", position)
+
+
+def _sl_modify(ctx, position: dict, new_stop: float) -> None:
+    """Raise the broker stop when the ladder tightens. No cancel-first (atomic)."""
+    oid = position.get("sl_order_id")
+    if not oid:
+        # Broker stop missing (earlier create failed) — try to establish one now.
+        _sl_create(ctx, position)
+        return
+    if ctx.executor.modify_protective_stop(oid, new_stop):
+        logger.info(
+            f"[BROKER SL MODIFIED]\n{position['symbol']}  "
+            f"trigger->{new_stop:.2f}  id={oid}"
+        )
+    else:
+        _sl_failsafe("modify", position)
+
+
+def _sl_cancel(ctx, position: dict) -> None:
+    """Cancel the protective stop on exit and clear the saved id."""
+    oid = position.get("sl_order_id")
+    if not oid:
+        return
+    ctx.executor.cancel_protective_stop(oid)
+    logger.info(f"[BROKER SL CANCELLED]\n{position.get('symbol','')}  id={oid}")
+    position["sl_order_id"] = None
+
+
+def _sl_verify_or_repair(ctx, position: dict) -> None:
+    """Restart recovery: confirm broker stop matches expected stop_loss; repair if not."""
+    sym  = position.get("symbol", "")
+    want = position.get("stop_loss", 0.0)
+    oid  = position.get("sl_order_id")
+
+    found = None
+    info  = ctx.executor.get_order_info(oid) if oid else None
+    if info and info.get("status") in ("TRIGGER PENDING", "OPEN"):
+        found = {"order_id": oid, "trigger_price": info.get("trigger_price", 0.0)}
+    if not found:
+        found = ctx.executor.find_open_stop_order(sym)
+
+    if found:
+        position["sl_order_id"] = found["order_id"]
+        want_t = ctx.executor._round_tick(want)
+        if abs(found["trigger_price"] - want_t) <= 0.05 + 1e-9:
+            logger.info(
+                f"[BROKER SL VERIFIED]\n{sym}  trigger={found['trigger_price']:.2f}  "
+                f"id={found['order_id']}"
+            )
+        elif ctx.executor.modify_protective_stop(found["order_id"], want):
+            logger.info(
+                f"[BROKER SL REPAIRED]\n{sym}  "
+                f"{found['trigger_price']:.2f}->{want:.2f}  id={found['order_id']}"
+            )
+        else:
+            _sl_failsafe("repair", position)
+    else:
+        # No protective order at the broker at all — create one now.
+        _sl_create(ctx, position)
+        if position.get("sl_order_id"):
+            logger.info(
+                f"[BROKER SL REPAIRED]\n{sym}  created missing stop "
+                f"trigger={want:.2f}  id={position['sl_order_id']}"
+            )
+
 _WATCHDOG_MAX_RESTARTS = int(os.getenv("WATCHDOG_MAX_RESTARTS", "5"))
 _WATCHDOG_INTERVAL_S   = 30
 
@@ -165,11 +304,11 @@ class EngineWatchdog:
         daily_limit = getattr(self._ctx.config, "DAILY_LOSS_LIMIT", -99999)
         if self._ctx.pnl <= daily_limit:
             return False, "daily_loss_lock"
-        try:
-            if self._ctx.broker.has_open_position():
-                return False, "open_position"
-        except Exception:
-            return False, "broker_check_failed"
+        # NOTE: an open broker position no longer blocks restart.  On restart
+        # engine_loop reconciliation reloads runtime_state.json and ADOPTS the
+        # open position (resuming stop management), or flattens it if no state
+        # exists.  Refusing to restart used to leave the position frozen and
+        # unmanaged — the opposite of safe.  (Task 8)
         return True, ""
 
     def _loop(self):
@@ -570,10 +709,21 @@ def build_context(broker) -> TradingContext:
     ctx.live_engine = LiveEngine(ctx)
     ctx.allocator   = CapitalAllocator(ctx.config)
 
-    ctx.pnl          = 0.0
-    ctx.positions    = []       # list of closed PnL values
+    # ── Restore prior same-day runtime state (else start fresh) ───────
+    # A snapshot from a previous day is ignored by load_state(), so PnL and
+    # trades_today never leak across sessions.  The engine_loop performs the
+    # authoritative broker reconciliation; this just primes the counters so
+    # dashboards and the daily-loss / max-trades gates are correct from cycle 1.
+    _snap = load_state()
+    ctx.pnl          = float(_snap.get("pnl", 0.0))
+    ctx.positions    = list(_snap.get("positions", []))
     ctx.cycle_count  = 0
-    ctx.trades_today = 0
+    ctx.trades_today = int(_snap.get("trades_today", 0))
+    if _snap:
+        logger.info(
+            f"[STATE] Restored session: pnl={ctx.pnl:.0f} "
+            f"trades_today={ctx.trades_today}"
+        )
 
     # F5 — profit capture analytics
     ctx.exit_analytics = {
@@ -635,6 +785,100 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     ltp_current       = 0.0     # last known NIFTY spot LTP (avoids UnboundLocalError on first tick)
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
     _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of NIFTY spot
+
+    # ══════════════════════════════════════════════════════════════════
+    # RESTART RECOVERY + BROKER RECONCILIATION  (Tasks 3, 4, 8)
+    # Runs on every engine_loop start (process restart AND watchdog thread
+    # restart).  Reloads runtime_state.json (same-day only) and reconciles
+    # against the live broker so a position is never left unmanaged.
+    # ══════════════════════════════════════════════════════════════════
+    try:
+        _snap = load_state()
+        if _snap:
+            ctx.pnl          = float(_snap.get("pnl", ctx.pnl))
+            ctx.trades_today = int(_snap.get("trades_today", ctx.trades_today))
+            ctx.positions    = list(_snap.get("positions", ctx.positions))
+        _restored_pos   = deserialize_position(_snap.get("open_position"))   if _snap else None
+        _restored_scalp = deserialize_position(_snap.get("scalp_position"))  if _snap else None
+
+        try:
+            _broker_open = ctx.broker.has_open_position()
+        except Exception as _bo_e:
+            logger.warning(f"[RECOVERY] broker position check failed: {_bo_e}")
+            _broker_open = False
+
+        if _broker_open and _restored_pos and _restored_pos.get("symbol"):
+            # Case A (main): broker position + saved state → resume management.
+            position        = _restored_pos
+            entry_time      = position.get("entry_ts")
+            entry_order_rec = {"symbol": position["symbol"],
+                               "price":  position.get("entry", 0.0),
+                               "qty":    position.get("qty", 0)}
+            logger.critical(
+                f"[RECOVERY] Adopted open position {position['symbol']} "
+                f"entry={position.get('entry',0):.2f} SL={position.get('stop_loss',0):.2f} "
+                f"max_pnl={position.get('max_pnl',0):.0f} — management resumed"
+            )
+            try:
+                tg_force(
+                    f"♻️ RECOVERY: resumed management of {position.get('side','')} "
+                    f"{position['symbol']}\nSL={position.get('stop_loss',0):.2f} "
+                    f"maxPnL={position.get('max_pnl',0):.0f}"
+                )
+            except Exception:
+                pass
+            # Verify the broker protective stop still matches; repair if not.
+            try:
+                _sl_verify_or_repair(ctx, position)
+            except Exception as _vr_e:
+                logger.critical(f"[BROKER SL] verify/repair failed: {_vr_e}")
+
+        elif _broker_open and _restored_scalp and _restored_scalp.get("symbol"):
+            # Case A (scalp): broker position + saved scalp state → resume.
+            scalp_position = _restored_scalp
+            logger.critical(
+                f"[RECOVERY] Adopted scalp position {scalp_position['symbol']} "
+                f"SL={scalp_position.get('stop_loss',0):.2f} — management resumed"
+            )
+
+        elif _broker_open:
+            # Case B: broker holds a position we have NO state for.  Never run
+            # blind — pause new entries and flatten the orphan safely.
+            logger.critical(
+                "[RECOVERY] Broker position with NO saved state — "
+                "PAUSING entries and flattening orphan"
+            )
+            try:
+                import telegram.notifier as _tn
+                _tn.ENGINE_PAUSED = True
+            except Exception:
+                pass
+            try:
+                for _p in ctx.broker.get_positions():
+                    _q   = int(_p.get("quantity", 0))
+                    if _q == 0:
+                        continue
+                    _sym  = _p.get("tradingsymbol", "")
+                    _side = "CE" if _sym.endswith("CE") else ("PE" if _sym.endswith("PE") else "CE")
+                    # Cancel any dangling protective stop first so it cannot fire
+                    # after we flatten (which would open a short).
+                    _dangling = ctx.executor.find_open_stop_order(_sym)
+                    if _dangling:
+                        ctx.executor.cancel_protective_stop(_dangling["order_id"])
+                        logger.info(f"[BROKER SL CANCELLED]\n{_sym} (orphan) id={_dangling['order_id']}")
+                    ctx.executor.execute_exit(symbol=_sym, qty=abs(_q), side=_side)
+                tg_force(
+                    "⚠️ RECOVERY: orphan broker position flattened.\n"
+                    "Entries PAUSED — send /resume to re-enable."
+                )
+            except Exception as _flat_e:
+                logger.critical(f"[RECOVERY] flatten failed: {_flat_e}")
+
+        elif _restored_pos or _restored_scalp:
+            # Broker is flat but state had a position → it already closed.
+            logger.info("[RECOVERY] Saved position but broker flat — treated as already closed")
+    except Exception as _rec_e:
+        logger.critical(f"[RECOVERY] reconciliation error (non-fatal): {_rec_e}")
 
     def _status_cb():
         import telegram.notifier as _tn
@@ -843,6 +1087,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         logger.debug(f"[TG] live update failed: {_lm_e}")
 
                 # ── Trailing / profit_manager via live_engine.check_exit ──
+                _sl_before = position.get("stop_loss", 0.0)
                 exit_flag, exit_reason = ctx.live_engine.check_exit(
                     position, pos_ltp, held_seconds
                 )
@@ -872,21 +1117,76 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     exit_reason = "MANUAL"
                     _tn.MANUAL_EXIT_REQUESTED = False
 
+                # ── Ladder raised the stop → push it to the broker SL-M ──
+                # Only when we are NOT exiting this cycle (atomic modify).
+                if not exit_flag and position.get("stop_loss", 0.0) > _sl_before + 1e-6:
+                    _sl_modify(ctx, position, position["stop_loss"])
+
                 # ── Execute exit ───────────────────────────────────────
                 if exit_flag:
+                    # Task 5 — audit log proving which stop was active at exit.
+                    if exit_reason in ("STOP", "Stop Loss"):
+                        _log_stop_audit("STOP HIT", pos_ltp, position)
+
+                    # ── Broker stop reconciliation before exiting ─────────
+                    # Cancel the protective SL-M.  If it ALREADY fired (broker
+                    # flat), the SL did the exit — do NOT place a second sell
+                    # (would open a short).  Otherwise place the market exit.
+                    _sl_already_filled = False
+                    _sl_fill_price     = 0.0
+                    if position.get("sl_order_id"):
+                        _sl_info = ctx.executor.get_order_info(position["sl_order_id"])
+                        ctx.executor.cancel_protective_stop(position["sl_order_id"])
+                        logger.info(
+                            f"[BROKER SL CANCELLED]\n{position['symbol']}  "
+                            f"id={position['sl_order_id']}"
+                        )
+                        if (_sl_info and _sl_info.get("status") == "COMPLETE"
+                                and _sl_info.get("average_price", 0) > 0
+                                and ctx.executor.verify_flat(position["symbol"])):
+                            _sl_already_filled = True
+                            _sl_fill_price     = _sl_info["average_price"]
+                            logger.critical(
+                                f"[BROKER SL FILLED] {position['symbol']} "
+                                f"fill={_sl_fill_price:.2f} — broker stop executed the exit"
+                            )
+                        position["sl_order_id"] = None
+
                     # F5: capture exit signal price before market order
                     _exit_signal_ltp = pos_ltp
 
-                    exit_order = ctx.executor.execute_exit(
-                        symbol=position["symbol"],
-                        qty=position["qty"],
-                        side=position["side"],     # FIX-5: CE→SELL, PE→BUY
-                    )
+                    if _sl_already_filled:
+                        # Broker SL-M already closed the position — reuse its fill,
+                        # do NOT send another order.  Clear the executor's
+                        # duplicate-order guard that execute_exit would normally
+                        # clear, so the next entry is not blocked.
+                        exit_order = None
+                        exit_price = _sl_fill_price
+                        ctx.executor._active_order_id = None
+                    else:
+                        exit_order = ctx.executor.execute_exit(
+                            symbol=position["symbol"],
+                            qty=position["qty"],
+                            side=position["side"],     # both CE & PE close with SELL
+                        )
 
-                    exit_price = (
-                        exit_order["price"] if exit_order and exit_order["price"] > 0
-                        else pos_ltp
-                    )
+                        exit_price = (
+                            exit_order["price"] if exit_order and exit_order["price"] > 0
+                            else pos_ltp
+                        )
+
+                    # Task 7 — VIRTUAL STOP: the stop is a trigger level, not a
+                    # resting broker order, so the market fill can be BELOW the
+                    # trigger on option gaps.  Warn when slippage is material.
+                    if exit_reason in ("STOP", "Stop Loss"):
+                        _slip_pts = _exit_signal_ltp - exit_price
+                        _warn_pts = float(os.getenv("SLIPPAGE_WARN_PTS", "1.5"))
+                        if _slip_pts > _warn_pts:
+                            logger.warning(
+                                f"[SLIPPAGE] {position['symbol']} stop slippage "
+                                f"{_slip_pts:.2f}pt (trigger={_exit_signal_ltp:.2f} "
+                                f"fill={exit_price:.2f} SL={position.get('stop_loss',0):.2f})"
+                            )
 
                     pnl = (exit_price - position["entry"]) * position["qty"]
 
@@ -1011,7 +1311,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     if position is not None and position.get("_replay"):
                         try:
                             position["_replay"].on_exit(
-                                ts, exit_price, exit_reason, pnl, _mae_pts
+                                ts, exit_price, exit_reason, pnl, _mae_pts,
+                                position=position,
                             )
                             position["_replay"].save(str(ctx.trades_today))
                             _replay_msg = position["_replay"].format_timeline()
@@ -1040,6 +1341,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     entry_order_rec = None
                     # Stamp exit time for re-entry cooldown in live_engine
                     ctx.live_engine._last_exit_ts = time.time()
+                    # Persist closed state immediately (open_position -> None)
+                    save_state(ctx, None, scalp_position)
 
                     # Auto-pause after 2 consecutive stop losses
                     if exit_reason in ("STOP", "Stop Loss", "Drawdown"):
@@ -1145,7 +1448,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 symbol, _ = ctx.broker.get_atm_option(side)
                 lot_size  = ctx.executor.get_lot_size(symbol)
 
-                # Position sizing via allocator
+                # Position sizing via allocator (SINGLE computation — the
+                # result is reused below; do NOT recompute with a fallback).
                 atr_val = decision.get("features", {}).get("atr", current_price * 0.01)
                 qty = ctx.allocator.size_position(
                     capital=ctx.config.INITIAL_CAPITAL,
@@ -1154,10 +1458,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     price=builder.ltp() or 0,
                     lot_size=lot_size,
                     current_pnl=ctx.pnl,
-                ) or lot_size
+                )
 
-                if qty <= 0:
-                    logger.info(f"[GATE] Allocator returned qty=0 — skipping")
+                # Respect allocator rejection.  A 0 return means "do not trade".
+                # The old `or lot_size` fallback turned a reject into lot_size
+                # lots (qty*lot_size = 4225 units) — a catastrophic oversize.
+                if not qty or qty <= 0:
+                    logger.info("[GATE] Allocator returned 0 — skipping trade (ALLOC_ZERO)")
                     ctx.live_engine.record_block("ALLOC_ZERO")
                     decision = None
 
@@ -1166,15 +1473,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 side     = decision["side"]
                 symbol, _ = ctx.broker.get_atm_option(side)
                 lot_size  = ctx.executor.get_lot_size(symbol)
-                atr_val   = decision.get("features", {}).get("atr", 1.0)
-                qty       = ctx.allocator.size_position(
-                    capital=ctx.config.INITIAL_CAPITAL,
-                    ml_prob=decision["ml_prob"],
-                    atr=atr_val,
-                    price=builder.ltp() or 0,
-                    lot_size=lot_size,
-                    current_pnl=ctx.pnl,
-                ) or lot_size
+                # qty was computed and validated in the block above — single
+                # source of truth, no fallback recompute here.
 
                 # ── Telegram confirmation (3s timeout → auto-execute) ──
                 _confirmed = ask_trade_permission(
@@ -1233,10 +1533,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "regime":   decision.get("regime", "UNKNOWN"),
                         "reason":   decision.get("reason", ""),
                         "entry_ts": ts,   # for held-time display in dashboard
+                        "sl_order_id": None,   # broker protective SL-M id (set below)
                     }
                     entry_time      = ts    # FIX-2
                     entry_order_rec = order
                     ctx.trades_today += 1
+
+                    # ── Place broker-side protective SL-M immediately ──────
+                    # True stop enforcement — no longer depends on the polling
+                    # loop seeing the price (eliminates virtual-stop gap risk).
+                    _sl_create(ctx, position)
+
+                    # Persist new open position immediately (survives restart)
+                    save_state(ctx, position, scalp_position)
 
                     # F1: start replay timeline (observational)
                     try:
@@ -1310,8 +1619,31 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         scalp_position.get("min_pnl", 0.0),
                         (_s_ltp - scalp_position["entry"]) * scalp_position["qty"],
                     )
+
+                    # Centralized profit-lock ladder also governs scalp trades
+                    # (single source of truth — identical to normal trades).
+                    _sc_new_stop, _sc_stage, _sc_lock = ladder_stop(
+                        scalp_position["entry"],
+                        scalp_position["qty"],
+                        scalp_position["max_pnl"],
+                        scalp_position["stop_loss"],
+                    )
+                    if _sc_new_stop > scalp_position["stop_loss"] + 1e-6:
+                        logger.info(
+                            f"[LADDER]\nMFE={scalp_position['max_pnl']:.0f}\n"
+                            f"LOCK={_sc_lock:.0f}\nstage={_sc_stage} (scalp)  "
+                            f"SL {scalp_position['stop_loss']:.2f}->{_sc_new_stop:.2f}"
+                        )
+                        scalp_position["stop_loss"] = _sc_new_stop
+
                     _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
+                    # Honor the ladder-raised stop (virtual trigger) in addition
+                    # to the scalp engine's fixed initial stop / target / time.
+                    if not _s_exit and _s_ltp <= scalp_position["stop_loss"]:
+                        _s_exit, _s_reason = True, "STOP"
                     if _s_exit:
+                        if _s_reason in ("STOP",):
+                            _log_stop_audit("SCALP STOP HIT", _s_ltp, scalp_position)
                         _s_exit_order = ctx.executor.execute_exit(
                             scalp_position["symbol"],
                             scalp_position["qty"],
@@ -1478,6 +1810,14 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             # ── Health file update ────────────────────────────────────
             update_health(snapshot(ctx))
+
+            # ── Persist runtime state every cycle (survives restart) ──
+            # Captures stop_loss / target / max_pnl / pnl / trades_today as they
+            # change, so a restart resumes from at most ~1s ago.
+            try:
+                save_state(ctx, position, scalp_position)
+            except Exception:
+                pass
 
             ctx.cycle_count += 1
             time.sleep(1)

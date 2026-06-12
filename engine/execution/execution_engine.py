@@ -215,6 +215,119 @@ class ExecutionEngine:
         }
 
     # ══════════════════════════════════════════════════════════════════
+    # BROKER-SIDE PROTECTIVE STOP (SL-M)  — TRUE stop enforcement
+    # ══════════════════════════════════════════════════════════════════
+    #
+    # Both CE and PE are LONG (bought to open), so the protective stop is a
+    # SELL SL-M with trigger_price = stop_loss premium level.  When the option
+    # trades down to the trigger, Zerodha fires a market SELL server-side, so
+    # enforcement no longer depends on the polling loop observing the price.
+    # This eliminates the virtual-stop gap (locked profit given back on gaps).
+
+    @staticmethod
+    def _round_tick(price: float, tick: float = 0.05) -> float:
+        """NFO options tick in 0.05 — Kite rejects mis-aligned trigger prices."""
+        return round(round(float(price) / tick) * tick, 2)
+
+    def _is_dry(self) -> bool:
+        return bool(self.config.DRY_RUN or getattr(self.broker, "is_paper", False))
+
+    def place_protective_stop(self, symbol: str, qty: int, trigger_price: float) -> str | None:
+        """Place a SELL SL-M protecting a long option. Returns order_id or None."""
+        trig = self._round_tick(trigger_price)
+        if self._is_dry():
+            oid = f"dry_sl_{int(time.time()*1000)}"
+            logger.info(f"[DRY SL] place {symbol} qty={qty} trigger={trig:.2f} id={oid}")
+            return oid
+        try:
+            oid = self.broker.kite.place_order(
+                variety=self.broker.kite.VARIETY_REGULAR,
+                exchange="NFO",
+                tradingsymbol=symbol,
+                transaction_type=self.broker.kite.TRANSACTION_TYPE_SELL,
+                quantity=qty,
+                order_type=self.broker.kite.ORDER_TYPE_SLM,
+                product=self.broker.kite.PRODUCT_MIS,
+                trigger_price=trig,
+            )
+            return str(oid)
+        except Exception as e:
+            logger.error(f"[SL] place_protective_stop failed {symbol} trig={trig}: {e}")
+            return None
+
+    def modify_protective_stop(self, order_id: str, trigger_price: float) -> bool:
+        """Atomically raise (or lower) the SL-M trigger. Does NOT cancel first."""
+        trig = self._round_tick(trigger_price)
+        if not order_id:
+            return False
+        if self._is_dry() or str(order_id).startswith("dry_"):
+            logger.info(f"[DRY SL] modify id={order_id} trigger={trig:.2f}")
+            return True
+        try:
+            self.broker.kite.modify_order(
+                variety=self.broker.kite.VARIETY_REGULAR,
+                order_id=str(order_id),
+                trigger_price=trig,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[SL] modify_protective_stop failed id={order_id} trig={trig}: {e}")
+            return False
+
+    def cancel_protective_stop(self, order_id: str) -> bool:
+        """Cancel the protective SL-M (on exit). Already-complete is treated as success."""
+        if not order_id:
+            return True
+        if self._is_dry() or str(order_id).startswith("dry_"):
+            logger.info(f"[DRY SL] cancel id={order_id}")
+            return True
+        try:
+            self.broker.kite.cancel_order(
+                variety=self.broker.kite.VARIETY_REGULAR,
+                order_id=str(order_id),
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"[SL] cancel_protective_stop id={order_id}: {e}")
+            return False
+
+    def get_order_info(self, order_id: str) -> dict | None:
+        """Return {status, average_price, trigger_price, filled_quantity} or None."""
+        if not order_id or self._is_dry() or str(order_id).startswith("dry_"):
+            return None
+        try:
+            for o in self.broker.kite.orders():
+                if str(o["order_id"]) == str(order_id):
+                    return {
+                        "status":          o.get("status", ""),
+                        "average_price":   float(o.get("average_price", 0) or 0),
+                        "trigger_price":   float(o.get("trigger_price", 0) or 0),
+                        "filled_quantity": int(o.get("filled_quantity", 0) or 0),
+                    }
+        except Exception as e:
+            logger.warning(f"[SL] get_order_info failed id={order_id}: {e}")
+        return None
+
+    def find_open_stop_order(self, symbol: str) -> dict | None:
+        """Restart recovery: locate an OPEN SELL SL-M for symbol at the broker."""
+        if self._is_dry():
+            return None
+        try:
+            for o in self.broker.kite.orders():
+                if (o.get("tradingsymbol") == symbol
+                        and o.get("order_type") in ("SL-M", "SL")
+                        and o.get("transaction_type") == "SELL"
+                        and o.get("status") in ("TRIGGER PENDING", "OPEN", "AMO REQ RECEIVED")):
+                    return {
+                        "order_id":      str(o["order_id"]),
+                        "trigger_price": float(o.get("trigger_price", 0) or 0),
+                        "status":        o.get("status", ""),
+                    }
+        except Exception as e:
+            logger.warning(f"[SL] find_open_stop_order failed {symbol}: {e}")
+        return None
+
+    # ══════════════════════════════════════════════════════════════════
     # TRAILING STOP UPDATE  (FIX-4 — was missing, caused AttributeError)
     # ══════════════════════════════════════════════════════════════════
 

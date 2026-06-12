@@ -330,21 +330,21 @@ def drift_check(
         if s["win_rate"] < thr["win_rate"]:
             alerts.append(
                 f"⚠️ DRIFT L{w}: WR {s['win_rate']:.0f}% "
-                f"< {thr['win_rate']:.0f}%"
+                f"&lt; {thr['win_rate']:.0f}%"
             )
         if s["expectancy"] < thr["expectancy"]:
             alerts.append(
                 f"⚠️ DRIFT L{w}: Exp {_rs(s['expectancy'])} "
-                f"< {_rs(thr['expectancy'])}"
+                f"&lt; {_rs(thr['expectancy'])}"
             )
         if pf != float("inf") and pf < thr["pf"]:
             alerts.append(
-                f"⚠️ DRIFT L{w}: PF {pf:.2f} < {thr['pf']}"
+                f"⚠️ DRIFT L{w}: PF {pf:.2f} &lt; {thr['pf']}"
             )
         if s["capture"] < thr["capture"]:
             alerts.append(
                 f"⚠️ DRIFT L{w}: Capture {s['capture']:.0%} "
-                f"< {thr['capture']:.0%}"
+                f"&lt; {thr['capture']:.0%}"
             )
 
     if alerts:

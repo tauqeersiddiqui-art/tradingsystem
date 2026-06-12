@@ -71,7 +71,17 @@ class ZerodhaBroker:
 
         def on_ticks(ws, ticks):
             for tick in ticks:
-                self._last_ticks[tick["instrument_token"]] = tick
+                token = tick["instrument_token"]
+                # Preserve OI from a previous FULL-mode tick when a QUOTE-mode
+                # packet arrives without the oi key. Zerodha sends mixed packet
+                # sizes (44-byte QUOTE on price changes, 184-byte FULL when OI
+                # refreshes), so overwriting unconditionally would zero out OI.
+                if token in self._last_ticks and "oi" not in tick:
+                    prev = self._last_ticks[token]
+                    for _k in ("oi", "oi_day_high", "oi_day_low"):
+                        if _k in prev:
+                            tick[_k] = prev[_k]
+                self._last_ticks[token] = tick
             self._last_tick_time = time.time()
 
         def on_connect(ws, _):
@@ -87,7 +97,7 @@ class ZerodhaBroker:
             # and option LTPs resume without restarting the engine.
             if self._option_tokens:
                 ws.subscribe(self._option_tokens)
-                ws.set_mode(ws.MODE_QUOTE, self._option_tokens)
+                ws.set_mode(ws.MODE_FULL, self._option_tokens)  # MODE_FULL required for OI
                 print(
                     f"[BROKER] on_connect: re-subscribed {len(self._option_tokens)}"
                     " option tokens"
@@ -172,7 +182,7 @@ class ZerodhaBroker:
         if self.ticker is not None:
             try:
                 self.ticker.subscribe(tokens_to_sub)
-                self.ticker.set_mode(self.ticker.MODE_QUOTE, tokens_to_sub)
+                self.ticker.set_mode(self.ticker.MODE_FULL, tokens_to_sub)  # MODE_FULL required for OI
             except Exception as exc:
                 print(f"[OPTIONS FEED] subscribe() call failed: {exc}")
                 return

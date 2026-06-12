@@ -1,0 +1,57 @@
+{
+  "symbol": "NIFTY2661623150PE",
+  "side": "PE",
+  "entry": 147.2,
+  "qty": 65,
+  "events": [
+    {
+      "t": "11:01:07",
+      "type": "ENTRY",
+      "price": 147.2,
+      "spot": 23164.35,
+      "ml_ce": 0.873,
+      "ml_pe": 0.826,
+      "adx": 19.4,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 144.0,
+      "regime": "RANGE"
+    },
+    {
+      "t": "11:01:54",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.65,
+      "price": 147.8
+    },
+    {
+      "t": "11:01:57",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.15,
+      "price": 148.7
+    },
+    {
+      "t": "11:01:59",
+      "type": "MFE_PEAK",
+      "mfe_pts": 2.3,
+      "price": 149.35
+    },
+    {
+      "t": "11:01:59",
+      "type": "STOP_MOVE",
+      "label": "BREAK_EVEN",
+      "new_stop": 147.2,
+      "pts_locked": 0.0,
+      "mfe_pts": 2.3
+    },
+    {
+      "t": "11:02:33",
+      "type": "EXIT",
+      "price": 146.65,
+      "reason": "STOP",
+      "pnl": -35.75,
+      "mfe_pts": 2.3,
+      "mae_pts": -1.85
+    }
+  ]
+}

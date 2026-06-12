@@ -1,0 +1,31 @@
+{
+  "symbol": "NIFTY2661623150PE",
+  "side": "PE",
+  "entry": 147.5,
+  "qty": 65,
+  "events": [
+    {
+      "t": "10:55:21",
+      "type": "ENTRY",
+      "price": 147.5,
+      "spot": 23168.75,
+      "ml_ce": 0.0,
+      "ml_pe": 0.783,
+      "adx": 21.7,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 144.44,
+      "regime": "RANGE"
+    },
+    {
+      "t": "10:56:17",
+      "type": "EXIT",
+      "price": 144.4,
+      "reason": "STOP",
+      "pnl": -201.5,
+      "mfe_pts": 0.0,
+      "mae_pts": -3.1
+    }
+  ]
+}

@@ -34,6 +34,12 @@ class TradingContext:
         self.last_trade = None
         self.cycle_count = 0
 
+        self.pnl = 0.0
+        self.positions = []
+        self.trades_today = 0
+        self.exit_analytics = {}
+        self.exit_type_counts = {}
+
 
     def ready(self):
         """

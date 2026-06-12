@@ -2,50 +2,35 @@
 
 
 def has_oi_wall(option_chain, atm_strike, direction):
-    """
-    Avoid trading directly into heavy Open Interest (OI) walls.
-
-    Parameters
-    ----------
-    option_chain : list[dict]
-        Option chain rows with keys:
-        strike, ce_oi, pe_oi
-
-    atm_strike : float
-        Current ATM strike
-
-    direction : str
-        "CE" or "PE"
-
-    Returns
-    -------
-    bool
-        True  → OI wall detected, block trade
-        False → Safe to trade
-    """
 
     try:
 
         if not option_chain:
             return False
 
-        # Get closest strikes around ATM
-        strikes = sorted(
+        nearby = sorted(
             option_chain,
             key=lambda x: abs(x.get("strike", 0) - atm_strike)
         )[:5]
 
-        for s in strikes:
+        avg_ce = sum(s.get("ce_oi", 0) for s in nearby) / max(len(nearby), 1)
+        avg_pe = sum(s.get("pe_oi", 0) for s in nearby) / max(len(nearby), 1)
 
+        for s in nearby:
+
+            strike = s.get("strike", 0)
             ce_oi = s.get("ce_oi", 0)
             pe_oi = s.get("pe_oi", 0)
 
-            # Block CE if heavy CALL OI wall exists
-            if direction == "CE" and ce_oi > 6_000_000:
-                return True
+            if direction == "CE":
 
-            if direction == "PE" and pe_oi > 6_000_000:
-                return True
+                if strike > atm_strike and ce_oi > avg_ce * 2:
+                    return True
+
+            elif direction == "PE":
+
+                if strike < atm_strike and pe_oi > avg_pe * 2:
+                    return True
 
         return False
 

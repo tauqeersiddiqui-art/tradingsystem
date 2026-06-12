@@ -780,7 +780,10 @@ class LiveEngine:
         - learner early-exit signal
         """
         entry     = position["entry"]
-        lot_size  = position.get("lot_size", 1)
+        # SINGLE position-size source of truth: use the ACTUAL filled qty so
+        # max_pnl/MFE is consistent with realized PnL and MAE (which use qty).
+        # Falls back to lot_size, then 1, for legacy/partial dicts.
+        size      = position.get("qty", position.get("lot_size", 1))
         stop_loss = position.get("stop_loss", entry * 0.90)
         max_pnl   = position.get("max_pnl", 0.0)
         ml_prob   = position.get("ml_prob", 0.5)
@@ -789,7 +792,7 @@ class LiveEngine:
         new_sl, new_max_pnl, pm_reason = manage_position(
             entry_price=entry,
             ltp=ltp,
-            lot_size=lot_size,
+            lot_size=size,
             stop_loss=stop_loss,
             max_pnl=max_pnl,
             ml_prob=ml_prob,

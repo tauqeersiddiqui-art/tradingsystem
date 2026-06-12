@@ -566,6 +566,7 @@ def build_context(broker) -> TradingContext:
     ctx.executor  = ExecutionEngine(broker, ctx.config)
 
     ctx.ml_learner = IntradayMLLearner()
+    ctx._last_daily_reset = None
     ctx.live_engine = LiveEngine(ctx)
     ctx.allocator   = CapitalAllocator(ctx.config)
 
@@ -656,7 +657,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         try:
             ts  = datetime.now()
             now = ts.time()
+            today = ts.date()
 
+            if now.hour == 9 and now.minute == 15:
+                if ctx._last_daily_reset != today:
+                    logger.info("[DAILY RESET]")
+
+                    ctx.ml_learner.reset_day()
+
+                    ctx._last_daily_reset = today
             # ── Poll Telegram: buttons + text commands (every cycle) ──
             poll_commands(status_cb=_status_cb)
 
@@ -799,7 +808,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # builder.ltp() returns NIFTY 50 spot (~23500) which is always
                 # above the option target (~42), causing TARGET_HIT every cycle.
                 _opt_ltp = ctx.broker.ltp(position["symbol"])
-                pos_ltp  = _opt_ltp if (_opt_ltp and _opt_ltp > 0) else position["entry"]
+
+                if _opt_ltp and _opt_ltp > 0:
+                    pos_ltp = _opt_ltp
+                    position["_last_ltp"] = _opt_ltp
+                else:
+                    logger.warning(
+                        f"[LTP MISSING] {position['symbol']} using last known LTP"
+                    )
+                    pos_ltp = position.get("_last_ltp", position["entry"])
                 held_seconds = (ts - entry_time).total_seconds() if entry_time else 0
 
                 # ── Track MAE (maximum adverse excursion) ────────────
@@ -1090,16 +1107,6 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     decision = None
 
             if decision is not None and position is None:
-                # Re-entry cooldown guard (defence against async execution queue bypass)
-                _exit_ts = getattr(ctx.live_engine, "_last_exit_ts", 0.0)
-                if _exit_ts > 0:
-                    _secs = time.time() - _exit_ts
-                    if _secs < 180:
-                        logger.info(f"[GATE] COOLDOWN — {int(180-_secs)}s remaining since last exit")
-                        ctx.live_engine.record_block("COOLDOWN")
-                        decision = None
-
-            if decision is not None and position is None:
 
                 side   = decision["side"]
                 symbol, _price_ignored = ctx.broker.get_atm_option(side)
@@ -1123,9 +1130,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 try:
                     atm_strike = round(current_price / 50) * 50
                     option_chain = ctx.broker.get_option_chain_near_atm(strikes_range=5)
+                    
                     if has_oi_wall(option_chain, atm_strike, side):
-                        logger.info(f"[GATE] OI wall blocked {side} entry")
-                        ctx.live_engine.record_block("OI_WALL")
+                        logger.info(
+                            f"[GATE] OI wall blocked {side} entry | ATM={atm_strike}"
+                        )
                         decision = None
                 except Exception as _oi_e:
                     logger.warning(f"[OI FILTER] Error (non-fatal): {_oi_e}")
@@ -1145,7 +1154,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     price=builder.ltp() or 0,
                     lot_size=lot_size,
                     current_pnl=ctx.pnl,
-                )
+                ) or lot_size
 
                 if qty <= 0:
                     logger.info(f"[GATE] Allocator returned qty=0 — skipping")
@@ -1165,7 +1174,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     price=builder.ltp() or 0,
                     lot_size=lot_size,
                     current_pnl=ctx.pnl,
-                ) or 1
+                ) or lot_size
 
                 # ── Telegram confirmation (3s timeout → auto-execute) ──
                 _confirmed = ask_trade_permission(

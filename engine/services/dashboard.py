@@ -216,7 +216,7 @@ def render_market(ctx, market_state: dict, position: dict | None,
     engine_state = "PAUSED" if _tn.ENGINE_PAUSED else "ACTIVE"
 
     return (
-        f"<b>AGENTIC TRADER — LIVE STATUS</b>\n"
+        f"<b>📡 LIVE MARKET</b>\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
         f"{pos_block}\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"

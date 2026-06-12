@@ -123,9 +123,11 @@ def _tg_enqueue(fn, *args, **kwargs):
 _engine_msg_id = None   # "AI ENGINE" dashboard
 _market_msg_id = None   # "LIVE STATUS" dashboard
 _trade_msg_id  = None   # current trade entry message (EXIT button)
+_scalp_msg_id  = None   # current scalp entry message (no button)
 
 _last_update_id = None
 _last_edited    = {}    # message_id → last text (per-slot dedup)
+_EDIT_GONE      = "GONE"
 
 
 def _load_state():
@@ -175,8 +177,8 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         return None
 
 
-def _edit(message_id, text, parse_mode="HTML") -> bool:
-    """Edit a message. Returns True on success, False if message is gone/invalid."""
+def _edit(message_id, text, parse_mode="HTML"):
+    """Edit a message. Returns True, False for transient errors, or _EDIT_GONE."""
     if _last_edited.get(message_id) == text:
         return True
     try:
@@ -191,12 +193,23 @@ def _edit(message_id, text, parse_mode="HTML") -> bool:
         if d.get("ok"):
             _last_edited[message_id] = text
             return True
-        elif "message is not modified" in str(d):
+
+        desc = str(d.get("description", "")).lower()
+        if "message is not modified" in desc:
             _last_edited[message_id] = text
             return True
-        else:
-            _log.warning("[TG] Edit error: %s", d)
-            return False
+
+        if any(phrase in desc for phrase in (
+            "message to edit not found",
+            "message can't be edited",
+            "message_id_invalid",
+            "chat not found",
+        )):
+            _log.warning("[TG] Edit target gone: %s", d)
+            return _EDIT_GONE
+
+        _log.warning("[TG] Edit error: %s", d)
+        return False
     except Exception as e:
         _log.warning("[TG] Edit exception: %s", e)
         return False
@@ -237,10 +250,11 @@ def _do_send_or_edit_engine(text: str):
             _save_state()
     else:
         ok = _edit(_engine_msg_id, text)
-        if not ok:
+        if ok == _EDIT_GONE:
             old_id = _engine_msg_id
             _engine_msg_id = None
             _last_edited.pop(old_id, None)
+            _save_state()
             _do_send_or_edit_engine(text)
 
 
@@ -254,10 +268,11 @@ def _do_send_or_edit_market(text: str, reply_markup=None):
             _save_state()
     else:
         ok = _edit_with_markup(_market_msg_id, text, reply_markup)
-        if not ok:
+        if ok == _EDIT_GONE:
             old_id = _market_msg_id
             _market_msg_id = None
             _last_edited.pop(old_id, None)
+            _save_state()
             _do_send_or_edit_market(text, reply_markup)
 
 
@@ -271,7 +286,7 @@ def send_or_edit_market_dashboard(text: str, reply_markup=None):
     _tg_enqueue(_do_send_or_edit_market, text, reply_markup)
 
 
-def _edit_with_markup(message_id, text, reply_markup=None) -> bool:
+def _edit_with_markup(message_id, text, reply_markup=None):
     if _last_edited.get(message_id) == text and not reply_markup:
         return True
     try:
@@ -289,12 +304,23 @@ def _edit_with_markup(message_id, text, reply_markup=None) -> bool:
         if d.get("ok"):
             _last_edited[message_id] = text
             return True
-        elif "message is not modified" in str(d):
+
+        desc = str(d.get("description", "")).lower()
+        if "message is not modified" in desc:
             _last_edited[message_id] = text
             return True
-        else:
-            _log.warning("[TG] Market edit error: %s", d)
-            return False
+
+        if any(phrase in desc for phrase in (
+            "message to edit not found",
+            "message can't be edited",
+            "message_id_invalid",
+            "chat not found",
+        )):
+            _log.warning("[TG] Edit target gone: %s", d)
+            return _EDIT_GONE
+
+        _log.warning("[TG] Market edit error: %s", d)
+        return False
     except Exception as e:
         _log.warning("[TG] Market edit exception: %s", e)
         return False
@@ -334,8 +360,22 @@ def update_trade_live(message: str):
     """Edit the open trade card in-place with latest LTP / PnL. Non-blocking."""
     if not _trade_msg_id:
         return
-    _tg_enqueue(_edit_with_markup, _trade_msg_id, message,
-                {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]})
+    _tg_enqueue(_do_update_trade_live, _trade_msg_id, message)
+
+
+def _do_update_trade_live(expected_msg_id, message: str):
+    """Skip stale queued edits after a trade card is deleted or replaced."""
+    global _trade_msg_id
+    if _trade_msg_id != expected_msg_id:
+        return
+    result = _edit_with_markup(
+        expected_msg_id,
+        message,
+        {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]},
+    )
+    if result == _EDIT_GONE and _trade_msg_id == expected_msg_id:
+        _trade_msg_id = None
+        _last_edited.pop(expected_msg_id, None)
 
 
 def delete_trade_message():
@@ -362,8 +402,52 @@ def remove_exit_button():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# ENGINE DASHBOARD — delete old message, post fresh one at bottom
+# SCALP TRADE MESSAGES — entry card (no button), live edit, delete
 # ─────────────────────────────────────────────────────────────────────
+
+def send_scalp_entry(message: str):
+    """Send scalp entry card. Tracks message_id for live in-place edits."""
+    global _scalp_msg_id
+    result = _send(BOT_CHAT_ID, message)
+    if result:
+        _scalp_msg_id = result["message_id"]
+        _last_edited.pop(_scalp_msg_id, None)
+
+
+def update_scalp_live(message: str):
+    """Edit the open scalp card in-place with latest LTP / PnL. Non-blocking."""
+    if not _scalp_msg_id:
+        return
+    _tg_enqueue(_do_update_scalp_live, _scalp_msg_id, message)
+
+
+def _do_update_scalp_live(expected_msg_id, message: str):
+    """Skip stale queued edits after a scalp card is deleted or replaced."""
+    global _scalp_msg_id
+    if _scalp_msg_id != expected_msg_id:
+        return
+    result = _edit(expected_msg_id, message)
+    if result == _EDIT_GONE and _scalp_msg_id == expected_msg_id:
+        _scalp_msg_id = None
+        _last_edited.pop(expected_msg_id, None)
+
+
+def delete_scalp_message():
+    """Delete the scalp card when the scalp trade closes."""
+    global _scalp_msg_id
+    if not _scalp_msg_id:
+        return
+    mid = _scalp_msg_id
+    _scalp_msg_id = None
+    _last_edited.pop(mid, None)
+    try:
+        requests.post(
+            f"{API_URL}/deleteMessage",
+            json={"chat_id": BOT_CHAT_ID, "message_id": mid},
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 def repost_engine_dashboard(text: str):
     """Delete the old engine dashboard message and send a fresh one at bottom."""
@@ -563,6 +647,7 @@ def poll_commands(status_cb=None):
     Optionally registers a status callback for /status command.
     """
     global _status_callback
+    _ensure_thread()
     if status_cb is not None:
         _status_callback = status_cb
 

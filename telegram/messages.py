@@ -317,6 +317,122 @@ def format_trade_exit(data: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# SCALP MESSAGES — entry / live / exit cards for the scalp layer
+# ─────────────────────────────────────────────────────────────────────
+
+def format_scalp_entry(pos: dict, move_pts: float) -> str:
+    symbol    = fmt_symbol(pos.get("symbol", ""))
+    side      = pos.get("side", "").upper()
+    price     = pos.get("entry", 0.0)
+    stop      = pos.get("stop_loss", 0.0)
+    target    = pos.get("target", 0.0)
+    side_e    = _side_emoji(side)
+    tgt_pts   = round(target - price, 1)
+    sl_pts    = round(price - stop, 1)
+    now_str   = datetime.now().strftime("%H:%M:%S")
+    move_sign = "+" if move_pts >= 0 else ""
+
+    return (
+        f"⚡ {side_e} <b>SCALP OPEN — {side}</b>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"📌 <b>{symbol}</b>\n"
+        f"\n"
+        f"💵 Entry Price   : <b>{price:.1f}</b>\n"
+        f"📦 Quantity      : 65  (1 lot)\n"
+        f"\n"
+        f"🛑 Stop Loss     : {stop:.1f}  <i>(-{abs(sl_pts):.1f} pts)</i>\n"
+        f"🎯 Target        : {target:.1f}  <i>(+{abs(tgt_pts):.1f} pts)</i>\n"
+        f"\n"
+        f"⚡ Trigger       : NIFTY {move_sign}{move_pts:.1f} pts momentum\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"⏱️ Opened at {now_str}  |  <i>live updates below</i>"
+    )
+
+
+def format_scalp_live(pos: dict, ltp: float) -> str:
+    symbol   = fmt_symbol(pos.get("symbol", ""))
+    side     = pos.get("side", "").upper()
+    entry    = pos.get("entry", 0.0)
+    stop     = pos.get("stop_loss", 0.0)
+    target   = pos.get("target", 0.0)
+    qty      = pos.get("qty", 65)
+    max_pnl  = pos.get("max_pnl", 0.0)
+    entry_ts = pos.get("entry_ts")
+    side_e   = _side_emoji(side)
+
+    pnl       = (ltp - entry) * qty
+    move_pts  = ltp - entry
+    peak_pts  = max_pnl / max(qty, 1)
+    pnl_sign  = "+" if pnl >= 0 else ""
+    move_sign = "+" if move_pts >= 0 else ""
+    status    = "🟢 IN PROFIT" if pnl > 0 else ("🔴 IN LOSS" if pnl < 0 else "⚪ BREAKEVEN")
+    held      = (datetime.now() - entry_ts).total_seconds() if entry_ts else 0
+    now_str   = datetime.now().strftime("%H:%M:%S")
+
+    return (
+        f"⚡ {side_e} <b>SCALP LIVE — {side}</b>  {status}\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"📌 <b>{symbol}</b>\n"
+        f"\n"
+        f"💵 Entry          : {entry:.1f}\n"
+        f"📡 LTP Now        : <b>{ltp:.1f}</b>  ({move_sign}{move_pts:.1f} pts)\n"
+        f"💰 P&amp;L         : <b>{pnl_sign}Rs {abs(pnl):,.0f}</b>\n"
+        f"📈 Peak P&amp;L    : +Rs {max_pnl:,.0f}  ({_pts_str(peak_pts)} pts)\n"
+        f"\n"
+        f"🛑 Stop           : {stop:.1f}  🎯 Target: {target:.1f}\n"
+        f"\n"
+        f"⏱️ Held: {_held_str(held)}  |  🕐 {now_str}"
+    )
+
+
+def format_scalp_exit(pos: dict, fill: float, reason: str, pnl: float) -> str:
+    symbol   = fmt_symbol(pos.get("symbol", ""))
+    side     = pos.get("side", "").upper()
+    entry    = pos.get("entry", 0.0)
+    qty      = pos.get("qty", 65)
+    max_pnl  = pos.get("max_pnl", 0.0)
+    min_pnl  = pos.get("min_pnl", 0.0)
+    entry_ts = pos.get("entry_ts")
+    side_e   = _side_emoji(side)
+
+    held_s   = (datetime.now() - entry_ts).total_seconds() if entry_ts else 0
+    move_pts = fill - entry
+    pnl_sign = "+" if pnl >= 0 else ""
+    peak_pts = max_pnl / max(qty, 1)
+    mae_pts  = min_pnl / max(qty, 1)
+
+    _reason_map = {
+        "SCALP_STOP":     ("Stop Loss",   "🛑"),
+        "SCALP_TARGET":   ("Target Hit",  "🎯"),
+        "SCALP_TIME_EXIT": ("Time Limit", "⏳"),
+    }
+    reason_label, reason_e = _reason_map.get(reason, (reason, "📤"))
+    result_line = (
+        f"✅ <b>PROFIT  {pnl_sign}Rs {abs(pnl):,.0f}</b>"
+        if pnl >= 0 else
+        f"❌ <b>LOSS  -Rs {abs(pnl):,.0f}</b>"
+    )
+
+    return (
+        f"⚡ {side_e} <b>SCALP CLOSED — {side}</b>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"📌 <b>{symbol}</b>\n"
+        f"\n"
+        f"{result_line}\n"
+        f"\n"
+        f"💵 Entry          : {entry:.1f}\n"
+        f"🚪 Exit           : {fill:.1f}  ({_pts_str(move_pts)} pts)\n"
+        f"\n"
+        f"{reason_e} Exit Reason    : <b>{reason_label}</b>\n"
+        f"📈 Best (MFE)     : {_pts_str(peak_pts)} pts\n"
+        f"📉 Worst (MAE)    : {_pts_str(mae_pts)} pts\n"
+        f"⏱️ Held           : {_held_str(held_s)}\n"
+        f"📦 Qty: {qty}  (1 lot)  ⚡ Scalp\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
 # DASHBOARD SECTION HELPERS  (Features 3/4/5/6/8)
 # ─────────────────────────────────────────────────────────────────────
 

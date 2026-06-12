@@ -81,6 +81,9 @@ from telegram.messages import (
     format_trade_exit,
     format_trade_live,
     format_engine_dashboard,
+    format_scalp_entry,
+    format_scalp_live,
+    format_scalp_exit,
 )
 from telegram.notifier import (
     send_trade_entry_with_exit_button,
@@ -92,10 +95,12 @@ from telegram.notifier import (
     remove_exit_button,
     poll_commands,
     ask_trade_permission,
-    send_or_edit_engine_dashboard,
     send_or_edit_market_dashboard,
     send_eod_summary,
     MANUAL_EXIT_REQUESTED,
+    send_scalp_entry,
+    update_scalp_live,
+    delete_scalp_message,
 )
 
 # ── Candle builder (live + paper) ─────────────────────────────────────
@@ -812,8 +817,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     except Exception:
                         pass
 
-                # ── Live trade card update (every 20s) ───────────────
-                if _tg.can_send("trade_live", 20.0) and entry_time is not None:
+                # ── Live trade card update (every 2s) ────────────────
+                if _tg.can_send("trade_live", 2.0) and entry_time is not None:
                     try:
                         live_msg = format_trade_live(position, pos_ltp, entry_time)
                         update_trade_live(live_msg)
@@ -1277,6 +1282,14 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if ltp_current > 0:
                     _scalp_ltp_history.append((ts, ltp_current))
 
+                # ── Scalp live card update (every 2s while in scalp) ──
+                if scalp_position is not None and _tg.can_send("scalp_live", 2.0):
+                    try:
+                        _sl_live_ltp = ctx.broker.ltp(scalp_position["symbol"]) or scalp_position["entry"]
+                        update_scalp_live(format_scalp_live(scalp_position, _sl_live_ltp))
+                    except Exception as _sl_live_e:
+                        logger.debug(f"[SCALP] live update failed: {_sl_live_e}")
+
                 # ── Scalp exit management ─────────────────────────────
                 if scalp_position is not None:
                     _s_ltp = ctx.broker.ltp(scalp_position["symbol"]) or scalp_position["entry"]
@@ -1318,10 +1331,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             f"[SCALP EXIT] {_s_reason} | {scalp_position['symbol']} "
                             f"| pnl={_s_pnl:+.0f} | day={ctx.pnl:+.0f}"
                         )
-                        tg_force(
-                            f"[SCALP] {_s_reason} {scalp_position['side']} "
-                            f"pnl=₹{_s_pnl:+.0f} | Day=₹{ctx.pnl:+.0f}"
-                        )
+                        delete_scalp_message()
+                        tg_force(format_scalp_exit(scalp_position, _s_fill,
+                                                   f"SCALP_{_s_reason}", _s_pnl))
                         scalp_position = None
                         ctx.scalp_engine.on_exit()
 
@@ -1358,21 +1370,20 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     f"@ {_s_order['price']:.1f} "
                                     f"| NIFTY move={_s_sig['move_pts']:+.1f}pt"
                                 )
-                                tg_force(
-                                    f"[SCALP] {_s_side} @ {_s_order['price']:.1f} "
-                                    f"NIFTY {_s_sig['move_pts']:+.1f}pt | "
-                                    f"SL={scalp_position['stop_loss']:.1f} "
-                                    f"T={scalp_position['target']:.1f}"
+                                send_scalp_entry(
+                                    format_scalp_entry(scalp_position, _s_sig["move_pts"])
                                 )
 
             # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)
             # ══════════════════════════════════════════════════════════
 
-            # Faster refresh when in a trade; slower when idle
-            dash_interval = 20.0 if position is not None else 60.0
+            # Pause both dashboards while any trade card is active.
+            # Trade/scalp live cards update every 2s and take over in-trade.
+            _in_trade = position is not None or scalp_position is not None
+            dash_interval = 60.0
 
-            if _tg.can_send("dashboard", dash_interval):
+            if not _in_trade and _tg.can_send("dashboard", dash_interval):
                 market_state = ctx.live_engine.get_market_state(ts)
                 # F8 — augment with live feed health + orb mode
                 try:
@@ -1387,18 +1398,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     pass
 
                 # Dashboard 1: AI Engine — delete old, post fresh at bottom
-                # Uses format_engine_dashboard (rich, emoji) not render_engine
                 try:
                     engine_msg = format_engine_dashboard(ctx, market_state, ltp_current)
                     repost_engine_dashboard(engine_msg)
                 except Exception as _ed_e:
                     logger.debug(f"[TG] engine dashboard failed: {_ed_e}")
 
-                # Dashboard 2: Live Status — position card, ORB, internals
-                # Only shown when no active trade (trade card takes its place in-trade)
-                if position is None:
-                    market_msg = render_market(ctx, market_state, None, ltp_current)
-                    send_or_edit_market_dashboard(market_msg)
+                # Dashboard 2: Live Status
+                market_msg = render_market(ctx, market_state, None, ltp_current)
+                send_or_edit_market_dashboard(market_msg)
 
             # ── EOD summary at 15:30 ─────────────────────────────────
             if not _eod_sent and now >= __import__("datetime").time(15, 30):

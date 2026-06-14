@@ -176,13 +176,13 @@ def login() -> str:
         except Exception as e:
             log.debug(f"input scan error: {e}")
 
-        # Try each selector in order — app_code on Zerodha is often
-        # type='text' or type='tel', NOT type='password' in headless Chrome
+        # Try each selector in order — confirmed from Zerodha DevTools:
+        # the Mobile App Code input is type='number' (not password/text).
         _TOTP_SELECTORS = [
+            "input[type='number']",            # ← confirmed from Zerodha DevTools
+            "input[type='password']",           # fallback (older Zerodha versions)
             "input[type='text']",
             "input[type='tel']",
-            "input[type='number']",
-            "input[type='password']",
             "input[autocomplete='one-time-code']",
             "input:not([type='hidden'])",
         ]

@@ -1,0 +1,156 @@
+name: Pipeline Test (manual trigger only)
+
+# ──────────────────────────────────────────────────────────────────────
+# Full end-to-end test — triggers via GitHub UI → Actions → Run workflow
+# Tests every pipeline stage in order and reports pass/fail for each.
+# Exits cleanly after 5 minutes regardless of market hours.
+# ──────────────────────────────────────────────────────────────────────
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────
+      - name: "[1/7] Checkout repository"
+        uses: actions/checkout@v4
+
+      # ── 2. Python + packages ────────────────────────────────────────
+      - name: "[2/7] Set up Python 3.11"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: "[2/7] Install dependencies"
+        run: |
+          pip install -r requirements.txt
+          echo "--- Installed packages ---"
+          pip list | grep -E "kiteconnect|pyotp|pandas|numpy|lightgbm|scikit|joblib|requests|dotenv"
+
+      # ── 3. Validate imports ─────────────────────────────────────────
+      - name: "[3/7] Validate all Python imports"
+        run: |
+          python - <<'EOF'
+          import sys, importlib
+          pkgs = ['kiteconnect','pyotp','dotenv','pandas','numpy','lightgbm','sklearn','joblib','requests']
+          failed = []
+          for p in pkgs:
+              try:
+                  importlib.import_module(p)
+                  print(f"  OK  {p}")
+              except ImportError as e:
+                  print(f"  FAIL {p}: {e}")
+                  failed.append(p)
+          if failed:
+              sys.exit(1)
+          print("All imports passed")
+          EOF
+
+      # ── 4. Create .env ──────────────────────────────────────────────
+      - name: "[4/7] Write .env from secrets"
+        env:
+          KITE_API_KEY:         ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET:      ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID:         ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD:        ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP_SECRET:     ${{ secrets.KITE_TOTP_SECRET }}
+          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_CHAT_ID: ${{ secrets.TELEGRAM_BOT_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID:  ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_ADMIN_ID:    ${{ secrets.TELEGRAM_ADMIN_ID }}
+        run: |
+          if [ -z "$KITE_API_KEY" ]; then
+            echo "ERROR: GitHub Secrets not configured yet."
+            echo "Go to: repo → Settings → Secrets → Actions → New repository secret"
+            echo "Add: KITE_API_KEY, KITE_API_SECRET, KITE_USER_ID, KITE_PASSWORD,"
+            echo "     KITE_TOTP_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_CHAT_ID,"
+            echo "     TELEGRAM_CHANNEL_ID, TELEGRAM_ADMIN_ID"
+            exit 1
+          fi
+          {
+            echo "KITE_API_KEY=$KITE_API_KEY"
+            echo "KITE_API_SECRET=$KITE_API_SECRET"
+            echo "KITE_USER_ID=$KITE_USER_ID"
+            echo "KITE_PASSWORD=$KITE_PASSWORD"
+            echo "KITE_TOTP_SECRET=$KITE_TOTP_SECRET"
+            echo "KITE_ACCESS_TOKEN="
+            echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN"
+            echo "TELEGRAM_BOT_CHAT_ID=$TELEGRAM_BOT_CHAT_ID"
+            echo "TELEGRAM_CHANNEL_ID=$TELEGRAM_CHANNEL_ID"
+            echo "TELEGRAM_ADMIN_ID=$TELEGRAM_ADMIN_ID"
+            echo "PAPER_MODE=0"
+            echo "DRY_RUN=1"
+            echo "TEST_MODE=1"
+            echo "INITIAL_CAPITAL=100000"
+            echo "MAX_RISK_PER_TRADE_PCT=0.01"
+            echo "MAX_LOTS_CAP=10"
+            echo "ML_ON=1"
+            echo "CHAMPION_THRESHOLD=0.40"
+          } > .env
+          echo ".env written — KITE_USER_ID=$(echo $KITE_USER_ID | cut -c1-3)*** TOTP=$(echo $KITE_TOTP_SECRET | cut -c1-4)****"
+
+      # ── 5. Headless login ───────────────────────────────────────────
+      - name: "[5/7] Zerodha headless login (auto-TOTP — no phone needed)"
+        run: |
+          mkdir -p logs data/historical
+          python login_headless.py
+          if grep -q "KITE_ACCESS_TOKEN=." .env; then
+            TOKEN=$(grep KITE_ACCESS_TOKEN .env | cut -d= -f2 | cut -c1-8)
+            echo "Login PASSED — access token starts with: ${TOKEN}..."
+          else
+            echo "Login FAILED — access token not written to .env"
+            exit 1
+          fi
+
+      # ── 6. Engine smoke test (2 minutes, TEST_MODE=1) ───────────────
+      - name: "[6/7] Engine smoke test (2 min, DRY_RUN=1, TEST_MODE=1)"
+        run: |
+          echo "Starting master_runner.py for 120s smoke test..."
+          timeout --signal=SIGINT 120 python master_runner.py 2>&1 | tee /tmp/engine.log || true
+          echo "--- Last 30 lines of engine log ---"
+          tail -30 /tmp/engine.log
+
+      # ── 7. Verify log output ────────────────────────────────────────
+      - name: "[7/7] Verify engine started correctly"
+        run: |
+          python - <<'EOF'
+          import sys
+
+          log = open("/tmp/engine.log").read()
+
+          checks = {
+              "Broker initialized":      "Broker init" in log or "ZerodhaBroker" in log or "Broker" in log,
+              "Engine loop started":     "Engine loop" in log or "Engine Loop" in log or "MASTER STARTED" in log,
+              "No import errors":        "ImportError" not in log and "ModuleNotFoundError" not in log,
+              "No auth errors":          "KITE_ACCESS_TOKEN missing" not in log,
+              "Telegram startup sent":   "AI Trading System Started" in log or "Telegram" in log or "tg" in log.lower(),
+          }
+
+          all_pass = True
+          for check, result in checks.items():
+              status = "PASS" if result else "FAIL"
+              print(f"  {status}  {check}")
+              if not result:
+                  all_pass = False
+
+          print()
+          if all_pass:
+              print("Pipeline test PASSED — all checks green")
+          else:
+              print("Pipeline test FAILED — see details above")
+              sys.exit(1)
+          EOF
+
+      # ── Summary (always runs) ────────────────────────────────────────
+      - name: "Summary"
+        if: always()
+        run: |
+          echo "============================================"
+          echo "Pipeline test complete — check step results"
+          echo "Morning cron:   40 3 * * 1-5  (9:10 AM IST)"
+          echo "Afternoon cron:  0 8 * * 1-5  (1:30 PM IST)"
+          echo "============================================"

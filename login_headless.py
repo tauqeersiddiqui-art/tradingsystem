@@ -100,13 +100,15 @@ def login() -> str:
     session = requests.Session()
     session.headers.update(_BASE_HEADERS)
 
-    # ── Step 0: Load home page ─────────────────────────────────────────
-    # This establishes the initial session cookies (enc_token, public_token,
-    # kf_session, etc.) that Zerodha's twofa endpoint checks.  Skipping this
-    # is the most common cause of 400 on twofa.
-    log.info("Step 0: loading Zerodha home to establish session cookies ...")
-    r0 = session.get("https://kite.zerodha.com/", timeout=30)
-    log.info(f"Home page status: {r0.status_code} | cookies: {list(session.cookies.keys())}")
+    # ── Step 0: Load the KiteConnect login page ────────────────────────
+    # The browser always loads this page before the user types credentials.
+    # It sets cookies (kf_session, kf_version, enc_token) that Zerodha's
+    # twofa endpoint validates.  Skipping this is the most common cause of
+    # 400 on twofa when using raw HTTP calls.
+    log.info("Step 0: loading KiteConnect login page to seed session cookies ...")
+    connect_login = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}&v=3"
+    r0 = session.get(connect_login, timeout=30)
+    log.info(f"Login page status: {r0.status_code} | cookies set: {list(session.cookies.keys())}")
 
     # ── Step 1: Password login ─────────────────────────────────────────
     log.info("Step 1: submitting credentials ...")

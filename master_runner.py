@@ -654,7 +654,10 @@ def init_broker():
 
     broker = ZerodhaBroker()
 
-    if hasattr(broker, "has_open_position") and broker.has_open_position():
+    # ALLOW_BROKER_POSITION_ON_START=1 skips this gate for lunch-break resume
+    # (engine_loop reconciliation then adopts the position safely).
+    _resume_ok = os.getenv("ALLOW_BROKER_POSITION_ON_START", "0") == "1"
+    if not _resume_ok and hasattr(broker, "has_open_position") and broker.has_open_position():
         tg_force("🚨 SAFETY ALERT\nOpen position detected — engine blocked.")
         raise RuntimeError("Open broker position exists.")
 

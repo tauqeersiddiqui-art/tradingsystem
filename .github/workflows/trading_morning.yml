@@ -1,0 +1,101 @@
+name: Trading — Morning Session (9:10 AM–12:30 PM IST)
+
+# ──────────────────────────────────────────────────────────────────────
+# Morning session: 9:10 AM IST → 12:30 PM IST  (3h 20m)
+# Lunch break:    12:30 PM → 1:30 PM IST        (60 min gap)
+# Afternoon runs in trading_afternoon.yml
+#
+# State hand-off:
+#   runtime_state.json is cached (keyed by date) at the end of this job
+#   so the afternoon job can resume position management seamlessly.
+#   Access token is NOT shared — afternoon re-logs in (Zerodha tokens
+#   stay valid all day; re-login just refreshes the token without
+#   closing the position).
+# ──────────────────────────────────────────────────────────────────────
+on:
+  schedule:
+    - cron: '40 3 * * 1-5'   # 3:40 AM UTC = 9:10 AM IST, Mon–Fri
+  workflow_dispatch:
+
+jobs:
+  morning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 215      # 3h35m (9:10 AM → 12:45 PM IST — safety buffer)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create runtime directories
+        run: mkdir -p logs data/historical
+
+      - name: Set cache date key
+        run: echo "TODAY=$(date -u '+%Y-%m-%d')" >> $GITHUB_ENV
+
+      - name: Write .env from secrets
+        env:
+          KITE_API_KEY:         ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET:      ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID:         ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD:        ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP_SECRET:     ${{ secrets.KITE_TOTP_SECRET }}
+          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_CHAT_ID: ${{ secrets.TELEGRAM_BOT_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID:  ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_ADMIN_ID:    ${{ secrets.TELEGRAM_ADMIN_ID }}
+        run: |
+          {
+            echo "KITE_API_KEY=$KITE_API_KEY"
+            echo "KITE_API_SECRET=$KITE_API_SECRET"
+            echo "KITE_USER_ID=$KITE_USER_ID"
+            echo "KITE_PASSWORD=$KITE_PASSWORD"
+            echo "KITE_TOTP_SECRET=$KITE_TOTP_SECRET"
+            echo "KITE_ACCESS_TOKEN="
+            echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN"
+            echo "TELEGRAM_BOT_CHAT_ID=$TELEGRAM_BOT_CHAT_ID"
+            echo "TELEGRAM_CHANNEL_ID=$TELEGRAM_CHANNEL_ID"
+            echo "TELEGRAM_ADMIN_ID=$TELEGRAM_ADMIN_ID"
+            echo "PAPER_MODE=0"
+            echo "DRY_RUN=1"
+            echo "TEST_MODE=0"
+            echo "INITIAL_CAPITAL=100000"
+            echo "MAX_RISK_PER_TRADE_PCT=0.01"
+            echo "MAX_LOTS_CAP=10"
+            echo "ML_ON=1"
+            echo "CHAMPION_THRESHOLD=0.40"
+          } > .env
+
+      - name: Zerodha headless login (auto-TOTP)
+        run: python login_headless.py
+
+      - name: Run morning session until 12:30 PM IST
+        run: |
+          SECS=$(python - <<'EOF'
+          from datetime import datetime, timezone, timedelta
+          ist = timezone(timedelta(hours=5, minutes=30))
+          now = datetime.now(ist)
+          stop = now.replace(hour=12, minute=30, second=0, microsecond=0)
+          secs = max(60, int((stop - now).total_seconds()))
+          print(secs)
+          EOF
+          )
+          echo "Morning session: ${SECS}s until 12:30 IST"
+          timeout --signal=SIGINT "$SECS" python master_runner.py || true
+
+      # Save state even if master_runner crashed — afternoon job needs it
+      # to know about any open positions left at the lunch break.
+      - name: Save runtime state to cache for afternoon session
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/runtime_state.json
+          key: runtime-state-${{ env.TODAY }}

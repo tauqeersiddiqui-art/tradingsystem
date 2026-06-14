@@ -1,0 +1,29 @@
+{
+  "session_date": "2026-06-13",
+  "saved_at": "2026-06-13T11:36:58.061908",
+  "pnl": 1234.5,
+  "trades_today": 3,
+  "positions": [
+    {
+      "trade_id": 1,
+      "pnl": 500
+    }
+  ],
+  "open_position": {
+    "symbol": "NIFTY2660923150CE",
+    "side": "CE",
+    "qty": 130,
+    "lot_size": 65,
+    "entry": 102.5,
+    "stop_loss": 95.0,
+    "target": 115.0,
+    "max_pnl": 850.0,
+    "min_pnl": -130.0,
+    "ml_prob": 0.85,
+    "regime": "TREND",
+    "reason": "ML_CE",
+    "sl_order_id": "test_sl_123",
+    "entry_ts": "2026-06-13T10:30:00"
+  },
+  "scalp_position": null
+}

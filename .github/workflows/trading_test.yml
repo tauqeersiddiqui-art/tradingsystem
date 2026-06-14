@@ -29,14 +29,17 @@ jobs:
         run: |
           pip install -r requirements.txt
           echo "--- Installed packages ---"
-          pip list | grep -E "kiteconnect|pyotp|pandas|numpy|lightgbm|scikit|joblib|requests|dotenv"
+          pip list | grep -E "kiteconnect|pyotp|pandas|numpy|lightgbm|scikit|joblib|requests|dotenv|playwright"
+
+      - name: "[2/7] Install Playwright browser (headless Chromium)"
+        run: playwright install chromium --with-deps
 
       # ── 3. Validate imports ─────────────────────────────────────────
       - name: "[3/7] Validate all Python imports"
         run: |
           python - <<'EOF'
           import sys, importlib
-          pkgs = ['kiteconnect','pyotp','dotenv','pandas','numpy','lightgbm','sklearn','joblib','requests']
+          pkgs = ['kiteconnect','pyotp','dotenv','pandas','numpy','lightgbm','sklearn','joblib','requests','playwright']
           failed = []
           for p in pkgs:
               try:

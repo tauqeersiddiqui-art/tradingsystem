@@ -1,21 +1,23 @@
 """
 login_headless.py
 -----------------
-Zerodha login WITHOUT Selenium — pure HTTP via requests + pyotp.
-Works on GitHub Actions (no browser required).
-The 6-digit TOTP is auto-generated from KITE_TOTP_SECRET in .env.
+Zerodha login using headless Chromium via Playwright.
+Works on GitHub Actions (Ubuntu) — no Edge/Selenium needed.
+Playwright runs real JavaScript so Zerodha's fingerprint/session
+tokens are set exactly as they are in a real browser.
+
+Install:  pip install playwright && playwright install chromium --with-deps
 """
 
 import os
 import sys
-import time
 import logging
 import urllib.parse
 
 import pyotp
-import requests
 from dotenv import load_dotenv
 from kiteconnect import KiteConnect
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,16 +48,6 @@ for name, val in {
         log.critical(f"{name} missing in .env")
         sys.exit(1)
 
-_BASE_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-    "X-Kite-Version": "3",
-    "Origin":  "https://kite.zerodha.com",
-    "Referer": "https://kite.zerodha.com/",
-}
-
 
 def _update_env_token(token: str) -> None:
     lines = []
@@ -74,114 +66,106 @@ def _update_env_token(token: str) -> None:
         f.writelines(lines)
 
 
-def _post_twofa(session, request_id: str, twofa_type: str) -> requests.Response:
-    """Generate a fresh TOTP and POST to twofa endpoint."""
-    totp_code = pyotp.TOTP(TOTP_SECRET).now()
-    log.info(f"Submitting TOTP {totp_code} (twofa_type={twofa_type}) ...")
-    r = session.post(
-        "https://kite.zerodha.com/api/twofa",
-        data={
-            "user_id":     USER_ID,
-            "request_id":  request_id,
-            "twofa_value": totp_code,
-            "twofa_type":  twofa_type,
-        },
-        timeout=30,
-    )
-    # Always print the response body — critical for debugging 400 errors
-    log.info(f"twofa response: HTTP {r.status_code}  body={r.text[:400]}")
-    return r
-
-
 def login() -> str:
-    """Perform headless Zerodha login. Returns the access_token string."""
+    """Run headless Chromium, log in to Zerodha, return access_token."""
+    log.info("=== login_headless v6 (Playwright / headless Chromium) ===")
 
-    log.info("=== login_headless v5 ===")
-
-    session = requests.Session()
-    session.headers.update(_BASE_HEADERS)
-
-    # ── Step 0: Seed session cookies ───────────────────────────────────
-    # Load the KiteConnect login page — same URL the browser opens first.
-    # Sets kf_session / kf_version cookies that twofa endpoint validates.
-    log.info("Step 0: seeding session cookies from KiteConnect login page ...")
-    connect_url = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}&v=3"
-    r0 = session.get(connect_url, timeout=30)
-    log.info(f"Step 0: HTTP {r0.status_code} | cookies={list(session.cookies.keys())}")
-
-    # ── Step 1: Password login ─────────────────────────────────────────
-    log.info("Step 1: submitting credentials ...")
-    r1 = session.post(
-        "https://kite.zerodha.com/api/login",
-        data={"user_id": USER_ID, "password": PASSWORD},
-        timeout=30,
-    )
-    log.info(f"Step 1: HTTP {r1.status_code}  body={r1.text[:300]}")
-    if not r1.ok or r1.json().get("status") != "success":
-        raise RuntimeError(f"Login API failed: {r1.status_code} {r1.text[:300]}")
-
-    j1         = r1.json()
-    request_id = j1["data"]["request_id"]
-    twofa_type = j1["data"].get("twofa_type", "totp")
-    log.info(f"Credentials accepted — request_id={request_id[:16]}... twofa_type={twofa_type}")
-
-    # ── Step 2: TOTP — retry once if near a 30s boundary ──────────────
-    log.info("Step 2: submitting TOTP ...")
-    r2 = _post_twofa(session, request_id, twofa_type)
-
-    if not r2.ok:
-        log.warning("TOTP attempt 1 failed — waiting 32s for next TOTP window ...")
-        time.sleep(32)
-
-        # Re-login to get a fresh request_id (old one may have expired)
-        log.info("Step 2 retry: re-logging in to get fresh request_id ...")
-        r1b = session.post(
-            "https://kite.zerodha.com/api/login",
-            data={"user_id": USER_ID, "password": PASSWORD},
-            timeout=30,
-        )
-        log.info(f"Re-login: HTTP {r1b.status_code}  body={r1b.text[:300]}")
-        if r1b.ok and r1b.json().get("status") == "success":
-            request_id = r1b.json()["data"]["request_id"]
-            twofa_type = r1b.json()["data"].get("twofa_type", "totp")
-
-        r2 = _post_twofa(session, request_id, twofa_type)
-
-    if not r2.ok or r2.json().get("status") != "success":
-        raise RuntimeError(f"TOTP failed after retry: {r2.status_code} {r2.text[:300]}")
-
-    log.info("TOTP accepted")
-
-    # ── Step 3: Grab request_token from KiteConnect redirect ───────────
-    log.info("Step 3: getting request_token ...")
     request_token = None
-    r3 = session.get(connect_url, allow_redirects=False, timeout=30)
-    log.info(f"connect/login: HTTP {r3.status_code} Location={r3.headers.get('Location','none')[:80]}")
+    connect_url   = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}&v=3"
 
-    for _ in range(8):
-        if r3.status_code not in (301, 302, 303, 307, 308):
-            break
-        location = r3.headers.get("Location", "")
-        parsed   = urllib.parse.urlparse(location)
-        params   = urllib.parse.parse_qs(parsed.query)
-        if "request_token" in params:
-            request_token = params["request_token"][0]
-            break
-        if any(h in location for h in ("127.0.0.1", "localhost")):
-            request_token = params.get("request_token", [None])[0]
-            break
-        r3 = session.get(location, allow_redirects=False, timeout=30)
-        log.info(f"  redirect: HTTP {r3.status_code} Location={r3.headers.get('Location','none')[:80]}")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        ctx     = browser.new_context(
+            # Appear as a real desktop Chrome on Linux
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 800},
+        )
+        page = ctx.new_page()
+
+        # ── Intercept the final redirect to capture request_token ──────
+        # After login + TOTP, Zerodha redirects to your redirect_url
+        # (often http://127.0.0.1) with request_token in the query string.
+        # We grab it from the route and abort the navigation so Playwright
+        # doesn't try to load an unreachable localhost URL.
+        def _intercept(route):
+            nonlocal request_token
+            url = route.request.url
+            if "request_token=" in url:
+                parsed = urllib.parse.urlparse(url)
+                params = urllib.parse.parse_qs(parsed.query)
+                rt = params.get("request_token", [None])[0]
+                if rt:
+                    request_token = rt
+                    log.info(f"request_token captured via route: {rt[:8]}...")
+                route.abort()   # don't actually connect to localhost
+            else:
+                route.continue_()
+
+        page.route("**/*", _intercept)
+
+        # ── Step 1: Open login page ────────────────────────────────────
+        log.info(f"Step 1: opening KiteConnect login page ...")
+        page.goto(connect_url, wait_until="domcontentloaded", timeout=60_000)
+        log.info(f"Page title: {page.title()}")
+
+        # ── Step 2: Enter user ID ──────────────────────────────────────
+        log.info("Step 2: entering user ID ...")
+        page.wait_for_selector("input[type='text']", timeout=15_000)
+        page.fill("input[type='text']", USER_ID)
+        page.press("input[type='text']", "Enter")
+
+        # ── Step 3: Enter password ─────────────────────────────────────
+        log.info("Step 3: entering password ...")
+        page.wait_for_selector("input[type='password']", timeout=10_000)
+        page.fill("input[type='password']", PASSWORD)
+        page.press("input[type='password']", "Enter")
+
+        # ── Step 4: Enter TOTP ─────────────────────────────────────────
+        # Wait for the second "password"-type input (the TOTP / app_code field)
+        log.info("Step 4: waiting for TOTP field ...")
+        try:
+            page.wait_for_selector("input[type='password']", timeout=10_000)
+            totp_code = pyotp.TOTP(TOTP_SECRET).now()
+            log.info(f"Entering TOTP: {totp_code}")
+            page.fill("input[type='password']", totp_code)
+            page.press("input[type='password']", "Enter")
+        except PWTimeout:
+            log.info("TOTP field not found — may have been skipped by Zerodha")
+
+        # ── Step 5: Wait for redirect with request_token ───────────────
+        log.info("Step 5: waiting for redirect ...")
+        try:
+            # Wait until the route interceptor fires (request_token captured)
+            page.wait_for_function(
+                "() => window.location.href.includes('request_token')",
+                timeout=30_000,
+            )
+        except PWTimeout:
+            # Route interception already captured it, or it's in the current URL
+            pass
+
+        # Fallback: read from current page URL
+        if not request_token:
+            cur = page.url
+            if "request_token=" in cur:
+                parsed = urllib.parse.urlparse(cur)
+                params = urllib.parse.parse_qs(parsed.query)
+                request_token = params.get("request_token", [None])[0]
+                log.info(f"request_token from URL: {request_token[:8] if request_token else 'none'}...")
+
+        browser.close()
 
     if not request_token:
         raise RuntimeError(
-            f"Could not extract request_token. "
-            f"Last: HTTP {r3.status_code} Location={r3.headers.get('Location','none')}"
+            "request_token not captured — login may have failed. "
+            "Check screenshot or page state."
         )
-    log.info(f"request_token: {request_token[:8]}...")
 
-    # ── Step 4: Exchange for access_token ──────────────────────────────
-    log.info("Step 4: generating access_token ...")
+    # ── Step 6: Exchange for access_token ─────────────────────────────
+    log.info("Step 6: generating access_token ...")
     kite = KiteConnect(api_key=API_KEY)
     sess = kite.generate_session(request_token, api_secret=API_SECRET)
     access_token = sess["access_token"]

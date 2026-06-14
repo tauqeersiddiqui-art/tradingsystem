@@ -118,6 +118,7 @@ jobs:
           path: |
             logs/login_state.png
             logs/after_password.png
+            logs/after_totp_fill.png
           if-no-files-found: ignore
 
       # ── 6. Engine smoke test (2 minutes, TEST_MODE=1) ───────────────

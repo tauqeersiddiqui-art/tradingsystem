@@ -11,11 +11,13 @@ __pycache__/
 ml/**/*.csv
 data/**/*.csv
 
-# ML models
-ml/models/*.pkl
-ml/models/*.joblib
+# ML models — large training data stays local, trained model files are committed
 ml/models/*.h5
 ml/models/*.pt
+
+# Large training datasets — too big for git
+ml/models/training_dataset*.csv
+ml/models/day_classifier_labels.csv
 
 # Temporary ML files
 ml/tmp/

@@ -75,7 +75,7 @@ def _extract_token(url: str):
 
 
 def login() -> str:
-    log.info("=== login_headless v7 (Playwright / headless Chromium) ===")
+    log.info("=== login_headless v9 (Playwright / headless Chromium) ===")
 
     request_token = None
     connect_url   = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}&v=3"
@@ -147,31 +147,61 @@ def login() -> str:
         page.wait_for_timeout(300)
         page.keyboard.press("Enter")   # keyboard.press = no selector, no timeout
 
-        # ── Step 4: TOTP / app_code ────────────────────────────────────
-        # Wait for the credentials form to CLEAR before looking for the
-        # TOTP input — without this, wait_for_selector finds the password
-        # field that's still on screen during the page transition.
-        log.info("Step 4: waiting for TOTP field ...")
-        try:
-            # First, wait for the password field to disappear (page transition)
-            page.wait_for_selector(
-                "input[type='password']", state="detached", timeout=8_000
-            )
-        except PWTimeout:
-            pass   # may not detach cleanly; proceed anyway
+        # ── Step 4: 2FA / TOTP / app_code ─────────────────────────────
+        log.info("Step 4: waiting for 2FA page ...")
 
+        # Wait for the credentials form to leave the DOM before we search
+        # for the TOTP input — prevents accidentally filling the password
+        # field that's still on screen during the React page transition.
         try:
-            # Now wait for the TOTP / app_code input on the new page
-            page.wait_for_selector("input[type='password']", timeout=12_000)
-            page.wait_for_timeout(500)   # brief settle
-            totp_code = pyotp.TOTP(TOTP_SECRET).now()
-            log.info(f"Entering TOTP: {totp_code}")
-            page.fill("input[type='password']", totp_code)
-            page.wait_for_timeout(300)
-            page.keyboard.press("Enter")   # keyboard.press = no selector, no timeout
-            log.info("TOTP submitted")
+            page.wait_for_selector(
+                "input[type='password']", state="detached", timeout=10_000
+            )
+            log.info("Credentials page cleared (password field detached)")
         except PWTimeout:
-            log.info("TOTP field not shown — Zerodha may have skipped 2FA")
+            log.warning("Password field still in DOM after 10s — proceeding anyway")
+
+        page.wait_for_timeout(1_500)   # let the 2FA component fully render
+        page.screenshot(path=os.path.join(BASE_DIR, "logs", "after_password.png"))
+        log.info(f"2FA page URL: {page.url[:100]}")
+
+        # Log every input on the page so we know exactly what type to use
+        try:
+            inputs_info = page.eval_on_selector_all(
+                "input",
+                "els => els.map(e => ({t: e.type, n: e.name, p: e.placeholder, v: !!e.offsetParent}))"
+            )
+            for i in inputs_info:
+                log.info(f"  input: type={i['t']!r} name={i['n']!r} placeholder={i['p']!r} visible={i['v']}")
+        except Exception as e:
+            log.debug(f"input scan error: {e}")
+
+        # Try each selector in order — app_code on Zerodha is often
+        # type='text' or type='tel', NOT type='password' in headless Chrome
+        _TOTP_SELECTORS = [
+            "input[type='text']",
+            "input[type='tel']",
+            "input[type='number']",
+            "input[type='password']",
+            "input[autocomplete='one-time-code']",
+            "input:not([type='hidden'])",
+        ]
+        _filled = False
+        for sel in _TOTP_SELECTORS:
+            try:
+                page.wait_for_selector(sel, state="visible", timeout=4_000)
+                totp_code = pyotp.TOTP(TOTP_SECRET).now()
+                log.info(f"Entering TOTP {totp_code} into selector: {sel!r}")
+                page.fill(sel, totp_code)
+                page.wait_for_timeout(300)
+                page.keyboard.press("Enter")
+                log.info("TOTP submitted")
+                _filled = True
+                break
+            except PWTimeout:
+                log.info(f"Selector not found: {sel!r}")
+        if not _filled:
+            log.warning("No TOTP input found — Zerodha may have skipped 2FA")
 
         # ── Step 5: Wait for redirect carrying request_token ───────────
         log.info("Step 5: waiting up to 45s for redirect ...")

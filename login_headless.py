@@ -6,15 +6,15 @@ Works on GitHub Actions (no browser required).
 The 6-digit TOTP is auto-generated from KITE_TOTP_SECRET in .env.
 
 Steps:
-  1. POST credentials to Zerodha login API
-  2. POST auto-generated TOTP
+  0. GET home page — establishes session cookies Zerodha requires
+  1. POST credentials → get request_id + twofa_type
+  2. POST auto-generated TOTP (uses twofa_type from step 1, not hardcoded)
   3. GET KiteConnect login URL → capture request_token from redirect
   4. Exchange for access_token and save to .env
 """
 
 import os
 import sys
-import time
 import logging
 import urllib.parse
 
@@ -52,14 +52,27 @@ for name, val in {
         log.critical(f"{name} missing in .env")
         sys.exit(1)
 
-_HEADERS = {
+_BASE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     ),
     "X-Kite-Version": "3",
+    "Origin":  "https://kite.zerodha.com",
     "Referer": "https://kite.zerodha.com/",
 }
+
+
+def _raise_with_body(resp: requests.Response) -> None:
+    """raise_for_status() but includes the response body so we can see what went wrong."""
+    if not resp.ok:
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text[:300]
+        raise RuntimeError(
+            f"HTTP {resp.status_code} from {resp.url}\nResponse: {body}"
+        )
 
 
 def _update_env_token(token: str) -> None:
@@ -85,7 +98,15 @@ def login() -> str:
     Returns the access_token string.
     """
     session = requests.Session()
-    session.headers.update(_HEADERS)
+    session.headers.update(_BASE_HEADERS)
+
+    # ── Step 0: Load home page ─────────────────────────────────────────
+    # This establishes the initial session cookies (enc_token, public_token,
+    # kf_session, etc.) that Zerodha's twofa endpoint checks.  Skipping this
+    # is the most common cause of 400 on twofa.
+    log.info("Step 0: loading Zerodha home to establish session cookies ...")
+    r0 = session.get("https://kite.zerodha.com/", timeout=30)
+    log.info(f"Home page status: {r0.status_code} | cookies: {list(session.cookies.keys())}")
 
     # ── Step 1: Password login ─────────────────────────────────────────
     log.info("Step 1: submitting credentials ...")
@@ -94,28 +115,30 @@ def login() -> str:
         data={"user_id": USER_ID, "password": PASSWORD},
         timeout=30,
     )
-    r1.raise_for_status()
+    _raise_with_body(r1)
     j1 = r1.json()
     if j1.get("status") != "success":
         raise RuntimeError(f"Login API rejected credentials: {j1}")
-    request_id = j1["data"]["request_id"]
-    log.info(f"Credentials accepted — request_id={request_id}")
+
+    request_id  = j1["data"]["request_id"]
+    # Use whatever twofa_type Zerodha returns — don't hardcode "totp"
+    twofa_type  = j1["data"].get("twofa_type", "totp")
+    log.info(f"Credentials accepted — request_id={request_id[:16]}... twofa_type={twofa_type}")
 
     # ── Step 2: TOTP ───────────────────────────────────────────────────
     totp_code = pyotp.TOTP(TOTP_SECRET).now()
-    log.info(f"Step 2: submitting TOTP {totp_code} ...")
+    log.info(f"Step 2: submitting TOTP (twofa_type={twofa_type}) ...")
     r2 = session.post(
         "https://kite.zerodha.com/api/twofa",
         data={
             "user_id":     USER_ID,
             "request_id":  request_id,
             "twofa_value": totp_code,
-            "twofa_type":  "totp",
-            "skip_session": "",
+            "twofa_type":  twofa_type,
         },
         timeout=30,
     )
-    r2.raise_for_status()
+    _raise_with_body(r2)
     j2 = r2.json()
     if j2.get("status") != "success":
         raise RuntimeError(f"TOTP API rejected: {j2}")
@@ -125,32 +148,36 @@ def login() -> str:
     # After authentication, this URL immediately redirects (302) to the
     # configured redirect_url with ?request_token=XXX in the query string.
     # We DON'T follow the redirect (allow_redirects=False) because the
-    # redirect_url may be http://127.0.0.1 (localhost), which isn't
-    # reachable on GitHub Actions — we only need the URL, not the page.
+    # redirect_url may be http://127.0.0.1 (localhost), unreachable from
+    # GitHub Actions — we only need the Location header URL, not the page.
     connect_url = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}&v=3"
     log.info("Step 3: getting request_token ...")
 
     request_token = None
     r3 = session.get(connect_url, allow_redirects=False, timeout=30)
+    log.info(f"connect/login status: {r3.status_code}")
 
-    for _ in range(8):   # follow at most 8 intermediate redirects
+    for _ in range(8):
         if r3.status_code not in (301, 302, 303, 307, 308):
             break
         location = r3.headers.get("Location", "")
-        parsed   = urllib.parse.urlparse(location)
-        params   = urllib.parse.parse_qs(parsed.query)
+        log.info(f"Redirect → {location[:80]}")
+        parsed = urllib.parse.urlparse(location)
+        params = urllib.parse.parse_qs(parsed.query)
         if "request_token" in params:
             request_token = params["request_token"][0]
             break
-        # Only follow if not going to localhost / unreachable host
+        # Don't follow redirects to localhost — just read the URL
         if any(h in location for h in ("127.0.0.1", "localhost")):
+            request_token = params.get("request_token", [None])[0]
             break
         r3 = session.get(location, allow_redirects=False, timeout=30)
 
     if not request_token:
         raise RuntimeError(
             f"Could not extract request_token. "
-            f"Last redirect: {r3.headers.get('Location', 'none')}"
+            f"Last status={r3.status_code} "
+            f"Location={r3.headers.get('Location', 'none')}"
         )
     log.info(f"request_token obtained: {request_token[:8]}...")
 

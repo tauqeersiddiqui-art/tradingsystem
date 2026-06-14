@@ -137,7 +137,7 @@ def login() -> str:
         page.wait_for_selector("input[type='text']", timeout=15_000)
         page.fill("input[type='text']", USER_ID)
         page.wait_for_timeout(300)
-        page.press("input[type='text']", "Enter")
+        page.keyboard.press("Enter")   # keyboard.press = no selector, no timeout
 
         # ── Step 3: Password ───────────────────────────────────────────
         log.info("Step 3: entering password ...")
@@ -145,21 +145,33 @@ def login() -> str:
         page.wait_for_timeout(300)
         page.fill("input[type='password']", PASSWORD)
         page.wait_for_timeout(300)
-        page.press("input[type='password']", "Enter")
+        page.keyboard.press("Enter")   # keyboard.press = no selector, no timeout
 
         # ── Step 4: TOTP / app_code ────────────────────────────────────
+        # Wait for the credentials form to CLEAR before looking for the
+        # TOTP input — without this, wait_for_selector finds the password
+        # field that's still on screen during the page transition.
         log.info("Step 4: waiting for TOTP field ...")
         try:
-            # After password submit Zerodha shows a second password-type field
+            # First, wait for the password field to disappear (page transition)
+            page.wait_for_selector(
+                "input[type='password']", state="detached", timeout=8_000
+            )
+        except PWTimeout:
+            pass   # may not detach cleanly; proceed anyway
+
+        try:
+            # Now wait for the TOTP / app_code input on the new page
             page.wait_for_selector("input[type='password']", timeout=12_000)
             page.wait_for_timeout(500)   # brief settle
             totp_code = pyotp.TOTP(TOTP_SECRET).now()
             log.info(f"Entering TOTP: {totp_code}")
             page.fill("input[type='password']", totp_code)
             page.wait_for_timeout(300)
-            page.press("input[type='password']", "Enter")
+            page.keyboard.press("Enter")   # keyboard.press = no selector, no timeout
+            log.info("TOTP submitted")
         except PWTimeout:
-            log.info("TOTP field not shown (Zerodha may have skipped 2FA)")
+            log.info("TOTP field not shown — Zerodha may have skipped 2FA")
 
         # ── Step 5: Wait for redirect carrying request_token ───────────
         log.info("Step 5: waiting up to 45s for redirect ...")

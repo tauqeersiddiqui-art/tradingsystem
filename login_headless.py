@@ -192,46 +192,23 @@ def login() -> str:
                 page.wait_for_selector(sel, state="visible", timeout=4_000)
 
                 totp_code = pyotp.TOTP(TOTP_SECRET).now()
-                log.info(f"Entering TOTP {totp_code} into selector: {sel!r}")
+                log.info(f"Typing TOTP {totp_code} digit-by-digit into {sel!r}")
 
-                # Click first to ensure focus, then type character-by-character.
-                # page.fill() on React number inputs doesn't fire the synthetic
-                # events Zerodha's form listens to — the field stays empty.
-                page.click(sel)
+                # Zerodha auto-submits the moment the 6th digit is entered —
+                # NO Enter / Continue button needed.
+                # Use press_sequentially() so each digit fires the full
+                # keydown→keypress→input→keyup event chain that React expects.
+                loc = page.locator(sel).first
+                loc.click()
                 page.wait_for_timeout(200)
-                page.keyboard.type(totp_code, delay=50)  # 50ms between digits
-                page.wait_for_timeout(300)
+                loc.press_sequentially(totp_code, delay=120)
 
-                # Verify the value actually appeared in the input
-                actual = page.input_value(sel)
-                log.info(f"Input value after type: {actual!r} (expected {totp_code!r})")
-
-                # Screenshot before submitting so we can see the filled form
+                # Read back to confirm digits landed
+                actual = loc.input_value()
+                log.info(f"Input value after typing: {actual!r} (expected {totp_code!r})")
                 page.screenshot(path=os.path.join(BASE_DIR, "logs", "after_totp_fill.png"))
 
-                # Submit — try Enter first, then the Continue button
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(1_500)
-
-                # If page hasn't navigated away, click Continue button explicitly
-                if "request_token" not in page.url:
-                    try:
-                        page.click("button:has-text('Continue')", timeout=3_000)
-                        log.info("Clicked Continue button")
-                        page.wait_for_timeout(1_500)
-                    except PWTimeout:
-                        pass
-
-                # Check for error text on the page
-                try:
-                    err = page.locator(
-                        ".error-message, .su-error, [class*='error'], [class*='invalid']"
-                    ).first.inner_text(timeout=1_000)
-                    log.warning(f"Page error after TOTP: {err!r}")
-                except Exception:
-                    pass
-
-                log.info("TOTP submitted")
+                log.info("6 digits typed — auto-submit + redirect expected ...")
                 _filled = True
                 break
             except PWTimeout:

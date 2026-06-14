@@ -1,0 +1,108 @@
+name: Trading — Afternoon Session (1:30 PM–3:35 PM IST)
+
+# ──────────────────────────────────────────────────────────────────────
+# Afternoon session: 1:30 PM IST → 3:35 PM IST  (2h 5m)
+# Lunch break was:  12:30 PM → 1:30 PM IST
+# Morning ran in   trading_morning.yml
+#
+# State hand-off:
+#   Restores runtime_state.json from cache saved by the morning job.
+#   If there was an open position at lunch, engine_loop reconciliation
+#   (Case A) detects it via the broker + saved state and resumes
+#   stop/target management automatically.
+#
+#   ALLOW_BROKER_POSITION_ON_START=1 lets init_broker() skip the
+#   safety gate that would otherwise block startup with an open position.
+#
+#   Fresh login is done each session — Zerodha access tokens don't
+#   expire mid-day, but re-login keeps the session healthy and ensures
+#   a valid token for the afternoon's API calls.
+# ──────────────────────────────────────────────────────────────────────
+on:
+  schedule:
+    - cron: '0 8 * * 1-5'    # 8:00 AM UTC = 1:30 PM IST, Mon–Fri
+  workflow_dispatch:
+
+jobs:
+  afternoon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 140      # 2h20m (1:30 PM → 3:50 PM IST — safety buffer)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create runtime directories
+        run: mkdir -p logs data/historical
+
+      - name: Set cache date key
+        run: echo "TODAY=$(date -u '+%Y-%m-%d')" >> $GITHUB_ENV
+
+      # Restore position state saved by morning job.
+      # If morning didn't run or had no open position, this is a no-op
+      # and the engine starts fresh (safe — broker reconciliation handles it).
+      - name: Restore morning runtime state from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/runtime_state.json
+          key: runtime-state-${{ env.TODAY }}
+
+      - name: Write .env from secrets
+        env:
+          KITE_API_KEY:         ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET:      ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID:         ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD:        ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP_SECRET:     ${{ secrets.KITE_TOTP_SECRET }}
+          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_CHAT_ID: ${{ secrets.TELEGRAM_BOT_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID:  ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_ADMIN_ID:    ${{ secrets.TELEGRAM_ADMIN_ID }}
+        run: |
+          {
+            echo "KITE_API_KEY=$KITE_API_KEY"
+            echo "KITE_API_SECRET=$KITE_API_SECRET"
+            echo "KITE_USER_ID=$KITE_USER_ID"
+            echo "KITE_PASSWORD=$KITE_PASSWORD"
+            echo "KITE_TOTP_SECRET=$KITE_TOTP_SECRET"
+            echo "KITE_ACCESS_TOKEN="
+            echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN"
+            echo "TELEGRAM_BOT_CHAT_ID=$TELEGRAM_BOT_CHAT_ID"
+            echo "TELEGRAM_CHANNEL_ID=$TELEGRAM_CHANNEL_ID"
+            echo "TELEGRAM_ADMIN_ID=$TELEGRAM_ADMIN_ID"
+            echo "PAPER_MODE=0"
+            echo "DRY_RUN=1"
+            echo "TEST_MODE=0"
+            echo "INITIAL_CAPITAL=100000"
+            echo "MAX_RISK_PER_TRADE_PCT=0.01"
+            echo "MAX_LOTS_CAP=10"
+            echo "ML_ON=1"
+            echo "CHAMPION_THRESHOLD=0.40"
+            echo "ALLOW_BROKER_POSITION_ON_START=1"
+          } > .env
+
+      - name: Zerodha headless login (auto-TOTP)
+        run: python login_headless.py
+
+      - name: Run afternoon session until 3:35 PM IST
+        run: |
+          SECS=$(python - <<'EOF'
+          from datetime import datetime, timezone, timedelta
+          ist = timezone(timedelta(hours=5, minutes=30))
+          now = datetime.now(ist)
+          stop = now.replace(hour=15, minute=35, second=0, microsecond=0)
+          secs = max(60, int((stop - now).total_seconds()))
+          print(secs)
+          EOF
+          )
+          echo "Afternoon session: ${SECS}s until 15:35 IST"
+          timeout --signal=SIGINT "$SECS" python master_runner.py || true

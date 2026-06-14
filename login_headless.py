@@ -10,6 +10,7 @@ Install:  pip install playwright && playwright install chromium --with-deps
 import os
 import sys
 import time
+import hashlib
 import logging
 import urllib.parse
 
@@ -48,6 +49,42 @@ for name, val in {
         sys.exit(1)
 
 
+def _totp_diagnostic() -> None:
+    """
+    Print enough info to confirm the correct secret is loaded
+    without exposing the secret itself.
+
+    Check 1 — ENV file path:
+        Tells you WHICH .env was loaded.  If login_headless.py is run
+        from a different directory than login.py, this will differ.
+
+    Check 2 — Secret fingerprint:
+        SHA-256[:12] is a stable identifier.  Run the same check in
+        login.py (or the Python REPL) and compare — if they differ,
+        different secrets are loaded.
+
+    Check 3 — Code right now:
+        Compare with your Zerodha mobile app at this exact moment.
+        If they match → secret is correct.
+        If they differ → wrong secret in this .env / GitHub Secret.
+    """
+    secret = TOTP_SECRET or ""
+    preview = (secret[:4] + "…" + secret[-2:]) if len(secret) >= 6 else "TOO_SHORT"
+    fp = hashlib.sha256(secret.encode()).hexdigest()[:12]
+    totp = pyotp.TOTP(secret)
+    window_secs = 30 - int(time.time()) % 30
+
+    log.info("─── TOTP Diagnostic ──────────────────────────────────────")
+    log.info(f"  ENV file       : {ENV_FILE}")
+    log.info(f"  Secret length  : {len(secret)} chars  preview={preview!r}")
+    log.info(f"  Secret SHA-256 : {fp}  (compare with login.py run)")
+    log.info(f"  Code right now : {totp.now()}  ({window_secs}s left in window)")
+    log.info(f"  Next code      : {totp.at(int(time.time()) + window_secs + 1)}")
+    log.info("  → If 'Code right now' ≠ Zerodha app → wrong secret here")
+    log.info("  → If SHA-256 differs from login.py  → different .env loaded")
+    log.info("──────────────────────────────────────────────────────────")
+
+
 def _update_env_token(token: str) -> None:
     lines = []
     found = False
@@ -76,6 +113,7 @@ def _extract_token(url: str):
 
 def login() -> str:
     log.info("=== login_headless v9 (Playwright / headless Chromium) ===")
+    _totp_diagnostic()
 
     request_token = None
     connect_url   = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}&v=3"
@@ -83,7 +121,10 @@ def login() -> str:
     screenshot    = os.path.join(BASE_DIR, "logs", "login_state.png")
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = pw.chromium.launch(
+            headless=False,
+            slow_mo=300
+        )
         ctx     = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

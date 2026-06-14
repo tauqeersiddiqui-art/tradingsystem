@@ -3,14 +3,13 @@ login_headless.py
 -----------------
 Zerodha login using headless Chromium via Playwright.
 Works on GitHub Actions (Ubuntu) — no Edge/Selenium needed.
-Playwright runs real JavaScript so Zerodha's fingerprint/session
-tokens are set exactly as they are in a real browser.
 
 Install:  pip install playwright && playwright install chromium --with-deps
 """
 
 import os
 import sys
+import time
 import logging
 import urllib.parse
 
@@ -66,17 +65,26 @@ def _update_env_token(token: str) -> None:
         f.writelines(lines)
 
 
+def _extract_token(url: str):
+    """Return request_token from URL query string, or None."""
+    try:
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        return params.get("request_token", [None])[0]
+    except Exception:
+        return None
+
+
 def login() -> str:
-    """Run headless Chromium, log in to Zerodha, return access_token."""
-    log.info("=== login_headless v6 (Playwright / headless Chromium) ===")
+    log.info("=== login_headless v7 (Playwright / headless Chromium) ===")
 
     request_token = None
     connect_url   = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}&v=3"
+    os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
+    screenshot    = os.path.join(BASE_DIR, "logs", "login_state.png")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         ctx     = browser.new_context(
-            # Appear as a real desktop Chrome on Linux
             user_agent=(
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -85,83 +93,99 @@ def login() -> str:
         )
         page = ctx.new_page()
 
-        # ── Intercept the final redirect to capture request_token ──────
-        # After login + TOTP, Zerodha redirects to your redirect_url
-        # (often http://127.0.0.1) with request_token in the query string.
-        # We grab it from the route and abort the navigation so Playwright
-        # doesn't try to load an unreachable localhost URL.
-        def _intercept(route):
+        # ── Observe every outgoing request — no interception/blocking ──
+        # page.on("request") fires the instant the browser initiates a
+        # request, BEFORE the TCP connection — so it catches even the
+        # navigation to http://127.0.0.1 (connection-refused) that carries
+        # the request_token.  page.route("**/*") misses bare-host URLs
+        # like http://127.0.0.1 that have no path, so we avoid it here.
+        def _on_request(req):
             nonlocal request_token
-            url = route.request.url
+            if request_token:
+                return
+            url = req.url
             if "request_token=" in url:
-                parsed = urllib.parse.urlparse(url)
-                params = urllib.parse.parse_qs(parsed.query)
-                rt = params.get("request_token", [None])[0]
+                rt = _extract_token(url)
                 if rt:
                     request_token = rt
-                    log.info(f"request_token captured via route: {rt[:8]}...")
-                route.abort()   # don't actually connect to localhost
-            else:
-                route.continue_()
+                    log.info(f"request_token captured from request: {rt[:8]}...")
 
-        page.route("**/*", _intercept)
+        def _on_navigate(frame):
+            nonlocal request_token
+            if request_token or frame != page.main_frame:
+                return
+            url = frame.url
+            if "request_token=" in url:
+                rt = _extract_token(url)
+                if rt:
+                    request_token = rt
+                    log.info(f"request_token captured from navigation: {rt[:8]}...")
 
-        # ── Step 1: Open login page ────────────────────────────────────
-        log.info(f"Step 1: opening KiteConnect login page ...")
-        page.goto(connect_url, wait_until="domcontentloaded", timeout=60_000)
-        log.info(f"Page title: {page.title()}")
+        page.on("request",        _on_request)
+        page.on("framenavigated", _on_navigate)
 
-        # ── Step 2: Enter user ID ──────────────────────────────────────
+        # ── Step 1: Open KiteConnect login page ────────────────────────
+        log.info("Step 1: opening login page ...")
+        try:
+            page.goto(connect_url, wait_until="domcontentloaded", timeout=60_000)
+        except Exception as e:
+            log.warning(f"goto raised (may be redirect): {e}")
+        log.info(f"Page: {page.title()!r}  URL: {page.url[:80]}")
+
+        # ── Step 2: User ID ────────────────────────────────────────────
         log.info("Step 2: entering user ID ...")
         page.wait_for_selector("input[type='text']", timeout=15_000)
         page.fill("input[type='text']", USER_ID)
+        page.wait_for_timeout(300)
         page.press("input[type='text']", "Enter")
 
-        # ── Step 3: Enter password ─────────────────────────────────────
+        # ── Step 3: Password ───────────────────────────────────────────
         log.info("Step 3: entering password ...")
         page.wait_for_selector("input[type='password']", timeout=10_000)
+        page.wait_for_timeout(300)
         page.fill("input[type='password']", PASSWORD)
+        page.wait_for_timeout(300)
         page.press("input[type='password']", "Enter")
 
-        # ── Step 4: Enter TOTP ─────────────────────────────────────────
-        # Wait for the second "password"-type input (the TOTP / app_code field)
+        # ── Step 4: TOTP / app_code ────────────────────────────────────
         log.info("Step 4: waiting for TOTP field ...")
         try:
-            page.wait_for_selector("input[type='password']", timeout=10_000)
+            # After password submit Zerodha shows a second password-type field
+            page.wait_for_selector("input[type='password']", timeout=12_000)
+            page.wait_for_timeout(500)   # brief settle
             totp_code = pyotp.TOTP(TOTP_SECRET).now()
             log.info(f"Entering TOTP: {totp_code}")
             page.fill("input[type='password']", totp_code)
+            page.wait_for_timeout(300)
             page.press("input[type='password']", "Enter")
         except PWTimeout:
-            log.info("TOTP field not found — may have been skipped by Zerodha")
+            log.info("TOTP field not shown (Zerodha may have skipped 2FA)")
 
-        # ── Step 5: Wait for redirect with request_token ───────────────
-        log.info("Step 5: waiting for redirect ...")
+        # ── Step 5: Wait for redirect carrying request_token ───────────
+        log.info("Step 5: waiting up to 45s for redirect ...")
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            if request_token:
+                break
+            try:
+                page.wait_for_timeout(1_000)
+            except Exception:
+                break
+
+        # Capture page state before closing (helps diagnose failures)
+        log.info(f"Final URL: {page.url[:120]}")
         try:
-            # Wait until the route interceptor fires (request_token captured)
-            page.wait_for_function(
-                "() => window.location.href.includes('request_token')",
-                timeout=30_000,
-            )
-        except PWTimeout:
-            # Route interception already captured it, or it's in the current URL
+            page.screenshot(path=screenshot, full_page=True)
+            log.info(f"Screenshot saved: {screenshot}")
+        except Exception:
             pass
-
-        # Fallback: read from current page URL
-        if not request_token:
-            cur = page.url
-            if "request_token=" in cur:
-                parsed = urllib.parse.urlparse(cur)
-                params = urllib.parse.parse_qs(parsed.query)
-                request_token = params.get("request_token", [None])[0]
-                log.info(f"request_token from URL: {request_token[:8] if request_token else 'none'}...")
 
         browser.close()
 
     if not request_token:
         raise RuntimeError(
-            "request_token not captured — login may have failed. "
-            "Check screenshot or page state."
+            "request_token not captured after 45 s. "
+            f"See screenshot: {screenshot}"
         )
 
     # ── Step 6: Exchange for access_token ─────────────────────────────

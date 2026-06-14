@@ -109,6 +109,15 @@ jobs:
             exit 1
           fi
 
+      # Upload screenshot always — shows page state on login success OR failure
+      - name: "Upload login screenshot"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: login-screenshot
+          path: logs/login_state.png
+          if-no-files-found: ignore
+
       # ── 6. Engine smoke test (2 minutes, TEST_MODE=1) ───────────────
       - name: "[6/7] Engine smoke test (2 min, DRY_RUN=1, TEST_MODE=1)"
         run: |

@@ -790,6 +790,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _last_heartbeat   = 0.0     # epoch time of last alive-ping to Telegram
     ltp_current       = 0.0     # last known NIFTY spot LTP (avoids UnboundLocalError on first tick)
     _signal_first_ts  = None    # ts when this signal was first produced (entry delay tracking)
+    _last_exit_symbol = None    # symbol of most-recently exited ML trade
+    _last_exit_epoch  = 0.0     # epoch time of that exit (for same-symbol cooldown)
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
     _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of NIFTY spot
 
@@ -1349,11 +1351,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         except Exception as _slip_e:
                             logger.debug(f"[SLIP] Log failed: {_slip_e}")
 
+                    _exited_symbol  = position["symbol"]
                     position        = None
                     entry_time      = None
                     entry_order_rec = None
                     # Stamp exit time for re-entry cooldown in live_engine
                     ctx.live_engine._last_exit_ts = time.time()
+                    # Same-symbol cooldown tracking
+                    _last_exit_symbol = _exited_symbol
+                    _last_exit_epoch  = time.time()
                     # Persist closed state immediately (open_position -> None)
                     save_state(ctx, None, scalp_position)
 
@@ -1412,6 +1418,25 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f" < override={_thr_ov:.2f}"
                     )
                     ctx.live_engine.record_block("TG_THRESHOLD")
+                    decision = None
+
+            if decision is not None and position is None:
+
+                # Same-symbol re-entry cooldown (90s after any exit on same option)
+                # Prevents immediate re-entry into a reversing option after a stop.
+                _SAME_SYMBOL_COOLDOWN = 90
+                _cand_sym, _ = ctx.broker.get_atm_option(decision.get("side", "CE"))
+                if (
+                    _cand_sym is not None
+                    and _cand_sym == _last_exit_symbol
+                    and (time.time() - _last_exit_epoch) < _SAME_SYMBOL_COOLDOWN
+                ):
+                    _remaining = int(_SAME_SYMBOL_COOLDOWN - (time.time() - _last_exit_epoch))
+                    logger.info(
+                        f"[GATE] Same-symbol cooldown: {_cand_sym} "
+                        f"({_remaining}s remaining)"
+                    )
+                    ctx.live_engine.record_block("SAME_SYMBOL_COOLDOWN")
                     decision = None
 
             if decision is not None and position is None:

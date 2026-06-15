@@ -1,9 +1,13 @@
 {
   "session_date": "2026-06-15",
-  "saved_at": "2026-06-15T11:01:34.277236",
-  "pnl": -208.00000000000017,
-  "trades_today": 1,
-  "positions": [],
+  "saved_at": "2026-06-15T15:43:45.869494",
+  "pnl": -542.7500000000014,
+  "trades_today": 10,
+  "positions": [
+    32.5,
+    -201.49999999999963,
+    -198.24999999999983
+  ],
   "open_position": null,
   "scalp_position": null
 }

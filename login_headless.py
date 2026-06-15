@@ -122,7 +122,7 @@ def login() -> str:
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
-            headless=False,
+            headless=True,
             slow_mo=300
         )
         ctx     = browser.new_context(

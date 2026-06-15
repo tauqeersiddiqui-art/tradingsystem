@@ -45,6 +45,8 @@ _JOURNAL_COLUMNS = [
     "ltp_5s", "ltp_10s", "ltp_30s", "ltp_60s",
     # --- during-trade extremes ---
     "mfe_rs", "mae_rs", "peak_drawdown_rs",
+    "ladder_stage",          # highest rung reached: INITIAL|S0_LOCK32|S1_LOCK65|…
+    "entry_delay_ms",        # ms from signal (first [ENTRY SIGNAL]) to fill
     # --- exit ---
     "exit_ts", "exit_price", "exit_reason",
     "realized_pnl", "holding_seconds",
@@ -301,6 +303,7 @@ class TradeJournal:
         pe_prob_raw: float = 0.0,
         nifty_spot: float  = 0.0,
         htf_state: str     = "unknown",
+        entry_delay_ms: int = 0,
     ) -> str:
         """
         Record entry snapshot. Returns journal_id for this trade.
@@ -352,6 +355,7 @@ class TradeJournal:
             # placeholders filled later
             "ltp_5s": "", "ltp_10s": "", "ltp_30s": "", "ltp_60s": "",
             "mfe_rs": "", "mae_rs": "", "peak_drawdown_rs": "",
+            "ladder_stage": "INITIAL", "entry_delay_ms": entry_delay_ms,
             "exit_ts": "", "exit_price": "", "exit_reason": "",
             "realized_pnl": "", "holding_seconds": "",
             "loss_class": "",
@@ -406,6 +410,11 @@ class TradeJournal:
         if pnl < state["min_pnl"]:
             state["min_pnl"]  = pnl
             state["mae_rs"]   = pnl
+
+        # Track highest ladder rung reached (from position dict — updated by profit_manager)
+        _ladder_stage = position.get("_ladder_stage", "")
+        if _ladder_stage and _ladder_stage != "INITIAL":
+            rec["ladder_stage"] = _ladder_stage
 
         state["last_pnl"] = pnl
 

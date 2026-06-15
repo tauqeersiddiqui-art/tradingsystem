@@ -59,7 +59,7 @@ _pending_confirm_resp = None
 import queue
 import threading
 
-_tg_queue   = queue.Queue(maxsize=20)   # capped — drop if full (old data useless)
+_tg_queue   = queue.Queue(maxsize=50)   # capped — drop if full (old data useless)
 _poll_interval     = 3.0   # poll getUpdates every 3s when healthy
 _poll_interval_max = 60.0  # back off to 60s after consecutive failures
 _last_poll_ts      = 0.0
@@ -396,6 +396,23 @@ def delete_trade_message():
         pass
 
 
+def freeze_trade_message(exit_text: str):
+    """Replace the live trade card with the final exit summary (no EXIT button).
+    Card stays in chat at its original position — not deleted, not reposted."""
+    global _trade_msg_id
+    if not _trade_msg_id:
+        return
+    mid = _trade_msg_id
+    _trade_msg_id = None
+    _last_edited.pop(mid, None)
+    _tg_enqueue(_do_freeze_trade, mid, exit_text)
+
+
+def _do_freeze_trade(mid: int, exit_text: str):
+    """Edit the live trade card to the exit summary, removing the EXIT button."""
+    _edit_with_markup(mid, exit_text, reply_markup=None)
+
+
 def remove_exit_button():
     """Legacy — kept for call-site compatibility. Use delete_trade_message() on exit."""
     delete_trade_message()
@@ -448,6 +465,19 @@ def delete_scalp_message():
         )
     except Exception:
         pass
+
+
+def freeze_scalp_message(exit_text: str):
+    """Replace the live scalp card with the final exit summary.
+    Card stays in chat — not deleted, not reposted."""
+    global _scalp_msg_id
+    if not _scalp_msg_id:
+        return
+    mid = _scalp_msg_id
+    _scalp_msg_id = None
+    _last_edited.pop(mid, None)
+    _tg_enqueue(_edit, mid, exit_text)
+
 
 def repost_engine_dashboard(text: str):
     """Delete the old engine dashboard message and send a fresh one at bottom."""

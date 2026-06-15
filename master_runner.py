@@ -103,6 +103,8 @@ from telegram.notifier import (
     send_scalp_entry,
     update_scalp_live,
     delete_scalp_message,
+    freeze_trade_message,
+    freeze_scalp_message,
 )
 
 # ── Candle builder (live + paper) ─────────────────────────────────────
@@ -1273,9 +1275,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "mae_pts":       _mae_pts,
                         "held_seconds":  held_seconds,
                     })
-                    # Delete live trade card, post clean exit card
-                    delete_trade_message()
-                    tg_force(exit_msg)
+                    # Freeze live trade card to final exit summary (stays in chat),
+                    # then post exit summary to channel as a separate message.
+                    freeze_trade_message(exit_msg)
                     send_trade_channel(exit_msg)
                     # Repost engine dashboard so it appears fresh at bottom
                     try:
@@ -1720,9 +1722,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             f"[SCALP EXIT] {_s_reason} | {scalp_position['symbol']} "
                             f"| pnl={_s_pnl:+.0f} | day={ctx.pnl:+.0f}"
                         )
-                        delete_scalp_message()
-                        tg_force(format_scalp_exit(scalp_position, _s_fill,
-                                                   f"SCALP_{_s_reason}", _s_pnl))
+                        _scalp_exit_msg = format_scalp_exit(scalp_position, _s_fill,
+                                                           f"SCALP_{_s_reason}", _s_pnl)
+                        # Freeze scalp card to final exit summary (stays in chat),
+                        # then post exit to channel as separate message.
+                        freeze_scalp_message(_scalp_exit_msg)
+                        send_trade_channel(_scalp_exit_msg)
                         scalp_position = None
                         ctx.scalp_engine.on_exit()
 
@@ -1759,9 +1764,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     f"@ {_s_order['price']:.1f} "
                                     f"| NIFTY move={_s_sig['move_pts']:+.1f}pt"
                                 )
-                                send_scalp_entry(
-                                    format_scalp_entry(scalp_position, _s_sig["move_pts"])
-                                )
+                                _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
+                                send_scalp_entry(_scalp_entry_msg)
+                                send_trade_channel(_scalp_entry_msg)
 
             # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)
@@ -1855,6 +1860,27 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     logger.info("[EOD F7 SETUP]\n" + setup_breakdown())
                 except Exception as _e34:
                     logger.warning(f"[EOD F3/F4/F7] {_e34}")
+
+                # ── Weekly model retrain (Friday after close) ──────────
+                try:
+                    if ts.weekday() == 4 and not check_retrain_lock():
+                        import threading as _thr
+                        from ml.feedback_trainer import retrain_with_feedback
+
+                        def _do_retrain():
+                            try:
+                                tg_force("[RETRAIN] Starting weekly model retrain...")
+                                retrain_with_feedback(live_weight=3)
+                                write_retrain_lock()
+                                tg_force("[RETRAIN] Weekly retrain complete. Models updated.")
+                                logger.info("[RETRAIN] Weekly retrain finished successfully")
+                            except Exception as _re:
+                                logger.warning(f"[RETRAIN] Failed: {_re}")
+                                tg_force(f"[RETRAIN] Failed: {_re}")
+
+                        _thr.Thread(target=_do_retrain, daemon=True, name="weekly_retrain").start()
+                except Exception as _retrain_e:
+                    logger.warning(f"[RETRAIN] Trigger error: {_retrain_e}")
 
             # ── Health file update ────────────────────────────────────
             update_health(snapshot(ctx))

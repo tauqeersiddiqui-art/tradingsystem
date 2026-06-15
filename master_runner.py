@@ -284,11 +284,12 @@ class EngineWatchdog:
     """
 
     def __init__(self, ctx: TradingContext, builder):
-        self._ctx      = ctx
-        self._builder  = builder
-        self._restarts = 0
-        self._active   = True
-        self._thread   = threading.Thread(
+        self._ctx             = ctx
+        self._builder         = builder
+        self._restarts        = 0
+        self._active          = True
+        self._notified_guards: set = set()   # guards already alerted via Telegram
+        self._thread          = threading.Thread(
             target=self._loop, name="engine-watchdog", daemon=True
         )
         self._thread.start()
@@ -332,9 +333,11 @@ class EngineWatchdog:
                     logger.warning(
                         f"[ENGINE WATCHDOG] Thread dead — NOT restarting: {guard}"
                     )
-                    tg_force(
-                        f"[ENGINE WATCHDOG]\nEngine dead — NOT restarting\nReason: {guard}"
-                    )
+                    if guard not in self._notified_guards:
+                        self._notified_guards.add(guard)
+                        tg_force(
+                            f"[ENGINE WATCHDOG]\nEngine dead — NOT restarting\nReason: {guard}"
+                        )
                     continue
                 self._restarts += 1
                 logger.warning(

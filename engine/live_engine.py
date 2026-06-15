@@ -580,6 +580,7 @@ class LiveEngine:
                     _ema30 = float(np.mean(_closes[-30:]))   # simple mean as fast EMA proxy
                     _ema60 = float(np.mean(_closes[-60:]))
                     _htf_bullish = _ema30 > _ema60
+                self._last_htf_bullish = _htf_bullish   # expose for journal / market_state
                 if not _htf_bullish:
                     self._count_block("HTF_FAIL")
                     self._last_block_reason = "CE_HTF_FAIL (30m EMA bearish vs 60m)"
@@ -742,6 +743,7 @@ class LiveEngine:
             "orb_done":        self.orb_done,
             "ce_prob":         self._last_ce_prob,
             "pe_prob":         self._last_pe_prob,
+            "htf_bullish":     getattr(self, "_last_htf_bullish", True),
             "ce_adj":          self._last_ce_adj,
             "pe_adj":          self._last_pe_adj,
             "ml_threshold":    max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR),
@@ -802,6 +804,12 @@ class LiveEngine:
         # Update position dict in-place so caller persists new SL
         position["stop_loss"] = new_sl
         position["max_pnl"]   = new_max_pnl
+
+        # Track highest ladder rung for diagnostics journal
+        from engine.execution.profit_manager import ladder_locked_rs
+        _lrs, _lstage = ladder_locked_rs(new_max_pnl)
+        if _lrs > 0:
+            position["_ladder_stage"] = _lstage
 
         if pm_reason:
             return True, pm_reason

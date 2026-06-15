@@ -789,6 +789,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _last_opt_diag    = 0.0     # epoch time of last [OPTION FEED] log
     _last_heartbeat   = 0.0     # epoch time of last alive-ping to Telegram
     ltp_current       = 0.0     # last known NIFTY spot LTP (avoids UnboundLocalError on first tick)
+    _signal_first_ts  = None    # ts when this signal was first produced (entry delay tracking)
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
     _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of NIFTY spot
 
@@ -1047,6 +1048,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             # ── Run decision engine ───────────────────────────────────
             decision = ctx.live_engine.step(market_data, ts)
+
+            # Track when this signal was first generated (for entry-delay logging)
+            if decision is not None and _signal_first_ts is None:
+                _signal_first_ts = ts
+            elif decision is None:
+                _signal_first_ts = None
 
             # ══════════════════════════════════════════════════════════
             # POSITION MANAGEMENT — runs every cycle, NOT in except block
@@ -1552,6 +1559,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     # Persist new open position immediately (survives restart)
                     save_state(ctx, position, scalp_position)
+                    _signal_first_ts = None   # reset for next trade
 
                     # F1: start replay timeline (observational)
                     try:
@@ -1567,11 +1575,17 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     # Fix empty journal: wire on_entry so diagnostics CSV populates
                     try:
                         _ms_j   = ctx.live_engine.get_market_state(ts)
+                        _htf_j  = "bullish" if _ms_j.get("htf_bullish", True) else "bearish"
+                        _delay_ms = int((_signal_first_ts and (ts - _signal_first_ts).total_seconds() * 1000) or 0)
                         _jid    = ctx.journal.on_entry(
                             position    = position,
                             market_state= _ms_j,
                             ts          = ts,
                             nifty_spot  = ltp_current,
+                            ce_prob_raw = _ms_j.get("ce_prob", 0.0),
+                            pe_prob_raw = _ms_j.get("pe_prob", 0.0),
+                            htf_state   = _htf_j,
+                            entry_delay_ms = _delay_ms,
                         )
                         _journal_id = _jid
                     except Exception as _je:
@@ -1592,7 +1606,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     logger.info(
                         f"[ENTRY] {side} {symbol} "
                         f"qty={order['qty']} fill={order['price']:.2f} "
-                        f"SL={stop_loss:.2f}"
+                        f"SL={stop_loss:.2f} "
+                        f"ml={position['ml_prob']:.3f} "
+                        f"reason={position['reason']} "
+                        f"signal_delay={_delay_ms}ms"
                     )
                 else:
                     logger.warning("[ENTRY] Order returned invalid fill — position not opened")

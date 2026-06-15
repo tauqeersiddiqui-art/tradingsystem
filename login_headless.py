@@ -123,7 +123,8 @@ def login() -> str:
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
             headless=True,
-            slow_mo=300
+            slow_mo=300,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         )
         ctx     = browser.new_context(
             user_agent=(

@@ -21,6 +21,8 @@ jobs:
   morning:
     runs-on: ubuntu-latest
     timeout-minutes: 215      # 3h35m (9:10 AM → 12:45 PM IST — safety buffer)
+    env:
+      TZ: Asia/Kolkata        # datetime.now() returns IST on the runner
 
     steps:
       - name: Checkout repository

@@ -17,6 +17,10 @@ on:
     - cron: '40 3 * * 1-5'   # 3:40 AM UTC = 9:10 AM IST, Mon–Fri
   workflow_dispatch:
 
+concurrency:
+  group: live-trading-session
+  cancel-in-progress: false   # never kill a running trade session
+
 jobs:
   morning:
     runs-on: ubuntu-latest

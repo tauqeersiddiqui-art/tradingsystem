@@ -37,5 +37,6 @@ class Config:
         self.SCALP_LOTS               = int(os.getenv("SCALP_LOTS", "2"))
         self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "2.0"))   # lock SL at entry after +2pt
         self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "2.0"))  # trail SL 2pt below peak
+        self.SCALP_MIN_OPT_PTS        = float(os.getenv("SCALP_MIN_OPT_PTS", "30.0"))  # skip options cheaper than this
 
         print(f"[CONFIG] Capital={self.INITIAL_CAPITAL} | DRY_RUN={self.DRY_RUN} | LOT_SIZE={self.LOT_SIZE}")

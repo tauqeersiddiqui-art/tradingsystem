@@ -1686,32 +1686,26 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         )
                         scalp_position["stop_loss"] = _sc_new_stop
 
-                    # ── 2-pt profit lock: exit half lot, SL → breakeven ──
-                    if (not scalp_position.get("lock_triggered")
-                            and scalp_position["qty"] >= 2 * ctx.config.LOT_SIZE
-                            and _s_ltp >= scalp_position["entry"] + ctx.config.SCALP_LOCK_PTS):
-                        _lock_qty   = ctx.config.LOT_SIZE
-                        _lock_order = ctx.executor.execute_exit(
-                            scalp_position["symbol"], _lock_qty, side=scalp_position["side"]
-                        )
-                        _lock_fill = _lock_order["price"] if _lock_order else _s_ltp
-                        _lock_pnl  = (_lock_fill - scalp_position["entry"]) * _lock_qty
-                        ctx.pnl                         += _lock_pnl
-                        scalp_position["qty"]           -= _lock_qty
-                        scalp_position["stop_loss"]      = scalp_position["entry"]
-                        scalp_position["lock_triggered"] = True
-                        logger.info(
-                            f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt → "
-                            f"exited {_lock_qty} qty @ {_lock_fill:.1f} | "
-                            f"lock_pnl={_lock_pnl:+.0f} | SL→BE={scalp_position['entry']:.1f} | "
-                            f"remaining={scalp_position['qty']} qty"
-                        )
-                        import telegram.notifier as _tgn
-                        _tgn.send_bot(
-                            f"🔒 <b>SCALP LOCK</b> +{ctx.config.SCALP_LOCK_PTS:.0f}pt\n"
-                            f"Exited 1 lot @ {_lock_fill:.1f}  |  +₹{_lock_pnl:,.0f}\n"
-                            f"SL → breakeven  |  1 lot still running"
-                        )
+                    # ── Lock at +2pt then trail 2pt behind peak (all lots held) ──
+                    _s_move = _s_ltp - scalp_position["entry"]
+                    if _s_move >= ctx.config.SCALP_LOCK_PTS:
+                        if not scalp_position.get("lock_triggered"):
+                            scalp_position["stop_loss"]      = scalp_position["entry"]
+                            scalp_position["lock_triggered"] = True
+                            logger.info(
+                                f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt → "
+                                f"SL locked at entry={scalp_position['entry']:.1f} | "
+                                f"trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt below peak"
+                            )
+                            import telegram.notifier as _tgn
+                            _tgn.send_bot(
+                                f"🔒 <b>SCALP LOCK</b> +{ctx.config.SCALP_LOCK_PTS:.0f}pt\n"
+                                f"SL → breakeven  |  trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt  |  riding all lots"
+                            )
+                        # Trail SL 2pt below current ltp — ratchet up only, never down
+                        _trail_sl = _s_ltp - ctx.config.SCALP_TRAIL_PTS
+                        if _trail_sl > scalp_position["stop_loss"]:
+                            scalp_position["stop_loss"] = _trail_sl
 
                     _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
                     # Honor the ladder-raised stop (virtual trigger) in addition

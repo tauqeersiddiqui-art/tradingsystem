@@ -1690,17 +1690,17 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _s_move = _s_ltp - scalp_position["entry"]
                     if _s_move >= ctx.config.SCALP_LOCK_PTS:
                         if not scalp_position.get("lock_triggered"):
-                            scalp_position["stop_loss"]      = scalp_position["entry"]
+                            scalp_position["stop_loss"]      = scalp_position["entry"] + 1.0
                             scalp_position["lock_triggered"] = True
                             logger.info(
                                 f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt → "
-                                f"SL locked at entry={scalp_position['entry']:.1f} | "
+                                f"SL locked at entry+1={scalp_position['entry'] + 1.0:.1f} | "
                                 f"trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt below peak"
                             )
                             import telegram.notifier as _tgn
                             _tgn.send_bot(
                                 f"🔒 <b>SCALP LOCK</b> +{ctx.config.SCALP_LOCK_PTS:.0f}pt\n"
-                                f"SL → breakeven  |  trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt  |  riding all lots"
+                                f"SL → entry+1pt  |  trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt  |  riding all lots"
                             )
                         # Trail SL 2pt below current ltp — ratchet up only, never down
                         _trail_sl = _s_ltp - ctx.config.SCALP_TRAIL_PTS

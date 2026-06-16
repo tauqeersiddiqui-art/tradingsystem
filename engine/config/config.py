@@ -34,5 +34,7 @@ class Config:
         self.SCALP_MOMENTUM_WINDOW    = int(os.getenv("SCALP_MOMENTUM_WINDOW", "30"))
         self.SCALP_MOMENTUM_THRESHOLD = float(os.getenv("SCALP_MOMENTUM_THRESHOLD", "12.0"))
         self.SCALP_COOLDOWN           = int(os.getenv("SCALP_COOLDOWN", "60"))
+        self.SCALP_LOTS               = int(os.getenv("SCALP_LOTS", "2"))
+        self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "2.0"))
 
         print(f"[CONFIG] Capital={self.INITIAL_CAPITAL} | DRY_RUN={self.DRY_RUN} | LOT_SIZE={self.LOT_SIZE}")

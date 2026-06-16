@@ -1763,33 +1763,39 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _s_side   = _s_sig["side"]
                         _s_symbol, _s_opt_ltp = ctx.broker.get_atm_option(_s_side)
                         if _s_symbol and _s_opt_ltp:
-                            _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
-                            _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
-                            if _s_order:
-                                scalp_position = {
-                                    "symbol":         _s_symbol,
-                                    "side":           _s_side,
-                                    "qty":            _scalp_entry_qty,
-                                    "lot_size":       ctx.config.LOT_SIZE,
-                                    "entry":          _s_order["price"],
-                                    "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
-                                    "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
-                                    "max_pnl":        0.0,
-                                    "min_pnl":        0.0,
-                                    "ml_prob":        0.0,
-                                    "regime":         "SCALP",
-                                    "reason":         _s_sig["reason"],
-                                    "entry_ts":       ts,
-                                    "lock_triggered": False,
-                                }
+                            if _s_opt_ltp < ctx.config.SCALP_MIN_OPT_PTS:
                                 logger.info(
-                                    f"[SCALP ENTRY] {_s_side} {_s_symbol} "
-                                    f"@ {_s_order['price']:.1f} "
-                                    f"| NIFTY move={_s_sig['move_pts']:+.1f}pt"
+                                    f"[SCALP SKIP] {_s_side} {_s_symbol} @ {_s_opt_ltp:.1f} "
+                                    f"< min {ctx.config.SCALP_MIN_OPT_PTS:.0f}pt — too cheap, skipped"
                                 )
-                                _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
-                                send_scalp_entry(_scalp_entry_msg)
-                                send_trade_channel(_scalp_entry_msg)
+                            else:
+                                _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
+                                _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
+                                if _s_order:
+                                    scalp_position = {
+                                        "symbol":         _s_symbol,
+                                        "side":           _s_side,
+                                        "qty":            _scalp_entry_qty,
+                                        "lot_size":       ctx.config.LOT_SIZE,
+                                        "entry":          _s_order["price"],
+                                        "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
+                                        "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
+                                        "max_pnl":        0.0,
+                                        "min_pnl":        0.0,
+                                        "ml_prob":        0.0,
+                                        "regime":         "SCALP",
+                                        "reason":         _s_sig["reason"],
+                                        "entry_ts":       ts,
+                                        "lock_triggered": False,
+                                    }
+                                    logger.info(
+                                        f"[SCALP ENTRY] {_s_side} {_s_symbol} "
+                                        f"@ {_s_order['price']:.1f} "
+                                        f"| NIFTY move={_s_sig['move_pts']:+.1f}pt"
+                                    )
+                                    _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
+                                    send_scalp_entry(_scalp_entry_msg)
+                                    send_trade_channel(_scalp_entry_msg)
 
             # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)

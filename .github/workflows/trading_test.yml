@@ -8,6 +8,10 @@ name: Pipeline Test (manual trigger only)
 on:
   workflow_dispatch:
 
+concurrency:
+  group: live-trading-session
+  cancel-in-progress: true    # test runs can be overridden freely
+
 jobs:
   test:
     runs-on: ubuntu-latest

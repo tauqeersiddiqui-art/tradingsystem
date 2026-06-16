@@ -29,12 +29,13 @@ class Config:
         # Scalping layer
         self.SCALP_ENABLED            = os.getenv("SCALP_ENABLED", "1") == "1"
         self.SCALP_SL_PTS             = float(os.getenv("SCALP_SL_PTS", "3.0"))
-        self.SCALP_TARGET_PTS         = float(os.getenv("SCALP_TARGET_PTS", "5.0"))
+        self.SCALP_TARGET_PTS         = float(os.getenv("SCALP_TARGET_PTS", "50.0"))  # disabled — trailing SL is primary exit
         self.SCALP_MAX_HOLD_SECONDS   = int(os.getenv("SCALP_MAX_HOLD_SECONDS", "180"))
         self.SCALP_MOMENTUM_WINDOW    = int(os.getenv("SCALP_MOMENTUM_WINDOW", "30"))
         self.SCALP_MOMENTUM_THRESHOLD = float(os.getenv("SCALP_MOMENTUM_THRESHOLD", "12.0"))
         self.SCALP_COOLDOWN           = int(os.getenv("SCALP_COOLDOWN", "60"))
         self.SCALP_LOTS               = int(os.getenv("SCALP_LOTS", "2"))
-        self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "2.0"))
+        self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "2.0"))   # lock SL at entry after +2pt
+        self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "2.0"))  # trail SL 2pt below peak
 
         print(f"[CONFIG] Capital={self.INITIAL_CAPITAL} | DRY_RUN={self.DRY_RUN} | LOT_SIZE={self.LOT_SIZE}")

@@ -1686,6 +1686,33 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         )
                         scalp_position["stop_loss"] = _sc_new_stop
 
+                    # ── 2-pt profit lock: exit half lot, SL → breakeven ──
+                    if (not scalp_position.get("lock_triggered")
+                            and scalp_position["qty"] >= 2 * ctx.config.LOT_SIZE
+                            and _s_ltp >= scalp_position["entry"] + ctx.config.SCALP_LOCK_PTS):
+                        _lock_qty   = ctx.config.LOT_SIZE
+                        _lock_order = ctx.executor.execute_exit(
+                            scalp_position["symbol"], _lock_qty, side=scalp_position["side"]
+                        )
+                        _lock_fill = _lock_order["price"] if _lock_order else _s_ltp
+                        _lock_pnl  = (_lock_fill - scalp_position["entry"]) * _lock_qty
+                        ctx.pnl                         += _lock_pnl
+                        scalp_position["qty"]           -= _lock_qty
+                        scalp_position["stop_loss"]      = scalp_position["entry"]
+                        scalp_position["lock_triggered"] = True
+                        logger.info(
+                            f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt → "
+                            f"exited {_lock_qty} qty @ {_lock_fill:.1f} | "
+                            f"lock_pnl={_lock_pnl:+.0f} | SL→BE={scalp_position['entry']:.1f} | "
+                            f"remaining={scalp_position['qty']} qty"
+                        )
+                        import telegram.notifier as _tgn
+                        _tgn.send_bot(
+                            f"🔒 <b>SCALP LOCK</b> +{ctx.config.SCALP_LOCK_PTS:.0f}pt\n"
+                            f"Exited 1 lot @ {_lock_fill:.1f}  |  +₹{_lock_pnl:,.0f}\n"
+                            f"SL → breakeven  |  1 lot still running"
+                        )
+
                     _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
                     # Honor the ladder-raised stop (virtual trigger) in addition
                     # to the scalp engine's fixed initial stop / target / time.
@@ -1742,22 +1769,24 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _s_side   = _s_sig["side"]
                         _s_symbol, _s_opt_ltp = ctx.broker.get_atm_option(_s_side)
                         if _s_symbol and _s_opt_ltp:
-                            _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, 65)
+                            _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
+                            _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
                             if _s_order:
                                 scalp_position = {
-                                    "symbol":    _s_symbol,
-                                    "side":      _s_side,
-                                    "qty":       65,
-                                    "lot_size":  65,
-                                    "entry":     _s_order["price"],
-                                    "stop_loss": _s_order["price"] - ctx.config.SCALP_SL_PTS,
-                                    "target":    _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
-                                    "max_pnl":   0.0,
-                                    "min_pnl":   0.0,
-                                    "ml_prob":   0.0,
-                                    "regime":    "SCALP",
-                                    "reason":    _s_sig["reason"],
-                                    "entry_ts":  ts,
+                                    "symbol":         _s_symbol,
+                                    "side":           _s_side,
+                                    "qty":            _scalp_entry_qty,
+                                    "lot_size":       ctx.config.LOT_SIZE,
+                                    "entry":          _s_order["price"],
+                                    "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
+                                    "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
+                                    "max_pnl":        0.0,
+                                    "min_pnl":        0.0,
+                                    "ml_prob":        0.0,
+                                    "regime":         "SCALP",
+                                    "reason":         _s_sig["reason"],
+                                    "entry_ts":       ts,
+                                    "lock_triggered": False,
                                 }
                                 logger.info(
                                     f"[SCALP ENTRY] {_s_side} {_s_symbol} "

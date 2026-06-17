@@ -47,7 +47,8 @@ _MIN_EXPECTED_PNL = 150.0
 #     On RANGE regime days, CE_ML_FLOOR rises further to 0.85 (see STEP 5).
 _MIN_ML_FLOOR    = 0.65   # PE floor
 _CE_ML_FLOOR     = 0.78   # CE needs high confidence — model is CE-biased
-_REENTRY_COOLDOWN = 180.0  # seconds to wait after any exit before next entry
+# Re-entry cooldown is config-driven (Config.REENTRY_COOLDOWN, default 300s);
+# see LiveEngine.__init__ self._reentry_cooldown.
 _CE_ORB_ENABLED  = True   # CE allowed but gated by _CE_ML_FLOOR
 
 # ── Try importing DayClassifier (model may not exist yet) ─────────────
@@ -99,7 +100,23 @@ class LiveEngine:
 
         # ── Re-entry cooldown ─────────────────────────────────────────
         self._last_exit_ts: float = 0.0   # epoch seconds of last trade exit
-        _COOLDOWN_SECS = 180              # 3-minute cooldown after any exit
+        _cfg = getattr(ctx, "config", None)
+        # Config-driven (defaults match config.py). Raised 180->300 so a
+        # stopped option is not re-entered while still reversing.
+        self._reentry_cooldown: float = float(getattr(_cfg, "REENTRY_COOLDOWN", 300))
+        # Lunch filter OFF for dry-run; flip LUNCH_FILTER_ENABLED=1 for live.
+        self._lunch_enabled: bool = bool(getattr(_cfg, "LUNCH_FILTER_ENABLED", False))
+        # Higher-timeframe (5m) SuperTrend direction — anti-noise entry gate.
+        self._htf5_dir: int = 0
+        # ── PREDICT-FIRST direction selection ─────────────────────────
+        # When True, the ML models CHOOSE the direction (argmax of ce/pe
+        # probability) and structure (5m trend + VWAP) only CONFIRMS it —
+        # instead of 1m SuperTrend choosing and ML rubber-stamping. Requires
+        # the v3 directional models (both sides trained on all bars).
+        self._predict_first: bool = (os.getenv("PREDICT_FIRST", "1") == "1")
+        # Minimum gap between the two sides' probs to claim a directional
+        # edge. If |ce - pe| < margin, conviction is too low → no trade.
+        self._ml_edge_margin: float = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
 
         # ── Per-minute dedup guards (learner + VWAP update once per minute) ──
         self._last_classify_minute: datetime | None = None
@@ -413,6 +430,15 @@ class LiveEngine:
         vwap_val     = self._vwap.value
         price_vs_vwap = (closes[-1] - vwap_val) / closes[-1] if (closes[-1] != 0 and vwap_val > 0) else 0.0
 
+        # ── Higher-timeframe (5m) SuperTrend — anti-noise confirmation ──
+        # The 1m SuperTrend flips on noise; entering on a fresh 1m flip is
+        # what drives "trade goes negative immediately". Require the 5m trend
+        # not to OPPOSE the trade. 0 = insufficient data (gate passes).
+        try:
+            self._htf5_dir = self._htf_supertrend_dir(df, tf=5)
+        except Exception:
+            self._htf5_dir = 0
+
         # ── Update direction bias ─────────────────────────────────────
         # Paper trading: SuperTrend is the primary direction gate.
         # VWAP agreement is tracked but not required — re-enable strict
@@ -441,6 +467,29 @@ class LiveEngine:
             "di_spread":       float(np.clip(last_di_plus - last_di_min, -60, 60)),
             "ema_alignment":   float(1.0 if ema20 > ema50 else -1.0),
         }
+
+    def _htf_supertrend_dir(self, df, tf: int = 5) -> int:
+        """
+        Build tf-minute candles from the 1-minute window and return the last
+        SuperTrend(10,3) direction (+1 up / -1 down / 0 if insufficient data).
+        Used as a slow-trend confirmation so entries don't fire on 1m noise.
+        """
+        if df is None or len(df) < tf * 12:
+            return 0
+        import numpy as np
+        h = df["high"].values.astype(float)
+        l = df["low"].values.astype(float)
+        c = df["close"].values.astype(float)
+        usable = (len(c) // tf) * tf
+        if usable < tf * 12:
+            return 0
+        h = h[-usable:].reshape(-1, tf).max(axis=1)
+        l = l[-usable:].reshape(-1, tf).min(axis=1)
+        c = c[-usable:].reshape(-1, tf)[:, -1]
+        if len(c) < 12:
+            return 0
+        st_dir, _ = _compute_supertrend(h, l, c, period=10, multiplier=3.0)
+        return int(st_dir[-1])
 
     # ══════════════════════════════════════════════════════════════════
     # ENTRY SIGNAL DETECTION
@@ -484,23 +533,32 @@ class LiveEngine:
         if now >= dtime(15, 15):
             self._last_block_reason = "MARKET_CLOSING (after 15:15)"
             return None
-        # LUNCH_FILTER disabled — re-enable when switching to live capital
-        # if _LUNCH_START <= now < _LUNCH_END:
-        #     self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
-        #     return None
+        # LUNCH_FILTER — OFF in dry-run testing. Set LUNCH_FILTER_ENABLED=1
+        # (config) when switching to live capital.
+        if self._lunch_enabled and _LUNCH_START <= now < _LUNCH_END:
+            self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
+            return None
         if not features:
             self._last_block_reason = "INSUFFICIENT_DATA (<26 candles)"
             return None
 
         # ── Re-entry cooldown ────────────────────────────────────────────
         _secs_since_exit = time.time() - self._last_exit_ts
-        if self._last_exit_ts > 0 and _secs_since_exit < _REENTRY_COOLDOWN:
-            _wait = int(_REENTRY_COOLDOWN - _secs_since_exit)
+        if self._last_exit_ts > 0 and _secs_since_exit < self._reentry_cooldown:
+            _wait = int(self._reentry_cooldown - _secs_since_exit)
             self._count_block("COOLDOWN")
             self._last_block_reason = f"COOLDOWN ({_wait}s remaining)"
             return None
 
-        # ══ STEP 3: Direction gate ═══════════════════════════════════════
+        # ══ PREDICT-FIRST PATH ═══════════════════════════════════════════
+        # ML chooses direction; structure confirms. Replaces the legacy
+        # "1m SuperTrend decides, ML rubber-stamps" path below. Toggle with
+        # PREDICT_FIRST=0 to fall back to the legacy gate (e.g. if reverting
+        # to the old saturated models).
+        if self._predict_first:
+            return self._check_entry_predict_first(df_window, features, ts)
+
+        # ══ STEP 3: Direction gate (LEGACY — PREDICT_FIRST=0) ════════════
         direction_bias = self._direction_bias
         vwap_confirms  = getattr(self, "_vwap_confirms", False)
         _dir_str = "BULL" if direction_bias == 1 else ("BEAR" if direction_bias == -1 else "NONE")
@@ -509,6 +567,16 @@ class LiveEngine:
         if direction_bias == 0:
             self._count_block("NO_DIRECTION")
             self._last_block_reason = "NO_DIRECTION (ST=0)"
+            return None
+
+        # ── Higher-timeframe (5m) confirmation — anti-noise entry gate ───
+        # Block when the slow 5m SuperTrend OPPOSES the 1m direction (we are
+        # about to trade against the prevailing trend = the main reason trades
+        # go negative on entry). htf5_dir==0 means not enough data → allow.
+        htf5 = self._htf5_dir
+        if (direction_bias == 1 and htf5 == -1) or (direction_bias == -1 and htf5 == 1):
+            self._count_block("HTF5_OPPOSES")
+            self._last_block_reason = f"HTF5_OPPOSES (1m={direction_bias} 5m={htf5})"
             return None
 
         # ══ STEP 4: Signal thresholds + ORB breakout ════════════════════
@@ -561,11 +629,20 @@ class LiveEngine:
         if not _CE_ORB_ENABLED:
             ce_adj = 0.0
         else:
-            # Block CE if VWAP does not confirm direction (price below VWAP)
-            if direction_bias == 1 and not vwap_confirms:
+            # Block CE if price is more than 0.15% below VWAP (tight proximity allowed).
+            # pvwap = (close - vwap) / close; -0.0015 ≈ 1.5 pts on NIFTY at 24000.
+            _pvwap_now = features.get("price_vs_vwap", 0.0)
+            _VWAP_TOLERANCE = -0.0015
+            if direction_bias == 1 and not vwap_confirms and _pvwap_now < _VWAP_TOLERANCE:
                 self._count_block("VWAP_FAIL")
-                self._last_block_reason = "CE_VWAP_FAIL (BULL but price below VWAP)"
+                self._last_block_reason = f"CE_VWAP_FAIL (pvwap={_pvwap_now:.4f} < {_VWAP_TOLERANCE})"
                 ce_adj = 0.0
+            elif direction_bias == 1 and not vwap_confirms and _pvwap_now >= _VWAP_TOLERANCE:
+                # Price is within tolerance — allow entry only if CE is high conviction
+                if ce_adj < 0.70:
+                    self._count_block("VWAP_NEAR_MISS")
+                    self._last_block_reason = f"CE_VWAP_NEAR (pvwap={_pvwap_now:.4f}, CE={ce_adj:.3f}<0.70)"
+                    ce_adj = 0.0
             else:
                 # ── Higher-timeframe CE confirmation (30m EMA gate) ───────
                 # 75% of CE losses entered when NIFTY was in a sustained downtrend
@@ -581,10 +658,19 @@ class LiveEngine:
                     _ema60 = float(np.mean(_closes[-60:]))
                     _htf_bullish = _ema30 > _ema60
                 self._last_htf_bullish = _htf_bullish   # expose for journal / market_state
-                if not _htf_bullish:
+                # High-conviction override: CE ≥ 0.93 with sustained BULL can bypass HTF gate.
+                # Rationale: EMA30/EMA60 lag by definition — a very high ML prob with OI
+                # confirmation often signals a real trend reversal, not a dead-cat bounce.
+                _htf_override = ce_adj >= 0.93
+                if not _htf_bullish and not _htf_override:
                     self._count_block("HTF_FAIL")
                     self._last_block_reason = "CE_HTF_FAIL (30m EMA bearish vs 60m)"
+                    _ema30_v = float(np.mean(_closes[-30:])) if len(_closes) >= 60 else 0
+                    _ema60_v = float(np.mean(_closes[-60:])) if len(_closes) >= 60 else 0
+                    logger.info(f"[BLOCK] CE_HTF_FAIL — ema30={_ema30_v:.1f} ema60={_ema60_v:.1f} (bearish slope, CE skipped)")
                     ce_adj = 0.0
+                elif not _htf_bullish and _htf_override:
+                    logger.info(f"[HTF OVERRIDE] CE={ce_adj:.3f}≥0.93 — bypassing HTF gate (EMA bearish but high-conviction signal)")
                 else:
                     _pure_ml_ce = not ce_breakout
                     # On RANGE days, require extra-high CE confidence — model is noisy in chop
@@ -592,6 +678,21 @@ class LiveEngine:
                     _is_range   = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
                     _ce_floor   = 0.85 if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
                     ce_thr = max(threshold - 0.03 if (ce_breakout and orb_ok) else threshold, _ce_floor)
+                    # ── CE relative-strength gate (model is CE-saturated) ──
+                    # The CE model outputs 0.80-0.96 nearly all day, so the
+                    # absolute floor barely discriminates. Require the current
+                    # CE prob to rank in the top 30% of today's own CE
+                    # distribution before firing a pure-ML CE. Needs >=50
+                    # samples; otherwise it is skipped (no over-restriction
+                    # early in the session).
+                    _ce_pctile = self._ml_percentile(self._last_ce_prob)
+                    if (_pure_ml_ce and len(self._ml_history) >= 50
+                            and _ce_pctile < 70):
+                        self._count_block("CE_WEAK_RANK")
+                        self._last_block_reason = (
+                            f"CE_WEAK_RANK (pctile={_ce_pctile}<70)"
+                        )
+                        ce_adj = 0.0
                     if ce_adj >= ce_thr:
                         blocked, reason_block = self.learner.is_side_blocked("CE")
                         if blocked:
@@ -635,6 +736,14 @@ class LiveEngine:
             return None
 
         # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
+        return self._finalize_signal(signal, features, price)
+
+    def _finalize_signal(self, signal: dict, features: dict, price: float):
+        """
+        STEP 6 — attach risk stops + expected-PnL guard, then return the
+        signal (or None if it fails the guard). Shared by both the legacy
+        direction-gate path and the predict-first path.
+        """
         atr_val  = features.get("atr", price * 0.01)
         day_type = self.learner.get_day_type()
         regime   = (
@@ -664,6 +773,92 @@ class LiveEngine:
             f"ExpPnL=Rs{expected_pnl:.0f}"
         )
         return signal
+
+    def _check_entry_predict_first(self, df_window, features, ts):
+        """
+        PREDICT-FIRST decision: the ML models choose the direction, structure
+        confirms it. This is the fix for "trade goes negative on entry" —
+        we no longer let the whippy 1m SuperTrend pick the side.
+
+        Order of operations:
+          1. PREDICT — direction = argmax(ce_adj, pe_adj).
+          2. EDGE    — require |ce_adj - pe_adj| >= margin (clear conviction).
+          3. THRESHOLD — chosen side must clear its calibrated threshold.
+          4. CONFIRM — 5m SuperTrend must AGREE (not just 'not oppose'), and
+                       VWAP side must agree. This is the AI+ML+structure
+                       confirmation the trade direction is real.
+          5. learner side-block + finalize (risk/PnL guard).
+        """
+        price  = df_window["close"].iloc[-1]
+        ce_adj = self._last_ce_adj
+        pe_adj = self._last_pe_adj
+        htf5   = self._htf5_dir
+        pvwap  = features.get("price_vs_vwap", 0.0)
+
+        # Per-side thresholds: max of the model's calibrated threshold and the
+        # learner's adaptive threshold (rises after losses).
+        learn_thr = self.learner.get_ml_threshold()
+        ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr)
+        pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr)
+
+        # 1. PREDICT direction
+        side   = "CE" if ce_adj >= pe_adj else "PE"
+        prob   = ce_adj if side == "CE" else pe_adj
+        thr    = ce_thr if side == "CE" else pe_thr
+        other  = pe_adj if side == "CE" else ce_adj
+
+        logger.info(
+            f"[PREDICT-FIRST] CE={ce_adj:.3f} PE={pe_adj:.3f} -> {side} "
+            f"thr={thr:.2f} 5m={htf5} pvwap={pvwap:.4f}"
+        )
+
+        # 2. EDGE — need clear directional conviction
+        if abs(ce_adj - pe_adj) < self._ml_edge_margin:
+            self._count_block("NO_EDGE")
+            self._last_block_reason = (
+                f"NO_EDGE (|CE-PE|={abs(ce_adj-pe_adj):.2f} < {self._ml_edge_margin})"
+            )
+            return None
+
+        # 3. THRESHOLD
+        if prob < thr:
+            self._count_block("ML_BELOW_THR")
+            self._last_block_reason = f"ML_BELOW_THR ({side} {prob:.2f} < {thr:.2f})"
+            return None
+
+        # 4. CONFIRM — 5m trend must AGREE (htf5==0 = insufficient data → allow)
+        if side == "CE" and htf5 == -1:
+            self._count_block("HTF5_OPPOSES")
+            self._last_block_reason = f"CE_HTF5_OPPOSES (5m=DOWN, prob={prob:.2f})"
+            return None
+        if side == "PE" and htf5 == 1:
+            self._count_block("HTF5_OPPOSES")
+            self._last_block_reason = f"PE_HTF5_OPPOSES (5m=UP, prob={prob:.2f})"
+            return None
+
+        # 4b. CONFIRM — VWAP side must agree (within tolerance). CE above VWAP,
+        # PE below. Tolerance ≈ 0.15% so a marginal cross isn't over-blocked.
+        _VWAP_TOL = 0.0015
+        if side == "CE" and pvwap < -_VWAP_TOL:
+            self._count_block("VWAP_FAIL")
+            self._last_block_reason = f"CE_VWAP_FAIL (pvwap={pvwap:.4f} below VWAP)"
+            return None
+        if side == "PE" and pvwap > _VWAP_TOL:
+            self._count_block("VWAP_FAIL")
+            self._last_block_reason = f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)"
+            return None
+
+        # 5. learner side-block (consecutive-loss / losing-side lock)
+        blocked, reason_block = self.learner.is_side_blocked(side)
+        if blocked:
+            self._count_block("ML_BLOCKED")
+            self._last_block_reason = f"{side}_BLOCKED ({reason_block})"
+            return None
+
+        self._last_block_reason = f"SIGNAL_FIRE (ML_{side})"
+        signal = {"side": side, "ml_prob": prob,
+                  "features": features, "reason": f"ML_{side}"}
+        return self._finalize_signal(signal, features, price)
 
     def _ml_percentile(self, prob: float) -> int:
         """Percentile rank of prob within today's ML history."""
@@ -807,7 +1002,7 @@ class LiveEngine:
 
         # Track highest ladder rung for diagnostics journal
         from engine.execution.profit_manager import ladder_locked_rs
-        _lrs, _lstage = ladder_locked_rs(new_max_pnl)
+        _lrs, _lstage = ladder_locked_rs(new_max_pnl, size)
         if _lrs > 0:
             position["_ladder_stage"] = _lstage
 

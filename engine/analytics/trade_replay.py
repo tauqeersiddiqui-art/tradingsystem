@@ -99,7 +99,10 @@ class TradeReplay:
             # Label by the rupee ladder (single source of truth) for consistency
             # with profit_manager.  max_pnl is in Rs on the actual qty.
             from engine.execution.profit_manager import ladder_locked_rs
-            _locked_rs, _stage = ladder_locked_rs(position.get("max_pnl", 0.0))
+            _locked_rs, _stage = ladder_locked_rs(
+                position.get("max_pnl", 0.0),
+                position.get("qty", self._qty),
+            )
             self.events.append({
                 "t":          ts.strftime("%H:%M:%S"),
                 "type":       "STOP_MOVE",
@@ -130,7 +133,7 @@ class TradeReplay:
         max_pnl_rs = pos.get("max_pnl", self._last_mfe * self._qty)
         final_stop = pos.get("stop_loss", self._last_stop)
         from engine.execution.profit_manager import ladder_locked_rs
-        locked_rs, stage = ladder_locked_rs(max_pnl_rs)
+        locked_rs, stage = ladder_locked_rs(max_pnl_rs, pos.get("qty", self._qty))
         retained = round(pnl / max_pnl_rs, 3) if max_pnl_rs > 0.01 else 0.0
 
         self._exit_summary = {

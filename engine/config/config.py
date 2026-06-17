@@ -13,7 +13,23 @@ class Config:
         self.INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", 100000))
         self.RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.02))
         self.DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", -2000))
-        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 10))
+        # Overtrading guard: was 10 (today fired 10 trades = Rs1320 cost drag).
+        # 4 keeps cost bounded; scalp + ML share this counter.
+        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 4))
+
+        # Round-trip cost per 65-qty lot (buy+sell). Drives the cost-aware
+        # profit ladder so it never locks a profit below the trade's own cost.
+        self.COST_PER_LOT = float(os.getenv("COST_PER_LOT", 66.0))
+
+        # Lunch chop filter (11:00-12:30). Kept OFF for dry-run testing.
+        # Flip LUNCH_FILTER_ENABLED=1 when switching to real money.
+        self.LUNCH_FILTER_ENABLED = os.getenv("LUNCH_FILTER_ENABLED", "0") == "1"
+
+        # Re-entry cooldown after any exit (seconds). Raised 180->300 so a
+        # stopped option is not re-entered while it is still reversing
+        # (this is what produced trade #3's -Rs481 on 2026-06-17).
+        self.REENTRY_COOLDOWN = int(os.getenv("REENTRY_COOLDOWN", 300))
+        self.SAME_SYMBOL_COOLDOWN = int(os.getenv("SAME_SYMBOL_COOLDOWN", 300))
 
         # Execution rules
         self.DEFAULT_SL_PCT = float(os.getenv("DEFAULT_SL_PCT", 0.10))

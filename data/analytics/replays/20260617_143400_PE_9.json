@@ -1,0 +1,73 @@
+{
+  "symbol": "NIFTY2662324050PE",
+  "side": "PE",
+  "entry": 172,
+  "qty": 130,
+  "summary": {
+    "max_pnl": 240.5,
+    "mae_rs": -279.5,
+    "mae_pts": -2.15,
+    "ladder_stage": "S1_LOCK65",
+    "locked_profit": 65.0,
+    "retained_profit_pct": 0.0,
+    "exit_reason": "STOP",
+    "exit_price": 172,
+    "final_stop_loss": 172.5,
+    "pnl": 0
+  },
+  "events": [
+    {
+      "t": "14:34:00",
+      "type": "ENTRY",
+      "price": 172,
+      "spot": 24024.95,
+      "ml_ce": 0.617,
+      "ml_pe": 0.714,
+      "adx": 24.3,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 169.0,
+      "regime": "RANGE"
+    },
+    {
+      "t": "14:35:15",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.75,
+      "price": 172.7
+    },
+    {
+      "t": "14:35:27",
+      "type": "STOP_MOVE",
+      "label": "S0_LOCK32",
+      "new_stop": 172.25,
+      "pts_locked": 0.25,
+      "mfe_pts": 1.05,
+      "locked_rs": 32.0
+    },
+    {
+      "t": "14:35:28",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.55,
+      "price": 173
+    },
+    {
+      "t": "14:35:28",
+      "type": "STOP_MOVE",
+      "label": "S1_LOCK65",
+      "new_stop": 172.5,
+      "pts_locked": 0.5,
+      "mfe_pts": 1.55,
+      "locked_rs": 65.0
+    },
+    {
+      "t": "14:35:32",
+      "type": "EXIT",
+      "price": 172,
+      "reason": "STOP",
+      "pnl": 0,
+      "mfe_pts": 1.55,
+      "mae_pts": -2.15
+    }
+  ]
+}

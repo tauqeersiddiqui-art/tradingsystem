@@ -39,28 +39,70 @@ _LOT_QTY  = 65
 _RS_FLOOR = 200.0
 LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
 
-# (threshold_rs, stage_label, fixed_lock_rs, pct_of_peak)
-# Upper levels unchanged. Lower three replaced with tighter, earlier locks
-# calibrated to 1-lot (65 qty) NIFTY options — no partial exits, no extra orders.
-# Backtested net improvement: Rs+8,691 on 116 trades vs prior ladder.
-_LADDER = [
-    (2000.0, "S6_LOCK80%", None,  0.80),
-    (1200.0, "S5_LOCK70%", None,  0.70),
-    ( 800.0, "S4_LOCK600", 600.0, None),
-    ( 500.0, "S3_LOCK350", 350.0, None),
-    ( 390.0, "S2_LOCK195", 195.0, None),   # ~+3pt for 65-lot: net-positive floor
-    ( 195.0, "S1_LOCK65",   65.0, None),   # ~+1pt for 65-lot: cost-recovery floor
-    ( 130.0, "S0_LOCK32",   32.0, None),   # ~+0.5pt for 65-lot: slippage-proof entry
-]
+# ─────────────────────────────────────────────────────────────────────────
+# COST-AWARE PROFIT LADDER  (replaces the old fixed Rs rungs)
+#
+# OLD BUG: bottom rungs locked Rs32 / Rs65 — BELOW the ~Rs66/lot round-trip
+# cost. Every trade that locked there was a GUARANTEED net loss after costs
+# (e.g. lock Rs32 on a 130-qty trade = Rs132 cost = -Rs100 net). It also
+# fired on just Rs130 MFE (1 point), so normal noise stopped trades for a
+# guaranteed small loss.
+#
+# NEW DESIGN (two guarantees):
+#   1. No lock is EVER below cost  -> a locked exit is break-even or better,
+#      never a guaranteed loss.
+#   2. First lock only arms once MFE >= 1.5x cost  -> noise no longer trips it.
+# Above cost-recovery it trails ~62% of the running peak, so a trade that
+# peaks at +Rs442 keeps ~Rs274 instead of the old hard Rs195 cap.
+#
+# Worst-case loss is UNCHANGED: until the first lock arms, the stop stays at
+# the initial risk_manager stop. The ladder only ever TIGHTENS the stop.
+# ─────────────────────────────────────────────────────────────────────────
+
+_COST_PER_LOT = 66.0     # round-trip cost per 65-qty lot (overridable via env)
+_LOT_UNITS    = 65
+_TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
 
 
-def ladder_locked_rs(max_pnl: float):
-    """Return (locked_profit_rs, stage_label) for the current peak PnL in Rs."""
-    for threshold_rs, label, fixed_rs, pct in _LADDER:
-        if max_pnl >= threshold_rs:
-            locked = fixed_rs if fixed_rs is not None else max_pnl * pct
-            return locked, label
-    return 0.0, "INITIAL"
+def _cost_rs(qty: int) -> float:
+    """Round-trip cost in Rs for a given position qty (scales by lots)."""
+    import os
+    cost_per_lot = float(os.getenv("COST_PER_LOT", _COST_PER_LOT))
+    lots = max(1, round(qty / _LOT_UNITS))
+    return lots * cost_per_lot
+
+
+def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):
+    """
+    Return (locked_profit_rs, stage_label) for the current peak PnL in Rs.
+
+    Cost-aware: never returns a lock below the trade's round-trip cost, and
+    returns 0 (no lock) until MFE clears 1.5x cost so noise can't trip it.
+    """
+    cost = _cost_rs(qty)
+
+    # Not enough cushion yet — rely on the initial stop (no early lock).
+    if max_pnl < cost * 1.5:
+        return 0.0, "INITIAL"
+
+    # Trail a fraction of the peak, floored at break-even-after-cost.
+    locked = max(_TRAIL_PCT * max_pnl, cost)
+
+    # Lock more aggressively when deep in profit (protect large winners).
+    if   max_pnl >= 2000.0:
+        locked = max(locked, 0.80 * max_pnl)
+        stage  = "S6_LOCK80%"
+    elif max_pnl >= 1200.0:
+        locked = max(locked, 0.70 * max_pnl)
+        stage  = "S5_LOCK70%"
+    elif max_pnl >= 800.0:
+        locked = max(locked, 0.65 * max_pnl)
+        stage  = "S4_TRAIL65%"
+    else:
+        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else "S2_TRAIL62%"
+
+    locked = min(locked, max_pnl)   # never lock more than the peak itself
+    return locked, stage
 
 
 def ladder_stop(entry_price, qty, max_pnl, current_stop):
@@ -70,7 +112,7 @@ def ladder_stop(entry_price, qty, max_pnl, current_stop):
     Returns (new_stop, stage_label, locked_rs).
     Used by BOTH manage_position (normal trades) and the scalp loop.
     """
-    locked_rs, stage = ladder_locked_rs(max_pnl)
+    locked_rs, stage = ladder_locked_rs(max_pnl, qty)
     if locked_rs <= 0:
         return current_stop, stage, 0.0
     stop_floor = entry_price + locked_rs / max(qty, 1)

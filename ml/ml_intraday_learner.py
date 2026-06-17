@@ -399,14 +399,24 @@ def run_ai_brain_review(learner: IntradayMLLearner,
                          current_regime: str,
                          current_spot: float) -> str:
     """
-    After 2+ consecutive losses, call Claude API with today's context.
-    Returns AI suggestion string that gets sent to Telegram.
+    After 2+ consecutive losses, call an OpenAI-compatible LLM with today's
+    context and return a concise suggestion string for Telegram.
 
-    Called from live_engine_v2.py after a losing trade when
-    learner.ai_review_pending is True.
+    Config (env):
+        LLM_API_KEY   — required; if missing this is a silent no-op
+        LLM_BASE_URL  — OpenAI-compatible base, default https://api.openai.com/v1
+        LLM_MODEL     — default gpt-4o-mini
+
+    SAFETY: this is advisory only. The strongest action it can take is to
+    REDUCE a side's multiplier (make the bot more selective). It can never
+    increase size, loosen a stop, or force a trade — so it cannot increase loss.
     """
     try:
         import requests
+
+        if os.getenv("AI_REVIEW_ENABLED", "1") != "1":
+            learner.ai_review_pending = False
+            return None
 
         if not learner.ai_review_pending:
             return None
@@ -414,7 +424,16 @@ def run_ai_brain_review(learner: IntradayMLLearner,
         if time.time() - learner.last_ai_review_time < 300:   # max once per 5 min
             return None
 
-        # Build trade summary for AI
+        api_key  = os.getenv("LLM_API_KEY", "").strip()
+        # Treat the placeholder key as "not configured" so it stays a no-op.
+        if not api_key or api_key.startswith("freellmapi-xxx"):
+            logger.info("[AI BRAIN] LLM_API_KEY not set — skipping AI review")
+            learner.ai_review_pending = False
+            return None
+        base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        model    = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+        # Build trade summary for the model
         trades_text = "\n".join([
             f"  Trade {i+1}: {t['side']} | PnL={t['pnl']} | "
             f"ML={t['ml_prob']} | Exit={t['reason']} | Time={t['time'][:16]}"
@@ -448,21 +467,34 @@ NEXT_BIAS: CE/PE/WAIT
 """
 
         resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"Content-Type": "application/json"},
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 200,
-                "messages": [{"role": "user", "content": prompt}]
+            f"{base_url}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
             },
-            timeout=15
+            json={
+                "model": model,
+                "max_tokens": 200,
+                "temperature": 0.2,
+                "messages": [
+                    {"role": "system", "content": "You are a concise, risk-first intraday options trading analyst."},
+                    {"role": "user", "content": prompt},
+                ],
+            },
+            timeout=15,
         )
 
         if resp.status_code == 200:
             data = resp.json()
-            text_blocks = [b["text"] for b in data.get("content", [])
-                           if b.get("type") == "text"]
-            ai_text = "\n".join(text_blocks).strip()
+            ai_text = (
+                data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+            )
+            if not ai_text:
+                logger.warning("[AI BRAIN] Empty response content")
+                return None
 
             learner.ai_review_pending  = False
             learner.last_ai_review_time = time.time()
@@ -471,25 +503,27 @@ NEXT_BIAS: CE/PE/WAIT
                 "suggestion": ai_text
             })
 
-            # Extract NEXT_BIAS and store it in learner
+            # Extract NEXT_BIAS — only ever REDUCES the opposite side's
+            # multiplier (more selective), never boosts or sizes up.
             for line in ai_text.splitlines():
-                if line.startswith("NEXT_BIAS:"):
+                if line.strip().upper().startswith("NEXT_BIAS:"):
                     bias = line.split(":", 1)[1].strip().upper()
-                    if bias == "CE":
+                    if bias.startswith("CE"):
                         learner.pe_multiplier = max(learner.pe_multiplier - 0.05, 0.75)
-                    elif bias == "PE":
+                    elif bias.startswith("PE"):
                         learner.ce_multiplier = max(learner.ce_multiplier - 0.05, 0.75)
-                    # WAIT → both multipliers reduced
+                    else:  # WAIT → trim both, trade less
+                        learner.ce_multiplier = max(learner.ce_multiplier - 0.05, 0.75)
+                        learner.pe_multiplier = max(learner.pe_multiplier - 0.05, 0.75)
 
-            logger.info(f"AI Brain review: {ai_text[:100]}")
+            logger.info(f"[AI BRAIN] review: {ai_text[:120]}")
             return ai_text
 
-        else:
-            logger.warning(f"AI Brain API error: {resp.status_code}")
-            return None
+        logger.warning(f"[AI BRAIN] API error: {resp.status_code} {resp.text[:200]}")
+        return None
 
     except Exception as e:
-        logger.error(f"AI Brain exception: {e}")
+        logger.error(f"[AI BRAIN] exception: {e}")
         return None
 
 

@@ -36,3 +36,13 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
+
+---
+
+## Trading: Cost Per Lot (Expense per trade/side)
+
+- **Qty 65  → ₹66 per trade** (1 lot)
+- **Qty 130 → ₹132 per trade** (2 lots = 2 × ₹66)
+- **Qty 195 → ₹198 per trade** (3 lots = 3 × ₹66)
+- Rule: `/lot = ₹66`. Expense = `(qty / 65) × 66` rounded to nearest whole.
+- Always deduct this per buy+sell pair when calculating net P&L.

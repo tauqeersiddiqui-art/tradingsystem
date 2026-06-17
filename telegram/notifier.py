@@ -32,113 +32,6 @@ if not BOT_CHAT_ID:        raise RuntimeError("TELEGRAM_BOT_CHAT_ID missing")
 if not CHANNEL_ID:         raise RuntimeError("TELEGRAM_CHANNEL_ID missing")
 if not AUTHORIZED_USER_ID: raise RuntimeError("TELEGRAM_ADMIN_ID missing")
 
-# ─────────────────────────────────────────────────────────────────────
-# PROXY MANAGER — rotates free HTTPS proxies when Telegram is blocked
-# ─────────────────────────────────────────────────────────────────────
-_PROXY_SOURCES = []  # not used — hardcoded list below
-_TEST_URL    = "https://api.telegram.org"
-_proxies     = []          # list of "host:port" strings
-_proxy_idx   = 0
-_proxy_lock  = threading.Lock()
-_proxy_ok    = False       # True once a working proxy is confirmed
-_proxy_session: "requests.Session | None" = None
-
-
-def _fetch_proxy_list() -> list:
-    result = []
-    for src in _PROXY_SOURCES:
-        try:
-            r = requests.get(src, timeout=8)
-            for line in r.text.splitlines():
-                line = line.strip()
-                if line and ":" in line and not line.startswith("#"):
-                    result.append(line)
-            if result:
-                break
-        except Exception:
-            continue
-    return list(dict.fromkeys(result))   # dedupe, preserve order
-
-
-def _test_proxy(proxy: str) -> bool:
-    """Return True if this proxy can reach api.telegram.org."""
-    try:
-        r = requests.get(
-            _TEST_URL,
-            proxies={"https": f"socks5h://{proxy}", "http": f"socks5h://{proxy}"},
-            timeout=8,
-        )
-        return r.status_code < 500
-    except Exception:
-        return False
-
-
-def _build_proxy_session(proxy: str) -> "requests.Session":
-    s = requests.Session()
-    s.proxies = {"https": f"socks5h://{proxy}", "http": f"socks5h://{proxy}"}
-    return s
-
-
-_HARDCODED_PROXIES = [
-    "103.219.163.246:1080",
-    "84.47.150.125:1080",
-    "152.53.144.223:1080",
-    "170.64.170.204:1080",
-    "185.125.171.171:1080",
-    "43.161.217.219:1080",
-    "43.129.80.138:18999",
-]
-
-
-def _init_proxy():
-    """Background thread: find a working proxy and set _proxy_session."""
-    global _proxies, _proxy_idx, _proxy_ok, _proxy_session
-    _log.info("[PROXY] Testing %d hardcoded proxies for Telegram ...", len(_HARDCODED_PROXIES))
-    proxies = _HARDCODED_PROXIES
-    for i, proxy in enumerate(proxies[:60]):   # test up to 60
-        if _test_proxy(proxy):
-            with _proxy_lock:
-                _proxies    = proxies
-                _proxy_idx  = i
-                _proxy_ok   = True
-                _proxy_session = _build_proxy_session(proxy)
-            _log.info("[PROXY] Working proxy found: %s", proxy)
-            return
-    _log.warning("[PROXY] No working proxy found in first 60 candidates")
-
-
-def _get_session() -> requests.Session:
-    """Return proxy session if ready, else a plain session."""
-    with _proxy_lock:
-        if _proxy_ok and _proxy_session:
-            return _proxy_session
-    return requests.Session()
-
-
-def _rotate_proxy():
-    """Called on send failure — try next proxy in list."""
-    global _proxy_idx, _proxy_ok, _proxy_session
-    with _proxy_lock:
-        if not _proxies:
-            return
-        start = _proxy_idx
-    for offset in range(1, min(30, len(_proxies))):
-        candidate = _proxies[(start + offset) % len(_proxies)]
-        if _test_proxy(candidate):
-            with _proxy_lock:
-                _proxy_idx     = (start + offset) % len(_proxies)
-                _proxy_ok      = True
-                _proxy_session = _build_proxy_session(candidate)
-            _log.info("[PROXY] Rotated to: %s", candidate)
-            return
-    _log.warning("[PROXY] All rotation candidates failed")
-    with _proxy_lock:
-        _proxy_ok = False
-
-
-# Start proxy discovery in background immediately on import
-threading.Thread(target=_init_proxy, daemon=True, name="proxy-init").start()
-
 API_URL             = f"https://api.telegram.org/bot{BOT_TOKEN}"
 SEND_URL            = f"{API_URL}/sendMessage"
 EDIT_MESSAGE_URL    = f"{API_URL}/editMessageText"
@@ -165,19 +58,18 @@ _pending_confirm_resp = None
 # Telegram I/O runs in a daemon thread with a queue.
 # Engine loop calls are non-blocking — never stall trading.
 # ─────────────────────────────────────────────────────────────────────
-_tg_queue   = queue.Queue(maxsize=50)   # capped — drop if full (old data useless)
-_poll_interval     = 3.0   # poll getUpdates every 3s when healthy
-_poll_interval_max = 60.0  # back off to 60s after consecutive failures
+_tg_queue          = queue.Queue(maxsize=50)
+_poll_interval     = 3.0
+_poll_interval_max = 60.0
 _last_poll_ts      = 0.0
 _poll_fail_count   = 0
 
+
 def _tg_worker():
-    """Background thread: drains the send queue and polls commands every 3s."""
     global _last_poll_ts, _poll_fail_count
     current_interval = _poll_interval
     while True:
         try:
-            # Drain all pending sends first (non-blocking)
             while True:
                 try:
                     fn, args, kwargs = _tg_queue.get_nowait()
@@ -188,17 +80,14 @@ def _tg_worker():
                 except Exception as e:
                     _log.warning("[TG-thread] send error: %s", e)
 
-            # Poll commands with exponential backoff on failure
             now = time.time()
             if now - _last_poll_ts >= current_interval:
                 _last_poll_ts = now
                 before = _poll_fail_count
                 _poll_commands_internal()
                 if _poll_fail_count > before:
-                    # failure — back off (double interval, cap at max)
                     current_interval = min(current_interval * 2, _poll_interval_max)
                 else:
-                    # success — reset to normal interval
                     current_interval = _poll_interval
 
         except Exception as e:
@@ -206,7 +95,9 @@ def _tg_worker():
 
         time.sleep(0.5)
 
+
 _tg_thread = None
+
 
 def _ensure_thread():
     global _tg_thread
@@ -216,23 +107,23 @@ def _ensure_thread():
 
 
 def _tg_enqueue(fn, *args, **kwargs):
-    """Non-blocking enqueue. Drops silently if queue is full (stale data)."""
     _ensure_thread()
     try:
         _tg_queue.put_nowait((fn, args, kwargs))
     except queue.Full:
         pass
 
+
 # ─────────────────────────────────────────────────────────────────────
 # PERSISTENT MESSAGE IDs  — survives process restarts
 # ─────────────────────────────────────────────────────────────────────
-_engine_msg_id = None   # "AI ENGINE" dashboard
-_market_msg_id = None   # "LIVE STATUS" dashboard
-_trade_msg_id  = None   # current trade entry message (EXIT button)
-_scalp_msg_id  = None   # current scalp entry message (no button)
+_engine_msg_id = None
+_market_msg_id = None
+_trade_msg_id  = None
+_scalp_msg_id  = None
 
 _last_update_id = None
-_last_edited    = {}    # message_id → last text (per-slot dedup)
+_last_edited    = {}
 _EDIT_GONE      = "GONE"
 
 
@@ -255,11 +146,11 @@ def _save_state():
         pass
 
 
-_load_state()   # restore IDs from previous session on import
+_load_state()
 
 
 # ─────────────────────────────────────────────────────────────────────
-# LOW-LEVEL HELPERS
+# LOW-LEVEL HELPERS  — direct requests, no proxy
 # ─────────────────────────────────────────────────────────────────────
 
 def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_preview=True):
@@ -270,9 +161,9 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         "disable_web_page_preview": disable_web_page_preview,
     }
     if reply_markup:
-        payload["reply_markup"] = reply_markup
+        payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
     try:
-        r = _get_session().post(SEND_URL, json=payload, timeout=10)
+        r = requests.post(SEND_URL, json=payload, timeout=10)
         d = r.json()
         if not d.get("ok"):
             _log.warning("[TG] Send error: %s", d)
@@ -280,16 +171,15 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         return d.get("result")
     except Exception as e:
         _log.warning("[TG] Send exception: %s", e)
-        _rotate_proxy()
         return None
 
 
 def _edit(message_id, text, parse_mode="HTML"):
-    """Edit a message. Returns True, False for transient errors, or _EDIT_GONE."""
+    """Returns True, False (transient), or _EDIT_GONE."""
     if _last_edited.get(message_id) == text:
         return True
     try:
-        r = _get_session().post(EDIT_MESSAGE_URL, json={
+        r = requests.post(EDIT_MESSAGE_URL, json={
             "chat_id": BOT_CHAT_ID,
             "message_id": message_id,
             "text": text,
@@ -319,82 +209,11 @@ def _edit(message_id, text, parse_mode="HTML"):
         return False
     except Exception as e:
         _log.warning("[TG] Edit exception: %s", e)
-        _rotate_proxy()
         return False
 
 
-def _answer_cb(callback_id, text=""):
-    try:
-        _get_session().post(ANSWER_CALLBACK_URL,
-                            json={"callback_query_id": callback_id, "text": text},
-                            timeout=5)
-    except Exception:
-        pass
-
-
-# ─────────────────────────────────────────────────────────────────────
-# PUBLIC SENDERS
-# ─────────────────────────────────────────────────────────────────────
-
-def send_bot(message, parse_mode="HTML"):
-    _tg_enqueue(_send, BOT_CHAT_ID, message, parse_mode=parse_mode)
-
-
-def send_trade_channel(message):
-    _tg_enqueue(_send, CHANNEL_ID, message, parse_mode="HTML")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# DUAL DASHBOARD  — two persistent edit-in-place messages
-# ─────────────────────────────────────────────────────────────────────
-
-def _do_send_or_edit_engine(text: str):
-    """Actual send/edit — runs inside background thread."""
-    global _engine_msg_id
-    if _engine_msg_id is None:
-        result = _send(BOT_CHAT_ID, text)
-        if result:
-            _engine_msg_id = result["message_id"]
-            _save_state()
-    else:
-        ok = _edit(_engine_msg_id, text)
-        if ok == _EDIT_GONE:
-            old_id = _engine_msg_id
-            _engine_msg_id = None
-            _last_edited.pop(old_id, None)
-            _save_state()
-            _do_send_or_edit_engine(text)
-
-
-def _do_send_or_edit_market(text: str, reply_markup=None):
-    """Actual send/edit — runs inside background thread."""
-    global _market_msg_id
-    if _market_msg_id is None:
-        result = _send(BOT_CHAT_ID, text, reply_markup=reply_markup)
-        if result:
-            _market_msg_id = result["message_id"]
-            _save_state()
-    else:
-        ok = _edit_with_markup(_market_msg_id, text, reply_markup)
-        if ok == _EDIT_GONE:
-            old_id = _market_msg_id
-            _market_msg_id = None
-            _last_edited.pop(old_id, None)
-            _save_state()
-            _do_send_or_edit_market(text, reply_markup)
-
-
-def send_or_edit_engine_dashboard(text: str):
-    """Non-blocking enqueue — returns instantly, thread does the actual I/O."""
-    _tg_enqueue(_do_send_or_edit_engine, text)
-
-
-def send_or_edit_market_dashboard(text: str, reply_markup=None):
-    """Non-blocking enqueue — returns instantly, thread does the actual I/O."""
-    _tg_enqueue(_do_send_or_edit_market, text, reply_markup)
-
-
 def _edit_with_markup(message_id, text, reply_markup=None):
+    """Same return contract as _edit(): True / False / _EDIT_GONE."""
     if _last_edited.get(message_id) == text and not reply_markup:
         return True
     try:
@@ -406,8 +225,8 @@ def _edit_with_markup(message_id, text, reply_markup=None):
             "disable_web_page_preview": True,
         }
         if reply_markup:
-            payload["reply_markup"] = reply_markup
-        r = _get_session().post(EDIT_MESSAGE_URL, json=payload, timeout=10)
+            payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
+        r = requests.post(EDIT_MESSAGE_URL, json=payload, timeout=10)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -431,17 +250,87 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         return False
     except Exception as e:
         _log.warning("[TG] Market edit exception: %s", e)
-        _rotate_proxy()
         return False
 
 
-# Keep old single-dashboard name as alias for backward compat
+def _answer_cb(callback_id, text=""):
+    try:
+        requests.post(ANSWER_CALLBACK_URL,
+                      json={"callback_query_id": callback_id, "text": text},
+                      timeout=5)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+# PUBLIC SENDERS
+# ─────────────────────────────────────────────────────────────────────
+
+def send_bot(message, parse_mode="HTML"):
+    _tg_enqueue(_send, BOT_CHAT_ID, message, parse_mode=parse_mode)
+
+
+def send_trade_channel(message):
+    _tg_enqueue(_send, CHANNEL_ID, message, parse_mode="HTML")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# DUAL DASHBOARD  — two persistent edit-in-place messages
+# ─────────────────────────────────────────────────────────────────────
+
+def _do_send_or_edit_engine(text: str):
+    global _engine_msg_id
+    if _engine_msg_id is None:
+        result = _send(BOT_CHAT_ID, text)
+        if result:
+            _engine_msg_id = result["message_id"]
+            _save_state()
+    else:
+        ok = _edit(_engine_msg_id, text)
+        if ok == _EDIT_GONE:
+            old_id = _engine_msg_id
+            _engine_msg_id = None
+            _last_edited.pop(old_id, None)
+            _save_state()
+            result = _send(BOT_CHAT_ID, text)
+            if result:
+                _engine_msg_id = result["message_id"]
+                _save_state()
+
+
+def _do_send_or_edit_market(text: str, reply_markup=None):
+    global _market_msg_id
+    if _market_msg_id is None:
+        result = _send(BOT_CHAT_ID, text, reply_markup=reply_markup)
+        if result:
+            _market_msg_id = result["message_id"]
+            _save_state()
+    else:
+        ok = _edit_with_markup(_market_msg_id, text, reply_markup)
+        if ok == _EDIT_GONE:
+            old_id = _market_msg_id
+            _market_msg_id = None
+            _last_edited.pop(old_id, None)
+            _save_state()
+            result = _send(BOT_CHAT_ID, text, reply_markup=reply_markup)
+            if result:
+                _market_msg_id = result["message_id"]
+                _save_state()
+
+
+def send_or_edit_engine_dashboard(text: str):
+    _tg_enqueue(_do_send_or_edit_engine, text)
+
+
+def send_or_edit_market_dashboard(text: str, reply_markup=None):
+    _tg_enqueue(_do_send_or_edit_market, text, reply_markup)
+
+
 def send_or_edit_dashboard(text: str, parse_mode: str = "HTML"):
     send_or_edit_engine_dashboard(text)
 
 
 def reset_dashboard():
-    """Only call this when you explicitly want new dashboard messages (e.g. new day)."""
     global _engine_msg_id, _market_msg_id
     _engine_msg_id = None
     _market_msg_id = None
@@ -449,31 +338,49 @@ def reset_dashboard():
     _save_state()
 
 
+def repost_engine_dashboard(text: str):
+    _tg_enqueue(_do_repost_engine, text)
+
+
+def _do_repost_engine(text: str):
+    global _engine_msg_id
+    if _engine_msg_id:
+        try:
+            requests.post(f"{API_URL}/deleteMessage", json={
+                "chat_id": BOT_CHAT_ID,
+                "message_id": _engine_msg_id,
+            }, timeout=10)
+        except Exception:
+            pass
+        _last_edited.pop(_engine_msg_id, None)
+        _engine_msg_id = None
+    result = _send(BOT_CHAT_ID, text)
+    if result:
+        _engine_msg_id = result["message_id"]
+        _save_state()
+
+
 # ─────────────────────────────────────────────────────────────────────
 # TRADE ENTRY  — EXIT button attached; live-edited while trade is open
 # ─────────────────────────────────────────────────────────────────────
 
 def send_trade_entry_with_exit_button(message):
-    """Send new trade entry card. Saves message_id so we can live-edit it."""
     global _trade_msg_id
     kb = {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]}
     result = _send(BOT_CHAT_ID, message, reply_markup=kb)
     send_trade_channel(message)
     if result:
         _trade_msg_id = result["message_id"]
-        # Invalidate dedup cache so first live-edit always goes through
         _last_edited.pop(_trade_msg_id, None)
 
 
 def update_trade_live(message: str):
-    """Edit the open trade card in-place with latest LTP / PnL. Non-blocking."""
     if not _trade_msg_id:
         return
     _tg_enqueue(_do_update_trade_live, _trade_msg_id, message)
 
 
 def _do_update_trade_live(expected_msg_id, message: str):
-    """Skip stale queued edits after a trade card is deleted or replaced."""
     global _trade_msg_id
     if _trade_msg_id != expected_msg_id:
         return
@@ -488,7 +395,6 @@ def _do_update_trade_live(expected_msg_id, message: str):
 
 
 def delete_trade_message():
-    """Delete the open trade card when the trade closes."""
     global _trade_msg_id
     if not _trade_msg_id:
         return
@@ -496,18 +402,14 @@ def delete_trade_message():
     _trade_msg_id = None
     _last_edited.pop(mid, None)
     try:
-        _get_session().post(
-            f"{API_URL}/deleteMessage",
-            json={"chat_id": BOT_CHAT_ID, "message_id": mid},
-            timeout=10,
-        )
+        requests.post(f"{API_URL}/deleteMessage", json={
+            "chat_id": BOT_CHAT_ID, "message_id": mid,
+        }, timeout=10)
     except Exception:
         pass
 
 
 def freeze_trade_message(exit_text: str):
-    """Replace the live trade card with the final exit summary (no EXIT button).
-    Card stays in chat at its original position — not deleted, not reposted."""
     global _trade_msg_id
     if not _trade_msg_id:
         return
@@ -518,21 +420,18 @@ def freeze_trade_message(exit_text: str):
 
 
 def _do_freeze_trade(mid: int, exit_text: str):
-    """Edit the live trade card to the exit summary, removing the EXIT button."""
     _edit_with_markup(mid, exit_text, reply_markup=None)
 
 
 def remove_exit_button():
-    """Legacy — kept for call-site compatibility. Use delete_trade_message() on exit."""
     delete_trade_message()
 
 
 # ─────────────────────────────────────────────────────────────────────
-# SCALP TRADE MESSAGES — entry card (no button), live edit, delete
+# SCALP TRADE MESSAGES
 # ─────────────────────────────────────────────────────────────────────
 
 def send_scalp_entry(message: str):
-    """Send scalp entry card. Tracks message_id for live in-place edits."""
     global _scalp_msg_id
     result = _send(BOT_CHAT_ID, message)
     if result:
@@ -541,14 +440,12 @@ def send_scalp_entry(message: str):
 
 
 def update_scalp_live(message: str):
-    """Edit the open scalp card in-place with latest LTP / PnL. Non-blocking."""
     if not _scalp_msg_id:
         return
     _tg_enqueue(_do_update_scalp_live, _scalp_msg_id, message)
 
 
 def _do_update_scalp_live(expected_msg_id, message: str):
-    """Skip stale queued edits after a scalp card is deleted or replaced."""
     global _scalp_msg_id
     if _scalp_msg_id != expected_msg_id:
         return
@@ -559,7 +456,6 @@ def _do_update_scalp_live(expected_msg_id, message: str):
 
 
 def delete_scalp_message():
-    """Delete the scalp card when the scalp trade closes."""
     global _scalp_msg_id
     if not _scalp_msg_id:
         return
@@ -567,18 +463,14 @@ def delete_scalp_message():
     _scalp_msg_id = None
     _last_edited.pop(mid, None)
     try:
-        _get_session().post(
-            f"{API_URL}/deleteMessage",
-            json={"chat_id": BOT_CHAT_ID, "message_id": mid},
-            timeout=10,
-        )
+        requests.post(f"{API_URL}/deleteMessage", json={
+            "chat_id": BOT_CHAT_ID, "message_id": mid,
+        }, timeout=10)
     except Exception:
         pass
 
 
 def freeze_scalp_message(exit_text: str):
-    """Replace the live scalp card with the final exit summary.
-    Card stays in chat — not deleted, not reposted."""
     global _scalp_msg_id
     if not _scalp_msg_id:
         return
@@ -586,32 +478,6 @@ def freeze_scalp_message(exit_text: str):
     _scalp_msg_id = None
     _last_edited.pop(mid, None)
     _tg_enqueue(_edit, mid, exit_text)
-
-
-def repost_engine_dashboard(text: str):
-    """Delete the old engine dashboard message and send a fresh one at bottom."""
-    _tg_enqueue(_do_repost_engine, text)
-
-
-def _do_repost_engine(text: str):
-    global _engine_msg_id
-    # Delete old message silently
-    if _engine_msg_id:
-        try:
-            requests.post(
-                f"{API_URL}/deleteMessage",
-                json={"chat_id": BOT_CHAT_ID, "message_id": _engine_msg_id},
-                timeout=10,
-            )
-        except Exception:
-            pass
-        _last_edited.pop(_engine_msg_id, None)
-        _engine_msg_id = None
-    # Post fresh
-    result = _send(BOT_CHAT_ID, text)
-    if result:
-        _engine_msg_id = result["message_id"]
-        _save_state()
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -640,7 +506,6 @@ def ask_trade_permission(side: str, price: float, ml_prob: float,
 
     deadline = time.time() + 3
     while time.time() < deadline:
-        # Background thread polls Telegram — just wait for it to set the response
         if _pending_confirm_resp is not None:
             break
         time.sleep(0.3)
@@ -670,7 +535,6 @@ _HELP_TEXT = (
 
 
 def _poll_commands_internal(status_cb=None):
-    """Called by background thread — never call directly from engine loop."""
     global _last_update_id, MANUAL_EXIT_REQUESTED, ENGINE_PAUSED
     global ENGINE_STOP_REQUESTED, CE_THRESHOLD_OVERRIDE, PE_THRESHOLD_OVERRIDE
     global _pending_confirm_resp, _poll_fail_count
@@ -680,7 +544,7 @@ def _poll_commands_internal(status_cb=None):
         if _last_update_id:
             params["offset"] = _last_update_id + 1
 
-        r = _get_session().get(GET_UPDATES_URL, params=params, timeout=5)
+        r = requests.get(GET_UPDATES_URL, params=params, timeout=5)
         data = r.json()
         if not data.get("ok"):
             return
@@ -777,14 +641,10 @@ def _poll_commands_internal(status_cb=None):
         _poll_fail_count = 0
 
 
-_status_callback = None   # set by master_runner so /status works from thread
+_status_callback = None
+
 
 def poll_commands(status_cb=None):
-    """
-    Called by engine loop every cycle. Intentionally instant — no network I/O.
-    The background thread handles all actual Telegram polling.
-    Optionally registers a status callback for /status command.
-    """
     global _status_callback
     _ensure_thread()
     if status_cb is not None:
@@ -796,11 +656,6 @@ def poll_manual_exit(status_cb=None):
 
 
 def send_eod_summary(summary: dict):
-    """
-    Send end-of-day trade summary to bot chat.
-    summary dict keys: trades, pnl, wins, losses, avg_win, avg_loss,
-                       best, worst, win_rate
-    """
     from datetime import date
     t      = summary.get("trades", 0)
     pnl    = summary.get("pnl", 0)

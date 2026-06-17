@@ -661,7 +661,10 @@ def init_broker():
 
     # ALLOW_BROKER_POSITION_ON_START=1 skips this gate for lunch-break resume
     # (engine_loop reconciliation then adopts the position safely).
-    _resume_ok = os.getenv("ALLOW_BROKER_POSITION_ON_START", "0") == "1"
+    # In DRY_RUN/PAPER mode the live broker may hold real positions unrelated
+    # to paper trades — skip the gate to avoid blocking paper sessions.
+    _is_dry = os.getenv("DRY_RUN", "0") == "1"
+    _resume_ok = os.getenv("ALLOW_BROKER_POSITION_ON_START", "0") == "1" or PAPER_MODE or _is_dry
     if not _resume_ok and hasattr(broker, "has_open_position") and broker.has_open_position():
         tg_force("🚨 SAFETY ALERT\nOpen position detected — engine blocked.")
         raise RuntimeError("Open broker position exists.")
@@ -813,7 +816,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         _restored_scalp = deserialize_position(_snap.get("scalp_position"))  if _snap else None
 
         try:
-            _broker_open = ctx.broker.has_open_position()
+            # In DRY_RUN mode the live broker may hold real positions unrelated
+            # to paper trades — skip reconciliation to avoid false PAUSING.
+            _is_dry_run = (os.getenv("DRY_RUN", "0") == "1"
+                           or getattr(ctx.config, "DRY_RUN", False)
+                           or getattr(ctx.executor, "is_dry_run", False))
+            if _is_dry_run:
+                _broker_open = False
+                logger.info("[RECOVERY] DRY_RUN mode — skipping live broker position check")
+            else:
+                _broker_open = ctx.broker.has_open_position()
         except Exception as _bo_e:
             logger.warning(f"[RECOVERY] broker position check failed: {_bo_e}")
             _broker_open = False
@@ -1235,6 +1247,26 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         reason=exit_reason,
                     )
 
+                    # ── AI BRAIN review (advisory) after 2+ consecutive losses ──
+                    # OpenAI-compatible LLM analyses recent trades and trims the
+                    # weaker side's multiplier (more selective only — never sizes
+                    # up or loosens stops). Runs in a daemon thread so it never
+                    # blocks the trading loop. No-op if LLM_API_KEY is unset.
+                    if getattr(ctx.ml_learner, "ai_review_pending", False):
+                        def _do_ai_review(_learner=ctx.ml_learner,
+                                          _trades=list(ctx.ml_learner.trades_today),
+                                          _regime=position.get("regime", "UNKNOWN"),
+                                          _spot=ltp_current):
+                            try:
+                                from ml.ml_intraday_learner import run_ai_brain_review
+                                _txt = run_ai_brain_review(_learner, _trades, _regime, _spot)
+                                if _txt:
+                                    tg_force("🧠 <b>AI BRAIN</b>\n" + _txt)
+                            except Exception as _aie:
+                                logger.warning(f"[AI BRAIN] review failed: {_aie}")
+                        threading.Thread(target=_do_ai_review, daemon=True,
+                                         name="ai_brain").start()
+
                     _mfe_pts = position.get("max_pnl", 0.0) / max(position["qty"], 1)
                     _mae_pts = position.get("min_pnl", 0.0) / max(position["qty"], 1)
 
@@ -1365,14 +1397,22 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     # Persist closed state immediately (open_position -> None)
                     save_state(ctx, None, scalp_position)
 
-                    # Auto-pause after 2 consecutive stop losses
-                    if exit_reason in ("STOP", "Stop Loss", "Drawdown"):
+                    # Auto-pause after 2 consecutive LOSING stops
+                    # A profitable trailing-stop exit is NOT a consecutive loss.
+                    if exit_reason in ("STOP", "Stop Loss", "Drawdown") and pnl < 0:
                         consecutive_stops += 1
+                        logger.info(
+                            f"[GATE] Consecutive losing stops: {consecutive_stops}"
+                        )
                         if consecutive_stops >= 2:
                             import telegram.notifier as _tn
                             _tn.ENGINE_PAUSED = True
+                            logger.warning(
+                                "[AUTO-PAUSE] 2 consecutive losing stops — entries blocked."
+                                " Restart or /resume to re-enable."
+                            )
                             tg_force(
-                                "AUTO-PAUSE: 2 consecutive stops hit.\n"
+                                "AUTO-PAUSE: 2 consecutive losing stops hit.\n"
                                 "Send /resume to re-enable entries."
                             )
                     else:
@@ -1424,9 +1464,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if decision is not None and position is None:
 
-                # Same-symbol re-entry cooldown (90s after any exit on same option)
-                # Prevents immediate re-entry into a reversing option after a stop.
-                _SAME_SYMBOL_COOLDOWN = 90
+                # Same-symbol re-entry cooldown after any exit on same option.
+                # Prevents immediate re-entry into a reversing option after a
+                # stop. Raised 90s->300s (config): trade #3 on 2026-06-17
+                # re-entered 24100CE 3 min after a stop and lost Rs481.
+                _SAME_SYMBOL_COOLDOWN = getattr(ctx.config, "SAME_SYMBOL_COOLDOWN", 300)
                 _cand_sym, _ = ctx.broker.get_atm_option(decision.get("side", "CE"))
                 if (
                     _cand_sym is not None

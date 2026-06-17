@@ -12,6 +12,8 @@ import os
 import json
 import logging
 import time
+import threading
+import queue
 import requests
 from dotenv import load_dotenv
 
@@ -29,6 +31,113 @@ if not BOT_TOKEN:          raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
 if not BOT_CHAT_ID:        raise RuntimeError("TELEGRAM_BOT_CHAT_ID missing")
 if not CHANNEL_ID:         raise RuntimeError("TELEGRAM_CHANNEL_ID missing")
 if not AUTHORIZED_USER_ID: raise RuntimeError("TELEGRAM_ADMIN_ID missing")
+
+# ─────────────────────────────────────────────────────────────────────
+# PROXY MANAGER — rotates free HTTPS proxies when Telegram is blocked
+# ─────────────────────────────────────────────────────────────────────
+_PROXY_SOURCES = []  # not used — hardcoded list below
+_TEST_URL    = "https://api.telegram.org"
+_proxies     = []          # list of "host:port" strings
+_proxy_idx   = 0
+_proxy_lock  = threading.Lock()
+_proxy_ok    = False       # True once a working proxy is confirmed
+_proxy_session: "requests.Session | None" = None
+
+
+def _fetch_proxy_list() -> list:
+    result = []
+    for src in _PROXY_SOURCES:
+        try:
+            r = requests.get(src, timeout=8)
+            for line in r.text.splitlines():
+                line = line.strip()
+                if line and ":" in line and not line.startswith("#"):
+                    result.append(line)
+            if result:
+                break
+        except Exception:
+            continue
+    return list(dict.fromkeys(result))   # dedupe, preserve order
+
+
+def _test_proxy(proxy: str) -> bool:
+    """Return True if this proxy can reach api.telegram.org."""
+    try:
+        r = requests.get(
+            _TEST_URL,
+            proxies={"https": f"socks5h://{proxy}", "http": f"socks5h://{proxy}"},
+            timeout=8,
+        )
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
+def _build_proxy_session(proxy: str) -> "requests.Session":
+    s = requests.Session()
+    s.proxies = {"https": f"socks5h://{proxy}", "http": f"socks5h://{proxy}"}
+    return s
+
+
+_HARDCODED_PROXIES = [
+    "103.219.163.246:1080",
+    "84.47.150.125:1080",
+    "152.53.144.223:1080",
+    "170.64.170.204:1080",
+    "185.125.171.171:1080",
+    "43.161.217.219:1080",
+    "43.129.80.138:18999",
+]
+
+
+def _init_proxy():
+    """Background thread: find a working proxy and set _proxy_session."""
+    global _proxies, _proxy_idx, _proxy_ok, _proxy_session
+    _log.info("[PROXY] Testing %d hardcoded proxies for Telegram ...", len(_HARDCODED_PROXIES))
+    proxies = _HARDCODED_PROXIES
+    for i, proxy in enumerate(proxies[:60]):   # test up to 60
+        if _test_proxy(proxy):
+            with _proxy_lock:
+                _proxies    = proxies
+                _proxy_idx  = i
+                _proxy_ok   = True
+                _proxy_session = _build_proxy_session(proxy)
+            _log.info("[PROXY] Working proxy found: %s", proxy)
+            return
+    _log.warning("[PROXY] No working proxy found in first 60 candidates")
+
+
+def _get_session() -> requests.Session:
+    """Return proxy session if ready, else a plain session."""
+    with _proxy_lock:
+        if _proxy_ok and _proxy_session:
+            return _proxy_session
+    return requests.Session()
+
+
+def _rotate_proxy():
+    """Called on send failure — try next proxy in list."""
+    global _proxy_idx, _proxy_ok, _proxy_session
+    with _proxy_lock:
+        if not _proxies:
+            return
+        start = _proxy_idx
+    for offset in range(1, min(30, len(_proxies))):
+        candidate = _proxies[(start + offset) % len(_proxies)]
+        if _test_proxy(candidate):
+            with _proxy_lock:
+                _proxy_idx     = (start + offset) % len(_proxies)
+                _proxy_ok      = True
+                _proxy_session = _build_proxy_session(candidate)
+            _log.info("[PROXY] Rotated to: %s", candidate)
+            return
+    _log.warning("[PROXY] All rotation candidates failed")
+    with _proxy_lock:
+        _proxy_ok = False
+
+
+# Start proxy discovery in background immediately on import
+threading.Thread(target=_init_proxy, daemon=True, name="proxy-init").start()
 
 API_URL             = f"https://api.telegram.org/bot{BOT_TOKEN}"
 SEND_URL            = f"{API_URL}/sendMessage"
@@ -56,9 +165,6 @@ _pending_confirm_resp = None
 # Telegram I/O runs in a daemon thread with a queue.
 # Engine loop calls are non-blocking — never stall trading.
 # ─────────────────────────────────────────────────────────────────────
-import queue
-import threading
-
 _tg_queue   = queue.Queue(maxsize=50)   # capped — drop if full (old data useless)
 _poll_interval     = 3.0   # poll getUpdates every 3s when healthy
 _poll_interval_max = 60.0  # back off to 60s after consecutive failures
@@ -166,7 +272,7 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
-        r = requests.post(SEND_URL, json=payload, timeout=10)
+        r = _get_session().post(SEND_URL, json=payload, timeout=10)
         d = r.json()
         if not d.get("ok"):
             _log.warning("[TG] Send error: %s", d)
@@ -174,6 +280,7 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         return d.get("result")
     except Exception as e:
         _log.warning("[TG] Send exception: %s", e)
+        _rotate_proxy()
         return None
 
 
@@ -182,7 +289,7 @@ def _edit(message_id, text, parse_mode="HTML"):
     if _last_edited.get(message_id) == text:
         return True
     try:
-        r = requests.post(EDIT_MESSAGE_URL, json={
+        r = _get_session().post(EDIT_MESSAGE_URL, json={
             "chat_id": BOT_CHAT_ID,
             "message_id": message_id,
             "text": text,
@@ -212,14 +319,15 @@ def _edit(message_id, text, parse_mode="HTML"):
         return False
     except Exception as e:
         _log.warning("[TG] Edit exception: %s", e)
+        _rotate_proxy()
         return False
 
 
 def _answer_cb(callback_id, text=""):
     try:
-        requests.post(ANSWER_CALLBACK_URL,
-                      json={"callback_query_id": callback_id, "text": text},
-                      timeout=5)
+        _get_session().post(ANSWER_CALLBACK_URL,
+                            json={"callback_query_id": callback_id, "text": text},
+                            timeout=5)
     except Exception:
         pass
 
@@ -299,7 +407,7 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        r = requests.post(EDIT_MESSAGE_URL, json=payload, timeout=10)
+        r = _get_session().post(EDIT_MESSAGE_URL, json=payload, timeout=10)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -323,6 +431,7 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         return False
     except Exception as e:
         _log.warning("[TG] Market edit exception: %s", e)
+        _rotate_proxy()
         return False
 
 
@@ -387,7 +496,7 @@ def delete_trade_message():
     _trade_msg_id = None
     _last_edited.pop(mid, None)
     try:
-        requests.post(
+        _get_session().post(
             f"{API_URL}/deleteMessage",
             json={"chat_id": BOT_CHAT_ID, "message_id": mid},
             timeout=10,
@@ -458,7 +567,7 @@ def delete_scalp_message():
     _scalp_msg_id = None
     _last_edited.pop(mid, None)
     try:
-        requests.post(
+        _get_session().post(
             f"{API_URL}/deleteMessage",
             json={"chat_id": BOT_CHAT_ID, "message_id": mid},
             timeout=10,
@@ -571,7 +680,7 @@ def _poll_commands_internal(status_cb=None):
         if _last_update_id:
             params["offset"] = _last_update_id + 1
 
-        r = requests.get(GET_UPDATES_URL, params=params, timeout=5)
+        r = _get_session().get(GET_UPDATES_URL, params=params, timeout=5)
         data = r.json()
         if not data.get("ok"):
             return

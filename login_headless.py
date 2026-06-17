@@ -233,21 +233,43 @@ def login() -> str:
             try:
                 page.wait_for_selector(sel, state="visible", timeout=4_000)
 
+                # Refresh code right before typing to avoid window expiry
                 totp_code = pyotp.TOTP(TOTP_SECRET).now()
-                log.info(f"Typing TOTP {totp_code} digit-by-digit into {sel!r}")
+                log.info(f"Typing TOTP {totp_code} into {sel!r}")
 
-                # Zerodha auto-submits the moment the 6th digit is entered —
-                # NO Enter / Continue button needed.
-                # Use press_sequentially() so each digit fires the full
-                # keydown→keypress→input→keyup event chain that React expects.
                 loc = page.locator(sel).first
                 loc.click()
                 page.wait_for_timeout(200)
-                loc.press_sequentially(totp_code, delay=120)
 
-                # Read back to confirm digits landed
+                # Zerodha's React number input blocks fill() and press_sequentially.
+                # We must set the native value via JS and dispatch both the native
+                # 'input' event AND React's synthetic event by triggering the nativeInputValueSetter.
+                page.evaluate(
+                    """([selector, value]) => {
+                        const el = document.querySelector(selector);
+                        if (!el) return;
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                            window.HTMLInputElement.prototype, 'value'
+                        ).set;
+                        nativeInputValueSetter.call(el, value);
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }""",
+                    [sel, totp_code]
+                )
+                page.wait_for_timeout(200)
+
                 actual = loc.input_value()
-                log.info(f"Input value after typing: {actual!r} (expected {totp_code!r})")
+                log.info(f"Input value after JS set: {actual!r} (expected {totp_code!r})")
+
+                # Final fallback: digit-by-digit
+                if actual != totp_code:
+                    log.warning("JS set didn't land — retrying with press_sequentially")
+                    loc.click(click_count=3)
+                    page.wait_for_timeout(100)
+                    loc.press_sequentially(totp_code, delay=150)
+                    actual = loc.input_value()
+                    log.info(f"Input value after press_sequentially: {actual!r}")
                 page.screenshot(path=os.path.join(BASE_DIR, "logs", "after_totp_fill.png"))
 
                 log.info("6 digits typed — auto-submit + redirect expected ...")

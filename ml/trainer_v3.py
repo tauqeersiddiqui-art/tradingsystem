@@ -28,6 +28,13 @@ from sklearn.metrics import roc_auc_score
 import warnings
 warnings.filterwarnings("ignore")
 
+# CatBoost support (optional -- skip gracefully if not installed)
+try:
+    from catboost import CatBoostClassifier
+    _CATBOOST_AVAILABLE = True
+except ImportError:
+    _CATBOOST_AVAILABLE = False
+
 from ml.feature_config import FEATURE_COLUMNS
 from ml.predictor_champion import CalibratedLGBM
 
@@ -122,12 +129,60 @@ def train_one(df, label_col, name):
             "wr": thr["wr"], "trades": thr["trades"]}
 
 
+def train_one_cat(df, label_col, name):
+    """Train + Platt-calibrate one CatBoost directional model."""
+    print(f"\n{'-'*60}\n  {name} [CatBoost]  (label={label_col})\n{'-'*60}")
+    X   = df[FEATURE_COLUMNS].values
+    Xdf = pd.DataFrame(X, columns=FEATURE_COLUMNS)
+    y   = df[label_col].values.astype(int)
+    ts  = df["date"].values if "date" in df.columns else None
+    print(f"  samples={len(y):,}  positive_rate={y.mean():.1%}")
+
+    cat_params = dict(
+        iterations=500, learning_rate=0.03, depth=6,
+        l2_leaf_reg=3.0, random_seed=42, verbose=0, thread_count=-1,
+    )
+
+    tscv = TimeSeriesSplit(n_splits=5)
+    aucs = []
+    for k, (tr, va) in enumerate(tscv.split(X)):
+        m = CatBoostClassifier(**cat_params)
+        m.fit(Xdf.iloc[tr], y[tr],
+              sample_weight=recency_weights(ts[tr] if ts is not None else None))
+        a = roc_auc_score(y[va], m.predict_proba(Xdf.iloc[va])[:, 1]) \
+            if y[va].sum() > 0 else 0.5
+        aucs.append(a)
+        print(f"    fold {k+1}: AUC={a:.3f}")
+    mean_auc = float(np.mean(aucs))
+    print(f"  mean AUC = {mean_auc:.3f}")
+
+    # Final model + Platt calibration on last time-series holdout
+    final = CatBoostClassifier(**cat_params)
+    final.fit(Xdf, y, sample_weight=recency_weights(ts))
+    *_, (_, hold) = TimeSeriesSplit(n_splits=5).split(X)
+    cal = CalibratedLGBM(final)          # wrapper works for any sklearn-compatible model
+    cal.fit_calibration(Xdf.iloc[hold], y[hold])
+    cal.feature_names_ = list(FEATURE_COLUMNS)
+
+    probs = cal.predict_proba(Xdf.iloc[hold])[:, 1]
+    std   = float(probs.std())
+    thr   = find_threshold(probs, y[hold])
+    print(f"  calibrated prob: min={probs.min():.3f} max={probs.max():.3f} "
+          f"mean={probs.mean():.3f} std={std:.3f}")
+    print(f"  best threshold: {thr}")
+
+    return {"model": cal, "auc": mean_auc, "std": std,
+            "threshold": thr["threshold"], "expectancy": thr["expectancy"],
+            "wr": thr["wr"], "trades": thr["trades"]}
+
+
 def backup_existing():
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     bdir = os.path.join(MODEL_DIR, f"backup_{stamp}")
     saved = []
     for fn in ("champion_ce_lgbm.pkl", "champion_pe_lgbm.pkl",
-               "champion_ce_lgbm_threshold.txt", "champion_pe_lgbm_threshold.txt"):
+               "champion_ce_lgbm_threshold.txt", "champion_pe_lgbm_threshold.txt",
+               "champion_ce_cat.pkl", "champion_pe_cat.pkl"):
         src = os.path.join(MODEL_DIR, fn)
         if os.path.exists(src):
             os.makedirs(bdir, exist_ok=True)
@@ -166,32 +221,64 @@ def main():
         if f not in df.columns:
             df[f] = 0.0
 
+    # ── LightGBM ──────────────────────────────────────────────────────
     ce = train_one(df, "label_ce", "champion_ce_lgbm")
     pe = train_one(df, "label_pe", "champion_pe_lgbm")
 
     print(f"\n{'='*64}")
-    print(f"  CE: AUC={ce['auc']:.3f} std={ce['std']:.3f} thr={ce['threshold']} "
+    print(f"  LGBM  CE: AUC={ce['auc']:.3f} std={ce['std']:.3f} thr={ce['threshold']} "
           f"WR={ce['wr']:.1%} exp=Rs{ce['expectancy']}")
-    print(f"  PE: AUC={pe['auc']:.3f} std={pe['std']:.3f} thr={pe['threshold']} "
+    print(f"  LGBM  PE: AUC={pe['auc']:.3f} std={pe['std']:.3f} thr={pe['threshold']} "
           f"WR={pe['wr']:.1%} exp=Rs{pe['expectancy']}")
 
     def passes(r):
         return r["auc"] >= MIN_AUC and r["std"] >= MIN_STD and r["expectancy"] > 0
 
     ce_ok, pe_ok = passes(ce), passes(pe)
-    print(f"\n  GATE  CE: {'PASS' if ce_ok else 'FAIL'}   PE: {'PASS' if pe_ok else 'FAIL'}")
+    print(f"\n  LGBM GATE  CE: {'PASS' if ce_ok else 'FAIL'}   PE: {'PASS' if pe_ok else 'FAIL'}")
     print(f"  (need AUC>={MIN_AUC}, std>={MIN_STD}, expectancy>0)")
 
     if ce_ok and pe_ok:
         backup_existing()
         deploy(ce, "champion_ce_lgbm")
         deploy(pe, "champion_pe_lgbm")
-        print("\n  [RESULT] New directional models DEPLOYED. Restart the engine to load them.")
+        print("\n  [LGBM RESULT] New LightGBM models DEPLOYED.")
     else:
         candidate(ce, "champion_ce_lgbm")
         candidate(pe, "champion_pe_lgbm")
-        print("\n  [RESULT] Gate FAILED — champions left UNCHANGED (no risk increase).")
-        print("           Inspect candidates / adjust TARGET or START_DATE and rerun.")
+        print("\n  [LGBM RESULT] Gate FAILED — LGBM champions left UNCHANGED.")
+        print("                Inspect candidates / adjust TARGET or START_DATE and rerun.")
+
+    # ── CatBoost (optional — skipped if library not installed) ────────
+    print(f"\n{'='*64}")
+    if not _CATBOOST_AVAILABLE:
+        print("  [CATBOOST] Library not installed — skipping.")
+        print("             Install with:  pip install catboost")
+    else:
+        ce_cat = train_one_cat(df, "label_ce", "champion_ce_cat")
+        pe_cat = train_one_cat(df, "label_pe", "champion_pe_cat")
+
+        print(f"\n{'='*64}")
+        print(f"  CAT   CE: AUC={ce_cat['auc']:.3f} std={ce_cat['std']:.3f} "
+              f"thr={ce_cat['threshold']} WR={ce_cat['wr']:.1%} exp=Rs{ce_cat['expectancy']}")
+        print(f"  CAT   PE: AUC={pe_cat['auc']:.3f} std={pe_cat['std']:.3f} "
+              f"thr={pe_cat['threshold']} WR={pe_cat['wr']:.1%} exp=Rs{pe_cat['expectancy']}")
+
+        ce_cat_ok, pe_cat_ok = passes(ce_cat), passes(pe_cat)
+        print(f"\n  CAT  GATE  CE: {'PASS' if ce_cat_ok else 'FAIL'}   "
+              f"PE: {'PASS' if pe_cat_ok else 'FAIL'}")
+
+        if ce_cat_ok and pe_cat_ok:
+            deploy(ce_cat, "champion_ce_cat")
+            deploy(pe_cat, "champion_pe_cat")
+            print("\n  [CAT RESULT] CatBoost models DEPLOYED. "
+                  "Predictor will use LGBM+CAT_ENSEMBLE.")
+        else:
+            candidate(ce_cat, "champion_ce_cat")
+            candidate(pe_cat, "champion_pe_cat")
+            print("\n  [CAT RESULT] Gate FAILED — CatBoost candidates saved, "
+                  "LGBM-only mode unchanged.")
+
     print("=" * 64)
 
 

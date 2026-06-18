@@ -19,6 +19,19 @@ from dotenv import load_dotenv
 
 _log = logging.getLogger("tg.notifier")
 
+_FALLBACK_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "tg_fallback.log")
+
+def _fallback(label: str, text: str):
+    try:
+        ts = time.strftime("%H:%M:%S")
+        with open(_FALLBACK_LOG, "a", encoding="utf-8") as f:
+            # strip HTML tags for readability
+            import re
+            clean = re.sub(r"<[^>]+>", "", text).strip()
+            f.write(f"[{ts}] [{label}]\n{clean}\n{'─'*60}\n")
+    except Exception:
+        pass
+
 PROJECT_ROOT = os.getcwd()
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=True)
 
@@ -38,6 +51,16 @@ EDIT_MESSAGE_URL    = f"{API_URL}/editMessageText"
 EDIT_MARKUP_URL     = f"{API_URL}/editMessageReplyMarkup"
 GET_UPDATES_URL     = f"{API_URL}/getUpdates"
 ANSWER_CALLBACK_URL = f"{API_URL}/answerCallbackQuery"
+
+# Optional outbound proxy for Telegram. api.telegram.org is hard-blocked on
+# some networks. Set TELEGRAM_PROXY to a WORKING http/https/socks5 proxy
+# (e.g. "socks5://127.0.0.1:1080" or "http://user:pass@host:port") to route
+# through it. NOTE: MTProto proxy links (tg://proxy, "ee…"/"dd…" secrets) do
+# NOT work here — `requests` speaks HTTP/SOCKS, not MTProto. When unset,
+# requests connect directly and any failure falls through to
+# logs/tg_fallback.log (see _fallback below).
+_proxy_url = os.getenv("TELEGRAM_PROXY", "").strip()
+_PROXY = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else None
 
 _STATE_FILE = os.path.join(PROJECT_ROOT, ".telegram_state.json")
 
@@ -163,7 +186,7 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
     if reply_markup:
         payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
     try:
-        r = requests.post(SEND_URL, json=payload, timeout=10)
+        r = requests.post(SEND_URL, json=payload, timeout=10, proxies=_PROXY)
         d = r.json()
         if not d.get("ok"):
             _log.warning("[TG] Send error: %s", d)
@@ -171,6 +194,7 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         return d.get("result")
     except Exception as e:
         _log.warning("[TG] Send exception: %s", e)
+        _fallback("SEND", text)
         return None
 
 
@@ -185,7 +209,7 @@ def _edit(message_id, text, parse_mode="HTML"):
             "text": text,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True,
-        }, timeout=10)
+        }, timeout=10, proxies=_PROXY)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -209,6 +233,7 @@ def _edit(message_id, text, parse_mode="HTML"):
         return False
     except Exception as e:
         _log.warning("[TG] Edit exception: %s", e)
+        _fallback("EDIT", text)
         return False
 
 
@@ -226,7 +251,7 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
-        r = requests.post(EDIT_MESSAGE_URL, json=payload, timeout=10)
+        r = requests.post(EDIT_MESSAGE_URL, json=payload, timeout=10, proxies=_PROXY)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -250,6 +275,7 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         return False
     except Exception as e:
         _log.warning("[TG] Market edit exception: %s", e)
+        _fallback("EDIT", text)
         return False
 
 
@@ -257,7 +283,7 @@ def _answer_cb(callback_id, text=""):
     try:
         requests.post(ANSWER_CALLBACK_URL,
                       json={"callback_query_id": callback_id, "text": text},
-                      timeout=5)
+                      timeout=5, proxies=_PROXY)
     except Exception:
         pass
 
@@ -349,7 +375,7 @@ def _do_repost_engine(text: str):
             requests.post(f"{API_URL}/deleteMessage", json={
                 "chat_id": BOT_CHAT_ID,
                 "message_id": _engine_msg_id,
-            }, timeout=10)
+            }, timeout=10, proxies=_PROXY)
         except Exception:
             pass
         _last_edited.pop(_engine_msg_id, None)
@@ -404,7 +430,7 @@ def delete_trade_message():
     try:
         requests.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
-        }, timeout=10)
+        }, timeout=10, proxies=_PROXY)
     except Exception:
         pass
 
@@ -465,7 +491,7 @@ def delete_scalp_message():
     try:
         requests.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
-        }, timeout=10)
+        }, timeout=10, proxies=_PROXY)
     except Exception:
         pass
 
@@ -544,7 +570,7 @@ def _poll_commands_internal(status_cb=None):
         if _last_update_id:
             params["offset"] = _last_update_id + 1
 
-        r = requests.get(GET_UPDATES_URL, params=params, timeout=5)
+        r = requests.get(GET_UPDATES_URL, params=params, timeout=5, proxies=_PROXY)
         data = r.json()
         if not data.get("ok"):
             return

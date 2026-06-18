@@ -58,6 +58,7 @@ class ChampionPredictor:
 
     def __init__(self):
 
+        # ── LightGBM (required) ───────────────────────────────────────
         ce_path = "ml/models/champion_ce_lgbm.pkl"
         pe_path = "ml/models/champion_pe_lgbm.pkl"
 
@@ -74,9 +75,29 @@ class ChampionPredictor:
         self.ce_features = self._model_features(self.ce_model, "CE")
         self.pe_features = self._model_features(self.pe_model, "PE")
 
-        logger.info(f"[ChampionPredictor] Loaded: LGBM | "
-              f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
-              f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}")
+        # ── CatBoost (optional — enables ensemble if both files exist) ─
+        ce_cat_path = "ml/models/champion_ce_cat.pkl"
+        pe_cat_path = "ml/models/champion_pe_cat.pkl"
+        cat_both = os.path.exists(ce_cat_path) and os.path.exists(pe_cat_path)
+
+        if cat_both:
+            self.ce_cat_model = joblib.load(ce_cat_path)
+            self.pe_cat_model = joblib.load(pe_cat_path)
+            self._ensemble = True
+            logger.info(
+                f"[ChampionPredictor] Mode: LGBM+CAT_ENSEMBLE | "
+                f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
+                f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}"
+            )
+        else:
+            self.ce_cat_model = None
+            self.pe_cat_model = None
+            self._ensemble = False
+            logger.info(
+                f"[ChampionPredictor] Mode: LGBM_ONLY | "
+                f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
+                f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}"
+            )
 
 
     # ───────────────────────────────────────── #
@@ -129,7 +150,7 @@ class ChampionPredictor:
 
     def predict(self, features_dict: dict, direction: str) -> float:
 
-        model = self.ce_model if direction == "CE" else self.pe_model
+        model    = self.ce_model    if direction == "CE" else self.pe_model
         req_cols = self.ce_features if direction == "CE" else self.pe_features
 
         # ================= FEATURE VALIDATION ================= #
@@ -138,7 +159,7 @@ class ChampionPredictor:
 
         if missing:
             logger.warning(f"[PREDICTOR WARNING] Missing features ({len(missing)}): {missing[:5]}...")
-            return None  # 🚨 DO NOT RETURN 0
+            return None  # DO NOT RETURN 0
 
         # ================= BUILD INPUT ================= #
 
@@ -156,10 +177,21 @@ class ChampionPredictor:
                 row.append(val)
             X = pd.DataFrame([row], columns=req_cols)
 
-            prob = float(model.predict_proba(X)[0][1])
+            lgbm_prob = float(model.predict_proba(X)[0][1])
+            lgbm_prob = max(0.0, min(1.0, lgbm_prob))
 
-            # sanity clamp
-            prob = max(0.0, min(1.0, prob))
+            # ── Ensemble: average LGBM + CatBoost when both loaded ────
+            if self._ensemble:
+                cat_model = self.ce_cat_model if direction == "CE" else self.pe_cat_model
+                try:
+                    cat_prob = float(cat_model.predict_proba(X)[0][1])
+                    cat_prob = max(0.0, min(1.0, cat_prob))
+                    prob = (lgbm_prob + cat_prob) / 2.0
+                except Exception as e:
+                    logger.warning(f"[PREDICTOR] CatBoost predict failed ({e}), using LGBM only")
+                    prob = lgbm_prob
+            else:
+                prob = lgbm_prob
 
             if prob < 0.01:
                 return 0.0

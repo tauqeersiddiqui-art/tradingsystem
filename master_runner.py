@@ -23,6 +23,7 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import time
+import atexit
 import logging
 import threading
 import collections
@@ -1996,7 +1997,79 @@ def start_engine(ctx: TradingContext, builder: CandleBuilder):
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════
 
+_PIDFILE = os.path.join("data", ".master_runner.pid")
+
+
+def _pid_is_live_master(pid: int) -> bool:
+    """True if `pid` is a running master_runner.py process (not a reused pid)."""
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+        if not psutil.pid_exists(pid):
+            return False
+        try:
+            cmd = " ".join(psutil.Process(pid).cmdline()).lower()
+        except Exception:
+            return False  # process vanished / access denied → treat as not ours
+        return "master_runner" in cmd
+    except ImportError:
+        # No psutil: fall back to a liveness probe. Cannot verify identity, so a
+        # reused pid could cause a false "already running" — acceptable vs the
+        # alternative (multiple engines corrupting shared state). See
+        # [[project-multi-instance-footgun]].
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+
+def _acquire_singleton_lock():
+    """
+    Refuse to start if another master_runner is already running.
+
+    Multiple concurrent instances each append to data/historical/nifty_1m_full.csv
+    every minute, producing duplicate candles that corrupt the feature-seed window
+    and zero out ML predictions (root-caused 2026-06-18). One engine only.
+    """
+    try:
+        os.makedirs(os.path.dirname(_PIDFILE), exist_ok=True)
+        if os.path.exists(_PIDFILE):
+            try:
+                existing = int(open(_PIDFILE).read().strip() or "0")
+            except (ValueError, OSError):
+                existing = 0
+            if existing and existing != os.getpid() and _pid_is_live_master(existing):
+                logger.error(
+                    "[SINGLETON] master_runner already running (pid=%d). "
+                    "Refusing to start a second instance. Kill the existing one "
+                    "first, or delete %s if it is stale.", existing, _PIDFILE
+                )
+                sys.exit(1)
+            # stale or our own → reclaim
+        with open(_PIDFILE, "w") as f:
+            f.write(str(os.getpid()))
+
+        def _release():
+            try:
+                if os.path.exists(_PIDFILE) and \
+                   open(_PIDFILE).read().strip() == str(os.getpid()):
+                    os.remove(_PIDFILE)
+            except Exception:
+                pass
+
+        atexit.register(_release)
+        logger.info("[SINGLETON] Lock acquired (pid=%d).", os.getpid())
+    except SystemExit:
+        raise
+    except Exception as e:
+        # Never let lock bookkeeping crash startup — log and proceed.
+        logger.warning("[SINGLETON] Lock setup failed (non-fatal): %s", e)
+
+
 def main():
+    _acquire_singleton_lock()
     logger.info("MASTER STARTED")
 
     # ── Startup Telegram ──────────────────────────────────────────────

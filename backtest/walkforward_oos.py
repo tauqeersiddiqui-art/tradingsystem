@@ -45,6 +45,18 @@ DATA = "ml/models/training_dataset_v3.csv"
 
 # ── Sim parameters (mirror live config defaults) ──────────────────────
 LOOKAHEAD        = 12          # must match dataset_builder_v3 (embargo size)
+TARGET_SPOT_PTS  = 15          # must match dataset_builder_v3 (label barrier)
+# STOP_MODE:
+#   "live"    (default) — production exit: option-premium stop from
+#             compute_entry_stops + trailing manage_position. This is what the
+#             real engine does, and what the headline OOS verdict grades.
+#   "matched" — DIAGNOSTIC ONLY. Replays the EXACT label event into option P&L:
+#             hold up to LOOKAHEAD bars, exit the instant spot first touches
+#             +TARGET (win) or -TARGET (loss), priced through the SAME option
+#             simulator with the SAME costs. This isolates "is the model
+#             directionally right?" from "is the live stop choking the trade?".
+#             It does NOT touch live trading and never widens the live stop.
+STOP_MODE        = os.getenv("BT_STOP_MODE", "live").lower()
 EDGE_MARGIN      = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
 VWAP_TOL         = 0.0015
 MAX_TRADES_DAY   = int(os.getenv("BT_MAX_TRADES", "6"))
@@ -129,6 +141,33 @@ def _simulate(test_df, warmup_rows, ce_model, pe_model, ce_thr, pe_thr):
         buf.append(row)
         now = ts.time()
 
+        # ── manage open position (MATCHED diagnostic mode) ──
+        if position is not None and STOP_MODE == "matched":
+            mtc_now = _mins_to_close(ts)
+            es = position["entry_spot"]; sd = position["side"]
+            fav_spot = es + TARGET_SPOT_PTS if sd == "CE" else es - TARGET_SPOT_PTS
+            adv_spot = es - TARGET_SPOT_PTS if sd == "CE" else es + TARGET_SPOT_PTS
+            fav_hit = row["high"] >= fav_spot if sd == "CE" else row["low"]  <= fav_spot
+            adv_hit = row["low"]  <= adv_spot if sd == "CE" else row["high"] >= adv_spot
+            held_bars = idx - position["entry_idx"]
+            exit_spot = None
+            # same-bar tie -> adverse wins (conservative; intrabar path unknown)
+            if adv_hit:
+                exit_spot, reason = adv_spot, "BARRIER_LOSS"
+            elif fav_hit:
+                exit_spot, reason = fav_spot, "BARRIER_WIN"
+            elif held_bars >= LOOKAHEAD:
+                exit_spot, reason = row["close"], "HORIZON"
+            if exit_spot is not None:
+                exit_ltp = _opt.premium(es, exit_spot, sd, mtc_now) - SPREAD_PTS / 2.0
+                gross = (exit_ltp - position["entry"]) * position["qty"]
+                cost = _cost_rs(position["qty"])
+                trades.append(gross - cost)
+                last_exit_ts = ts
+                position = None
+                entry_ts = None
+            continue
+
         # ── manage open position ──
         if position is not None:
             cur_spot = row["close"]
@@ -194,7 +233,7 @@ def _simulate(test_df, warmup_rows, ce_model, pe_model, ce_thr, pe_thr):
         position = {
             "side": side, "entry": entry_prem, "entry_spot": entry_spot,
             "qty": LOT_UNITS, "stop_loss": sl, "target": tgt,
-            "max_pnl": 0.0, "ml_prob": prob,
+            "max_pnl": 0.0, "ml_prob": prob, "entry_idx": idx,
         }
         entry_ts = ts
         trades_today += 1
@@ -225,6 +264,9 @@ def _metrics(pnls):
 def main():
     print("=" * 70)
     print("  PURGED WALK-FORWARD OUT-OF-SAMPLE BACKTEST (trade-level, costed)")
+    if STOP_MODE == "matched":
+        print(f"  *** STOP_MODE=matched — DIAGNOSTIC: exit on +/-{TARGET_SPOT_PTS}pt spot")
+        print(f"      barrier within {LOOKAHEAD} bars (isolates model edge from stop). ***")
     print("=" * 70)
     df = pd.read_csv(DATA)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")

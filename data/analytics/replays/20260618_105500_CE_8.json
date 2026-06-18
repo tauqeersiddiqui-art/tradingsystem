@@ -1,0 +1,64 @@
+{
+  "symbol": "NIFTY2662324100CE",
+  "side": "CE",
+  "entry": 113.6,
+  "qty": 65,
+  "summary": {
+    "max_pnl": 100.75,
+    "mae_rs": -107.25,
+    "mae_pts": -1.65,
+    "ladder_stage": "S1_COSTLOCK",
+    "locked_profit": 66.0,
+    "retained_profit_pct": 0.774,
+    "exit_reason": "STOP",
+    "exit_price": 114.8,
+    "final_stop_loss": 114.62,
+    "pnl": 78.0
+  },
+  "events": [
+    {
+      "t": "10:55:00",
+      "type": "ENTRY",
+      "price": 113.6,
+      "spot": 24081.7,
+      "ml_ce": 0.852,
+      "ml_pe": 0.419,
+      "adx": 39.4,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 109.59,
+      "regime": "RANGE"
+    },
+    {
+      "t": "10:56:07",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.55,
+      "price": 114.3
+    },
+    {
+      "t": "10:56:11",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.15,
+      "price": 114.75
+    },
+    {
+      "t": "10:56:24",
+      "type": "STOP_MOVE",
+      "label": "S1_COSTLOCK",
+      "new_stop": 114.62,
+      "pts_locked": 1.02,
+      "mfe_pts": 1.55,
+      "locked_rs": 66.0
+    },
+    {
+      "t": "10:56:26",
+      "type": "EXIT",
+      "price": 114.8,
+      "reason": "STOP",
+      "pnl": 78.0,
+      "mfe_pts": 1.15,
+      "mae_pts": -1.65
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "symbol": "NIFTY2662324100CE",
+  "side": "CE",
+  "entry": 112.75,
+  "qty": 65,
+  "summary": {
+    "max_pnl": 94.25,
+    "mae_rs": -289.25,
+    "mae_pts": -4.45,
+    "ladder_stage": "INITIAL",
+    "locked_profit": 0.0,
+    "retained_profit_pct": -3.069,
+    "exit_reason": "STOP",
+    "exit_price": 108.3,
+    "final_stop_loss": 108.44,
+    "pnl": -289.25
+  },
+  "events": [
+    {
+      "t": "10:48:00",
+      "type": "ENTRY",
+      "price": 112.75,
+      "spot": 24085.85,
+      "ml_ce": 0.798,
+      "ml_pe": 0.101,
+      "adx": 44.0,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 108.44,
+      "regime": "RANGE"
+    },
+    {
+      "t": "10:48:09",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.5,
+      "price": 113
+    },
+    {
+      "t": "10:48:16",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.45,
+      "price": 113.3
+    },
+    {
+      "t": "10:49:50",
+      "type": "EXIT",
+      "price": 108.3,
+      "reason": "STOP",
+      "pnl": -289.25,
+      "mfe_pts": 1.45,
+      "mae_pts": -4.45
+    }
+  ]
+}

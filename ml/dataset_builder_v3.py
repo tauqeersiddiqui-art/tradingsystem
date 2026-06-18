@@ -39,7 +39,7 @@ OUTPUT    = "ml/models/training_dataset_v3.csv"
 
 # ── Label parameters ──────────────────────────────────────────────────
 LOOKAHEAD          = 12      # candles to look forward
-TARGET_SPOT_POINTS = 15      # barrier distance in spot points
+TARGET_SPOT_POINTS = 40      # barrier distance in spot points
 START_DATE         = os.getenv("V3_START_DATE", "2021-01-01")  # regime relevance
 
 

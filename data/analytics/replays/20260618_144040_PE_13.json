@@ -1,0 +1,103 @@
+{
+  "symbol": "NIFTY2662324100PE",
+  "side": "PE",
+  "entry": 121.75,
+  "qty": 65,
+  "summary": {
+    "max_pnl": 217.75,
+    "mae_rs": 0.0,
+    "mae_pts": 0.0,
+    "ladder_stage": "S2_TRAIL62%",
+    "locked_profit": 135.0,
+    "retained_profit_pct": 0.537,
+    "exit_reason": "STOP",
+    "exit_price": 123.55,
+    "final_stop_loss": 123.83,
+    "pnl": 117.0
+  },
+  "events": [
+    {
+      "t": "14:40:40",
+      "type": "ENTRY",
+      "price": 121.75,
+      "spot": 24101.4,
+      "ml_ce": 0.318,
+      "ml_pe": 0.926,
+      "adx": 20.3,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": 1,
+      "stop": 117.5,
+      "regime": "RANGE"
+    },
+    {
+      "t": "14:41:08",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.6,
+      "price": 122.75
+    },
+    {
+      "t": "14:41:18",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.1,
+      "price": 123
+    },
+    {
+      "t": "14:41:21",
+      "type": "MFE_PEAK",
+      "mfe_pts": 2.15,
+      "price": 123.95
+    },
+    {
+      "t": "14:41:21",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 123.08,
+      "pts_locked": 1.33,
+      "mfe_pts": 2.15,
+      "locked_rs": 86.65
+    },
+    {
+      "t": "14:41:22",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 123.11,
+      "pts_locked": 1.36,
+      "mfe_pts": 2.2,
+      "locked_rs": 88.66
+    },
+    {
+      "t": "14:41:23",
+      "type": "MFE_PEAK",
+      "mfe_pts": 3.05,
+      "price": 124.8
+    },
+    {
+      "t": "14:41:23",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 123.64,
+      "pts_locked": 1.89,
+      "mfe_pts": 3.05,
+      "locked_rs": 122.91
+    },
+    {
+      "t": "14:41:26",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 123.83,
+      "pts_locked": 2.08,
+      "mfe_pts": 3.35,
+      "locked_rs": 135.0
+    },
+    {
+      "t": "14:41:36",
+      "type": "EXIT",
+      "price": 123.55,
+      "reason": "STOP",
+      "pnl": 117.0,
+      "mfe_pts": 3.05,
+      "mae_pts": 0.0
+    }
+  ]
+}

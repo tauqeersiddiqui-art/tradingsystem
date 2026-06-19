@@ -1,24 +1,17 @@
 # ml/dataset_builder_v3.py
-# Direction-PREDICTING dataset (first-touch barrier labels).
+# COST-AWARE direction dataset (P&L-positive barrier labels).
 #
-# WHY v3 EXISTS — the wrong-direction root cause:
-#   v2 labelled CE only on Supertrend=UP bars and PE only on Supertrend=DOWN
-#   bars, then trained each model on its own slice. The model therefore never
-#   learned to PREDICT direction — it only learned "given the trend is already
-#   up, will it continue?". At reversals (local tops/bottoms) the 1m Supertrend
-#   flips the WRONG way, the model rubber-stamps it, and the trade goes
-#   immediately negative. That is the "wrong direction most of the time" bug.
+# WHY THIS CHANGED (the negative-expectancy root cause):
+#   The previous v3 label asked only "does SPOT touch +/-TARGET first?".
+#   But trades are OPTIONS. A correct spot direction still LOSES money once
+#   the round-trip spread, theta decay over the hold, and brokerage are paid.
+#   That is why OOS_AUC was ~0.90 while every threshold was -EV after costs.
 #
-# v3 FIX:
-#   * Label EVERY active-session bar (no direction-eligibility filter).
-#   * First-touch barrier labels: for each bar, does price reach +TARGET
-#     (CE wins) or -TARGET (PE wins) FIRST within LOOKAHEAD? This is a true
-#     directional label — the model learns which way price breaks next.
-#   * Supertrend / VWAP / ADX stay as FEATURES so the model can learn to
-#     trust or distrust them, instead of being gated by them.
-#
-# Output is drop-in compatible with the live feature pipeline (same 36
-# FEATURE_COLUMNS) so predictor_champion.py needs no change.
+# FIX:
+#   A bar is labeled 1 only if a REALISTICALLY-COSTED option trade taken at
+#   that bar would be NET-POSITIVE within LOOKAHEAD bars. The simulation uses
+#   the SAME OptionPriceSimulator and _cost_rs the backtest/live engine use,
+#   so the label and the P&L finally measure the same thing.
 #
 # RUN:
 #   python ml/dataset_builder_v3.py
@@ -31,34 +24,57 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import pandas as pd
 
-# Reuse the EXACT feature computation from v2 (single source of truth).
 from ml.dataset_builder_v2 import compute_all_features, _in_active_session
+from backtest.backtest_engine import OptionPriceSimulator, _mins_to_close
+from engine.execution.profit_manager import _cost_rs
 
 DATA_PATH = "data/historical/nifty_1m_full.csv"
 OUTPUT    = "ml/models/training_dataset_v3.csv"
 
-# ── Label parameters ──────────────────────────────────────────────────
-LOOKAHEAD          = 12      # candles to look forward
-TARGET_SPOT_POINTS = 40      # barrier distance in spot points
-START_DATE         = os.getenv("V3_START_DATE", "2021-01-01")  # regime relevance
+# ── Label parameters ───────────────────────────────────────
+# IMPORTANT: keep these IN SYNC with backtest/walkforward_oos.py.
+LOOKAHEAD          = int(os.getenv("V3_LOOKAHEAD", "12"))   # candles forward
+SPREAD_PTS         = float(os.getenv("BT_SPREAD_PTS", "1.0"))  # round-trip option spread (premium pts)
+LOT_UNITS          = int(os.getenv("V3_LOT_UNITS", "65"))
+MIN_NET_RS         = float(os.getenv("V3_MIN_NET_RS", "0.0"))  # profit floor; raise to demand margin
+START_DATE         = os.getenv("V3_START_DATE", "2021-01-01")
+
+_opt = OptionPriceSimulator()
+
+
+def _best_net_for_side(close, ts, i, side):
+    """
+    Simulate an option trade entered at bar i for `side`, held up to LOOKAHEAD
+    bars, exiting at the BEST achievable premium in that window. Returns net Rs
+    after round-trip spread + brokerage. (Best-exit = optimistic ceiling: if the
+    label is still rarely +EV under this generous assumption, the edge truly
+    isn't there.)
+    """
+    es  = float(close[i])
+    entry_prem = _opt.premium(es, es, side, _mins_to_close(pd.Timestamp(ts[i]))) + SPREAD_PTS / 2.0
+
+    best_exit = -1e18
+    for j in range(i + 1, i + 1 + LOOKAHEAD):
+        prem = _opt.premium(es, float(close[j]), side, _mins_to_close(pd.Timestamp(ts[j])))
+        if prem > best_exit:
+            best_exit = prem
+    exit_prem = best_exit - SPREAD_PTS / 2.0
+    return (exit_prem - entry_prem) * LOT_UNITS - _cost_rs(LOT_UNITS)
 
 
 def create_first_touch_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
-    First-touch barrier labels on EVERY active-session bar.
+    COST-AWARE labels on EVERY active-session bar.
 
-    For bar i, look at the next LOOKAHEAD bars:
-      - up_hit   = first bar whose HIGH reaches close[i] + TARGET
-      - down_hit = first bar whose LOW  reaches close[i] - TARGET
-      label_ce = 1 if up_hit occurs first (CE would profit)
-      label_pe = 1 if down_hit occurs first (PE would profit)
-    A bar where neither barrier is touched gets both labels = 0 (chop/no-trade)
-    so the model learns to output LOW probability there.
+    For bar i, simulate both a CE and a PE option trade over the next LOOKAHEAD
+    bars (same pricing + costs as the engine):
+      label_ce = 1 if the CE trade is net-positive (> MIN_NET_RS)
+      label_pe = 1 if the PE trade is net-positive (> MIN_NET_RS)
+    Both can be 0 (chop / no profitable trade) so the model learns to stay out.
     """
-    n      = len(df)
-    close  = df["close"].values.astype(float)
-    high   = df["high"].values.astype(float)
-    low    = df["low"].values.astype(float)
+    n     = len(df)
+    close = df["close"].values.astype(float)
+    ts    = df["date"].values
 
     mins_from_midnight = df["date"].dt.hour * 60 + df["date"].dt.minute
     in_session = mins_from_midnight.apply(_in_active_session).values
@@ -66,29 +82,18 @@ def create_first_touch_labels(df: pd.DataFrame) -> pd.DataFrame:
     label_ce = np.zeros(n, dtype=np.int8)
     label_pe = np.zeros(n, dtype=np.int8)
 
-    tgt = TARGET_SPOT_POINTS
     for i in range(n - LOOKAHEAD):
         if not in_session[i]:
             continue
-        up_target = close[i] + tgt
-        dn_target = close[i] - tgt
-        up_hit = dn_hit = None
-        for j in range(i + 1, i + LOOKAHEAD + 1):
-            if up_hit is None and high[j] >= up_target:
-                up_hit = j
-            if dn_hit is None and low[j] <= dn_target:
-                dn_hit = j
-            if up_hit is not None and dn_hit is not None:
-                break
-        if up_hit is not None and (dn_hit is None or up_hit <= dn_hit):
+        ce_net = _best_net_for_side(close, ts, i, "CE")
+        pe_net = _best_net_for_side(close, ts, i, "PE")
+        if ce_net > MIN_NET_RS:
             label_ce[i] = 1
-        elif dn_hit is not None and (up_hit is None or dn_hit < up_hit):
+        if pe_net > MIN_NET_RS:
             label_pe[i] = 1
 
     df["label_ce"] = label_ce
     df["label_pe"] = label_pe
-    # Kept for compatibility with any downstream code; in v3 every bar is
-    # eligible for both directions (the model decides).
     df["ce_eligible"] = in_session
     df["pe_eligible"] = in_session
     return df
@@ -96,9 +101,10 @@ def create_first_touch_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     print("=" * 64)
-    print("  DIRECTIONAL DATASET BUILDER v3  (first-touch barrier labels)")
+    print("  COST-AWARE DATASET BUILDER v3  (P&L-positive barrier labels)")
     print("=" * 64)
-    print(f"  Target={TARGET_SPOT_POINTS}pt  Lookahead={LOOKAHEAD}  Start={START_DATE}")
+    print(f"  Lookahead={LOOKAHEAD}  Spread={SPREAD_PTS}pt  Lot={LOT_UNITS}  "
+          f"MinNet=Rs{MIN_NET_RS}  Start={START_DATE}")
 
     print(f"\n[DATA] Loading {DATA_PATH} ...")
     df = pd.read_csv(DATA_PATH)
@@ -113,22 +119,25 @@ def main():
     print("[FEATURES] Computing indicators ...")
     df = compute_all_features(df)
 
-    print("[LABELS] First-touch directional labels (this is the slow part) ...")
+    print("[LABELS] Cost-aware option-P&L labels (slow: prices every bar) ...")
     df = create_first_touch_labels(df)
 
     df = df.dropna().reset_index(drop=True)
 
     ce_rate = df["label_ce"].mean()
     pe_rate = df["label_pe"].mean()
-    flat    = 1.0 - ce_rate - pe_rate
+    both    = ((df["label_ce"] == 1) & (df["label_pe"] == 1)).mean()
+    flat    = ((df["label_ce"] == 0) & (df["label_pe"] == 0)).mean()
     print(f"\n  Bars: {len(df):,}")
-    print(f"  label_ce=1 : {ce_rate:.1%}   label_pe=1 : {pe_rate:.1%}   neither(flat): {flat:.1%}")
-    print("  (CE+PE should be roughly balanced; large skew = directional bias in data)")
+    print(f"  label_ce=1 : {ce_rate:.1%}   label_pe=1 : {pe_rate:.1%}")
+    print(f"  both=1 : {both:.1%}   neither(flat): {flat:.1%}")
+    print("  (A LOW positive rate here is expected & honest: few bars are")
+    print("   profitable after option frictions. That is the point.)")
 
     os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
     df.to_csv(OUTPUT, index=False)
     print(f"\n[SAVED] {OUTPUT}  ({len(df):,} rows)")
-    print("  Next: python ml/trainer_v3.py")
+    print("  Next: python ml/trainer_v3.py  then  python backtest/walkforward_oos.py")
     print("=" * 64)
 
 

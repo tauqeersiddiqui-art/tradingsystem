@@ -565,7 +565,7 @@ _last_appended_ts  = None     # guard against double-append
 
 def update_historical_data(broker, csv_path: str, lookback_days: int = 5):
     """
-    Pull recent NIFTY 1-minute candles from Zerodha historical API and
+    Pull recent BANKNIFTY 1-minute candles from Zerodha historical API and
     append to the local CSV.  Called at startup and can be called any time.
     """
     try:
@@ -683,7 +683,7 @@ def init_broker():
         if _nifty_token in broker._last_ticks:
             _ltp_check = broker._last_ticks[_nifty_token].get("last_price", 0)
             if _ltp_check > 0:
-                logger.info(f"Feed ready — first tick received: NIFTY={_ltp_check:.2f}")
+                logger.info(f"Feed ready — first tick received: BANKNIFTY={_ltp_check:.2f}")
                 break
     else:
         logger.warning(
@@ -693,7 +693,7 @@ def init_broker():
         )
 
     # Subscribe ATM option chain (±5 strikes, CE + PE) to the live WebSocket.
-    # Requires a valid NIFTY spot price; safe to call even if ticks haven't
+    # Requires a valid BANKNIFTY spot price; safe to call even if ticks haven't
     # arrived yet — falls back to REST LTP for ATM computation.
     # Once subscribed, get_option_chain_near_atm() will return live OI values
     # from _last_ticks instead of defaulting to zero.
@@ -794,12 +794,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _last_atm_check   = 0.0     # epoch time of last ATM drift check
     _last_opt_diag    = 0.0     # epoch time of last [OPTION FEED] log
     _last_heartbeat   = 0.0     # epoch time of last alive-ping to Telegram
-    ltp_current       = 0.0     # last known NIFTY spot LTP (avoids UnboundLocalError on first tick)
+    ltp_current       = 0.0     # last known BANKNIFTY spot LTP (avoids UnboundLocalError on first tick)
     _signal_first_ts  = None    # ts when this signal was first produced (entry delay tracking)
     _last_exit_symbol = None    # symbol of most-recently exited ML trade
     _last_exit_epoch  = 0.0     # epoch time of that exit (for same-symbol cooldown)
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
-    _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of NIFTY spot
+    _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of BANKNIFTY spot
 
     # ══════════════════════════════════════════════════════════════════
     # RESTART RECOVERY + BROKER RECONCILIATION  (Tasks 3, 4, 8)
@@ -915,7 +915,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         pe_thr   = f"{_tn.PE_THRESHOLD_OVERRIDE:.2f}" if _tn.PE_THRESHOLD_OVERRIDE else "model"
         return (
             f"<b>Engine: {paused}{stop_req}</b>\n"
-            f"NIFTY LTP: {ltp:.1f}\n"
+            f"BANKNIFTY LTP: {ltp:.1f}\n"
             f"{pos_str}\n"
             f"PnL: {ctx.pnl:.0f} | Trades: {ctx.trades_today}\n"
             f"CE thr: {ce_thr}  PE thr: {pe_thr}"
@@ -958,7 +958,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             logger.error(f"[WATCHDOG] Reconnect failed: {_wde}")
 
             # ── Dynamic ATM re-subscription (every 5 min, market hours) ──
-            # When NIFTY drifts ≥100 pts the subscribed option-chain becomes
+            # When BANKNIFTY drifts ≥100 pts the subscribed option-chain becomes
             # stale.  Re-subscribe without restarting the engine.
             if (time.time() - _last_atm_check > 300
                     and _mkt_open <= now <= _mkt_close):
@@ -986,7 +986,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 _hb_paused = " | PAUSED" if _tn.ENGINE_PAUSED else ""
                 tg_force(
                     f"💓 Engine alive — {ts.strftime('%H:%M')}\n"
-                    f"NIFTY {ltp_current:,.1f} | PnL ₹{ctx.pnl:+.0f}\n"
+                    f"BANKNIFTY {ltp_current:,.1f} | PnL ₹{ctx.pnl:+.0f}\n"
                     f"{_hb_pos}{_hb_paused}"
                 )
 
@@ -1834,7 +1834,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     logger.info(
                                         f"[SCALP ENTRY] {_s_side} {_s_symbol} "
                                         f"@ {_s_order['price']:.1f} "
-                                        f"| NIFTY move={_s_sig['move_pts']:+.1f}pt"
+                                        f"| BANKNIFTY move={_s_sig['move_pts']:+.1f}pt"
                                     )
                                     _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
                                     send_scalp_entry(_scalp_entry_msg)

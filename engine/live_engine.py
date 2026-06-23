@@ -28,8 +28,8 @@ logger = logging.getLogger("live_engine")
 _MARKET_OPEN  = dtime(9, 15)
 _ORB_END      = dtime(9, 30)   # ORB window: 9:15 – 9:29 (15 candles)
 
-# Zerodha instrument token for NIFTY 50 index (used in ORB reconstruction)
-_NIFTY_INDEX_TOKEN = 256265
+# Zerodha instrument token for BANKNIFTY index (used in ORB reconstruction)
+_BANKNIFTY_INDEX_TOKEN = 260105
 _DAY_CLASS_AT = dtime(9, 45)   # Day classifier locks after 9:44
 _MARKET_CLOSE = dtime(15, 30)
 
@@ -212,7 +212,7 @@ class LiveEngine:
 
         try:
             raw = broker.kite.historical_data(
-                _NIFTY_INDEX_TOKEN, orb_start_dt, orb_end_dt,
+                _BANKNIFTY_INDEX_TOKEN, orb_start_dt, orb_end_dt,
                 "minute", oi=False,
             )
         except Exception as exc:

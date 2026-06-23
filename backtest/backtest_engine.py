@@ -47,17 +47,13 @@ _MIN_EXPECTED_PNL = 150.0
 # Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
 _MIN_ML_FLOOR = 0.65
 
-NIFTY_LOT_SIZE = 65          # current lot size (changed from 75 → 65 in Jan 2026)
+BANKBANKNIFTY_LOT_SIZE = 30      # BANKNIFTY lot size
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
 
 
 def _lot_size_for_date(d) -> int:
-    """NIFTY lot size: 75 before Jan 2026, 65 from Jan 2026 onwards."""
-    try:
-        year = d.year if hasattr(d, "year") else int(str(d)[:4])
-        return 65 if year >= 2026 else 75
-    except Exception:
-        return 65
+    """BANKNIFTY lot size (fixed at 30)."""
+    return BANKBANKNIFTY_LOT_SIZE
 
 
 def _mins_to_close(ts) -> float:
@@ -663,7 +659,7 @@ class BacktestSignalEngine:
             prob    = signal["ml_prob"]
             sl      = signal["stop_loss"]
             tgt     = signal["target"]
-            lot_sz  = self.config.get("LOT_SIZE", NIFTY_LOT_SIZE)
+            lot_sz  = self.config.get("LOT_SIZE", BANKNIFTY_LOT_SIZE)
             exp_win  = (tgt - price) * lot_sz
             exp_loss = (price - sl) * lot_sz
             expected_pnl = prob * exp_win - (1 - prob) * exp_loss
@@ -693,7 +689,7 @@ class BacktestSignalEngine:
         stop_loss = position.get("stop_loss", position["entry"] * 0.90)
         max_pnl   = position.get("max_pnl",   0.0)
         ml_prob   = position.get("ml_prob",    0.5)
-        lot_size  = position.get("lot_size",   NIFTY_LOT_SIZE)
+        lot_size  = position.get("lot_size",   BANKNIFTY_LOT_SIZE)
 
         new_sl, new_max_pnl, pm_reason = manage_position(
             entry_price=position["entry"],
@@ -754,7 +750,7 @@ class BacktestEngine:
             "MAX_TRADES_PER_DAY": 10,
             "MAX_HOLD_SECONDS":   300,
             "COOLDOWN_SECONDS":   180,
-            "LOT_SIZE":           NIFTY_LOT_SIZE,
+            "LOT_SIZE":           BANKNIFTY_LOT_SIZE,
             "LOTS_PER_TRADE":     1,
             "CHAMPION_THRESHOLD": float(os.getenv("CHAMPION_THRESHOLD", 0.42)),
             "ENTRY_ON":           "current_close",  # enter on signal candle close (was next_open = late entry)
@@ -1103,7 +1099,7 @@ class BacktestEngine:
                     )
 
                     position = {
-                        "symbol":      f"NIFTY_{side}_{atm_strike}",
+                        "symbol":      f"BANKNIFTY_{side}_{atm_strike}",
                         "side":        side,
                         "entry":       entry_premium,
                         "entry_spot":  entry_spot,

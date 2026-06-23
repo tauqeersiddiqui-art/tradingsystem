@@ -28,7 +28,7 @@ from ml.dataset_builder_v2 import compute_all_features, _in_active_session
 from backtest.backtest_engine import OptionPriceSimulator, _mins_to_close
 from engine.execution.profit_manager import _cost_rs
 
-DATA_PATH = "data/historical/nifty_1m_full.csv"
+DATA_PATH = "data/historical/banknifty_1m_full.csv"
 OUTPUT    = "ml/models/training_dataset_v3.csv"
 
 # ── Label parameters ───────────────────────────────────────

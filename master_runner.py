@@ -46,7 +46,7 @@ logger = logging.getLogger("master")
 PAPER_MODE = os.getenv("PAPER_MODE", "0") == "1"
 TEST_MODE  = os.getenv("TEST_MODE",  "0") == "1"
 
-HIST_CSV   = "data/historical/nifty_1m_full.csv"
+HIST_CSV   = "data/historical/banknifty_1m_full.csv"
 
 # ── Imports ───────────────────────────────────────────────────────────
 from engine.execution.execution_engine import ExecutionEngine
@@ -558,7 +558,7 @@ def _log_feed_health(broker, ctx, builder) -> None:
 # HISTORICAL DATA — fetch from Zerodha + append live candles
 # ══════════════════════════════════════════════════════════════════════
 
-_NIFTY_INDEX_TOKEN = 256265   # NSE:NIFTY 50 instrument token (fixed)
+_BANKNIFTY_INDEX_TOKEN = 260105   # NSE:NIFTY BANK instrument token (fixed)
 _csv_write_lock    = threading.Lock()
 _last_appended_ts  = None     # guard against double-append
 
@@ -573,10 +573,10 @@ def update_historical_data(broker, csv_path: str, lookback_days: int = 5):
         from_dt = to_dt - timedelta(days=lookback_days)
 
         logger.info(
-            f"[HIST] Fetching NIFTY 1m  {from_dt.date()} -> {to_dt.date()} ..."
+            f"[HIST] Fetching BANKNIFTY 1m  {from_dt.date()} -> {to_dt.date()} ..."
         )
         raw = broker.kite.historical_data(
-            _NIFTY_INDEX_TOKEN, from_dt, to_dt, "minute", oi=False
+            _BANKNIFTY_INDEX_TOKEN, from_dt, to_dt, "minute", oi=False
         )
 
         if not raw:
@@ -671,11 +671,11 @@ def init_broker():
         raise RuntimeError("Open broker position exists.")
 
     logger.info("Starting market feed")
-    broker.start_feed(["NIFTY 50"])
+    broker.start_feed(["NIFTY BANK"])
 
     # Wait up to 10 s for the first tick so the engine doesn't start
     # with a stale/flat REST price in the candle buffer.
-    _nifty_token = _NIFTY_INDEX_TOKEN
+    _nifty_token = _BANKNIFTY_INDEX_TOKEN
     _waited = 0
     while _waited < 10:
         time.sleep(1)

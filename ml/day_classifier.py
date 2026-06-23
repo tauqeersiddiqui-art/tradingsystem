@@ -36,7 +36,7 @@ from sklearn.metrics import classification_report
 
 
 MODEL_PATH   = "ml/models/day_classifier_lgbm.pkl"
-DATA_PATH    = "data/historical/nifty_1m_full.csv"
+DATA_PATH    = "data/historical/banknifty_1m_full.csv"
 LABEL_PATH   = "ml/models/day_classifier_labels.csv"
 
 # Day type labels

@@ -161,7 +161,7 @@ def format_trade_entry(data: dict) -> str:
     target   = data.get("target", 0.0)
     ml_prob  = data.get("ml_prob", 0.0)
     regime   = data.get("regime", "TREND")
-    lots     = qty // 65
+    lots     = qty // 30
     side_e   = _side_emoji(side)
     reg_e    = _regime_emoji(regime)
     sl_pts   = round(price - stop, 2)
@@ -203,7 +203,7 @@ def format_trade_live(position: dict, ltp: float, entry_time: datetime) -> str:
     ml_prob   = position.get("ml_prob", 0.0)
     regime    = position.get("regime", "TREND")
     max_pnl   = position.get("max_pnl", 0.0)
-    lots      = qty // 65
+    lots      = qty // 30
 
     pnl       = (ltp - entry) * qty
     move_pts  = ltp - entry
@@ -278,7 +278,7 @@ def format_trade_exit(data: dict) -> str:
     mae_pts     = data.get("mae_pts", 0.0)
     held_s      = data.get("held_seconds", 0.0)
     raw_reason  = data.get("reason", "")
-    lots        = qty // 65
+    lots        = qty // 30
 
     reason_label, reason_emoji = _map_exit_reason(raw_reason, entry, stop)
     pnl_e    = _pnl_emoji(pnl)
@@ -338,12 +338,12 @@ def format_scalp_entry(pos: dict, move_pts: float) -> str:
         f"📌 <b>{symbol}</b>\n"
         f"\n"
         f"💵 Entry Price   : <b>{price:.1f}</b>\n"
-        f"📦 Quantity      : 65  (1 lot)\n"
+        f"📦 Quantity      : 30  (1 lot)\n"
         f"\n"
         f"🛑 Stop Loss     : {stop:.1f}  <i>(-{abs(sl_pts):.1f} pts)</i>\n"
         f"🎯 Target        : {target:.1f}  <i>(+{abs(tgt_pts):.1f} pts)</i>\n"
         f"\n"
-        f"⚡ Trigger       : NIFTY {move_sign}{move_pts:.1f} pts momentum\n"
+        f"⚡ Trigger       : BANKNIFTY {move_sign}{move_pts:.1f} pts momentum\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
         f"⏱️ Opened at {now_str}  |  <i>live updates below</i>"
     )
@@ -355,7 +355,7 @@ def format_scalp_live(pos: dict, ltp: float) -> str:
     entry    = pos.get("entry", 0.0)
     stop     = pos.get("stop_loss", 0.0)
     target   = pos.get("target", 0.0)
-    qty      = pos.get("qty", 65)
+    qty      = pos.get("qty", 30)
     max_pnl  = pos.get("max_pnl", 0.0)
     entry_ts = pos.get("entry_ts")
     side_e   = _side_emoji(side)
@@ -389,7 +389,7 @@ def format_scalp_exit(pos: dict, fill: float, reason: str, pnl: float) -> str:
     symbol   = fmt_symbol(pos.get("symbol", ""))
     side     = pos.get("side", "").upper()
     entry    = pos.get("entry", 0.0)
-    qty      = pos.get("qty", 65)
+    qty      = pos.get("qty", 30)
     max_pnl  = pos.get("max_pnl", 0.0)
     min_pnl  = pos.get("min_pnl", 0.0)
     entry_ts = pos.get("entry_ts")
@@ -575,7 +575,7 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
     return (
         f"🤖 <b>AI ENGINE STATUS</b>\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
-        f"🕐 {now_str}   📡 NIFTY <b>{ltp_str}</b>\n"
+        f"🕐 {now_str}   📡 BANKNIFTY <b>{ltp_str}</b>\n"
         f"\n"
         f"<b>MARKET DIRECTION</b>\n"
         f"{dir_line}\n"

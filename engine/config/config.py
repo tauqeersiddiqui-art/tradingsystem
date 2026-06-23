@@ -17,7 +17,7 @@ class Config:
         # 4 keeps cost bounded; scalp + ML share this counter.
         self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 4))
 
-        # Round-trip cost per 65-qty lot (buy+sell). Drives the cost-aware
+        # Round-trip cost per 30-qty BANKNIFTY lot (buy+sell). Drives the cost-aware
         # profit ladder so it never locks a profit below the trade's own cost.
         self.COST_PER_LOT = float(os.getenv("COST_PER_LOT", 66.0))
 
@@ -36,8 +36,8 @@ class Config:
         self.DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", 0.05))
         self.MAX_HOLD_SECONDS = int(os.getenv("MAX_HOLD_SECONDS", 300))
 
-        # Lot size: NIFTY changed from 75 → 65 from January 2026
-        self.LOT_SIZE = int(os.getenv("LOT_SIZE", 65))
+        # Lot size: BANKNIFTY = 30 (target instrument)
+        self.LOT_SIZE = int(os.getenv("LOT_SIZE", 30))
 
         # ML
         self.CHAMPION_THRESHOLD = float(os.getenv("CHAMPION_THRESHOLD", 0.42))

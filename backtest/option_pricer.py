@@ -35,10 +35,10 @@ import math
 
 class OptionPriceSimulator:
     """
-    Black-Scholes ATM option pricer for NIFTY-spot backtesting.
+    Black-Scholes ATM option pricer for BANKNIFTY-spot backtesting.
 
     The strike is pinned to the ENTRY spot (ATM at entry, rounded to the nearest
-    50-pt strike). As cur_spot moves, the option correctly goes ITM/OTM with
+    100-pt strike). As cur_spot moves, the option correctly goes ITM/OTM with
     real delta+gamma, and theta bleeds as mins_to_close shrinks. Premium is
     returned in option-premium points (same space as the stop ladder and the
     old proxy), so nothing downstream changes units.
@@ -49,7 +49,7 @@ class OptionPriceSimulator:
 
     def __init__(self, atm_vol: float = 0.13, rate: float = 0.065,
                  minutes_per_day: int = 375, trading_days: int = 252,
-                 strike_step: float = 50.0):
+                 strike_step: float = 100.0):
         self.atm_vol     = float(os.getenv("BT_ATM_VOL", atm_vol))   # annualized IV
         self.rate        = rate
         self.mpd         = minutes_per_day

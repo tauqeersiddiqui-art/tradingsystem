@@ -20,9 +20,9 @@
 #   MFE >= Rs1200  ->  lock 70% of peak profit
 #   MFE >= Rs 800  ->  lock Rs600
 #   MFE >= Rs 500  ->  lock Rs350
-#   MFE >= Rs 390  ->  lock Rs195   (~+3pt for 65-lot, net-positive floor)
-#   MFE >= Rs 195  ->  lock Rs 65   (~+1pt for 65-lot, cost-recovery floor)
-#   MFE >= Rs 130  ->  lock Rs 32   (~+0.5pt for 65-lot, slippage-proof entry)
+#   MFE >= Rs 390  ->  lock Rs195   (net-positive floor, BANKNIFTY 30-lot)
+#   MFE >= Rs 195  ->  lock Rs 65   (cost-recovery floor, BANKNIFTY 30-lot)
+#   MFE >= Rs 130  ->  lock Rs 32   (slippage-proof entry, BANKNIFTY 30-lot)
 #
 # RULES (enforced by construction):
 #   * Stop only TIGHTENS (max() ratchet) — it can never loosen.
@@ -35,9 +35,9 @@ import logging
 logger = logging.getLogger("profit_manager")
 
 # Retained for backward-compat (telegram.messages imports LOCK_PTS).
-_LOT_QTY  = 65
+_LOT_QTY  = 30
 _RS_FLOOR = 200.0
-LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
+LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # ~6.67 pts (BANKNIFTY 30-qty lot)
 
 # ─────────────────────────────────────────────────────────────────────────
 # COST-AWARE PROFIT LADDER  (replaces the old fixed Rs rungs)
@@ -59,8 +59,8 @@ LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
 # the initial risk_manager stop. The ladder only ever TIGHTENS the stop.
 # ─────────────────────────────────────────────────────────────────────────
 
-_COST_PER_LOT = 66.0     # round-trip cost per 65-qty lot (overridable via env)
-_LOT_UNITS    = 65
+_COST_PER_LOT = 66.0     # round-trip cost per 30-qty BANKNIFTY lot (overridable via env)
+_LOT_UNITS    = 30
 _TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
 
 
@@ -125,7 +125,7 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
     Args:
         entry_price : option premium at entry
         ltp         : current live option premium
-        lot_size    : ACTUAL position quantity (total units, e.g. 65 / 130).
+        lot_size    : ACTUAL position quantity (total units, e.g. 30 / 60).
                       Named lot_size for backward-compat; callers MUST pass
                       position["qty"] so MFE/max_pnl stays consistent with
                       realized PnL and MAE (single position-size source of truth).

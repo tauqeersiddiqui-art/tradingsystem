@@ -755,7 +755,7 @@ class LiveEngine:
         signal.update(stop_loss=stop_loss, target=target,
                       stop_pct=stop_pct, regime=regime)
 
-        lot_size     = getattr(getattr(self.ctx, "config", None), "LOT_SIZE", 65)
+        lot_size     = getattr(getattr(self.ctx, "config", None), "LOT_SIZE", 30)
         exp_win      = (target - price) * lot_size
         exp_loss     = (price - stop_loss) * lot_size
         expected_pnl = signal["ml_prob"] * exp_win - (1 - signal["ml_prob"]) * exp_loss

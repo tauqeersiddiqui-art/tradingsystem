@@ -67,7 +67,7 @@ class CandleBuilder:
             return self._ltp
         # Fallback: REST call (slow, only on cold start)
         try:
-            sym = f"NSE:NIFTY 50"
+            sym = "NSE:NIFTY BANK"
             data = self.broker.kite.ltp(sym)
             price = data[sym]["last_price"]
             self._ltp = float(price)
@@ -300,10 +300,10 @@ class CandleBuilder:
             logger.error(f"[CandleBuilder] Paper seed failed: {e}")
 
     # ══════════════════════════════════════════════════════════════════
-    # NIFTY INSTRUMENT TOKEN HELPER
+    # BANKNIFTY INSTRUMENT TOKEN HELPER
     # ══════════════════════════════════════════════════════════════════
 
     @staticmethod
     def nifty_token() -> int:
-        """Zerodha instrument token for NIFTY 50 index."""
-        return 256265
+        """Zerodha instrument token for the NIFTY BANK (BANKNIFTY) index."""
+        return 260105

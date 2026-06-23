@@ -29,7 +29,7 @@ class ZerodhaBroker:
 
         self.option_index = {}
         for inst in self.instruments:
-            if inst["segment"] != "NFO-OPT" or inst["name"] != "NIFTY":
+            if inst["segment"] != "NFO-OPT" or inst["name"] != "BANKNIFTY":
                 continue
             key = (inst["strike"], inst["instrument_type"])
             self.option_index.setdefault(key, []).append(inst)
@@ -86,7 +86,7 @@ class ZerodhaBroker:
 
         def on_connect(ws, _):
             ws.subscribe(tokens)
-            # NIFTY 50 index (token 256265) does not carry bid/ask depth.
+            # NIFTY BANK index (token 260105) does not carry bid/ask depth.
             # MODE_FULL on an index token either returns 0 for last_price or
             # silently drops the tick on some Zerodha gateway versions.
             # Use MODE_QUOTE which reliably includes last_price for indices.
@@ -121,10 +121,10 @@ class ZerodhaBroker:
         """
         Subscribe ATM CE/PE options and nearby strikes to the live WebSocket.
 
-        Computes the current ATM from NIFTY LTP, then subscribes the nearest
-        weekly/monthly expiry for every strike in [ATM - strikes_range*50 …
-        ATM + strikes_range*50] for both CE and PE (11 strikes × 2 sides = 22
-        tokens plus the NIFTY index already subscribed = 23 total).
+        Computes the current ATM from BANKNIFTY LTP, then subscribes the nearest
+        weekly/monthly expiry for every strike in [ATM - strikes_range*100 …
+        ATM + strikes_range*100] for both CE and PE (11 strikes × 2 sides = 22
+        tokens plus the BANKNIFTY index already subscribed = 23 total).
 
         MODE_QUOTE is used so ticks carry both `last_price` and `oi`.
         Once subscribed, `get_option_chain_near_atm()` will return live OI
@@ -133,12 +133,12 @@ class ZerodhaBroker:
         Safe to call at any time after start_feed(); idempotent — re-calling
         refreshes the ATM and re-subscribes to the updated strike set.
         """
-        spot = self.ltp("NSE:NIFTY 50")
+        spot = self.ltp("NSE:NIFTY BANK")
         if not spot:
-            print("[OPTIONS FEED] Cannot compute ATM — no NIFTY spot price yet")
+            print("[OPTIONS FEED] Cannot compute ATM — no BANKNIFTY spot price yet")
             return
 
-        atm = round(spot / 50) * 50
+        atm = round(spot / 100) * 100
         self._subscribed_atm = atm
 
         tokens_to_sub:  list = []
@@ -149,7 +149,7 @@ class ZerodhaBroker:
         atm_pe_sym:     str = "n/a"
 
         for i in range(-strikes_range, strikes_range + 1):
-            strike = atm + i * 50
+            strike = atm + i * 100
             for opt_type in ("CE", "PE"):
                 opts = self.option_index.get((strike, opt_type))
                 if not opts:
@@ -187,14 +187,14 @@ class ZerodhaBroker:
                 print(f"[OPTIONS FEED] subscribe() call failed: {exc}")
                 return
 
-        nifty_token  = 256265
+        index_token  = 260105
         chain_count  = len(tokens_to_sub) - (
             (1 if atm_ce_token else 0) + (1 if atm_pe_token else 0)
         )
-        total_tokens = len(tokens_to_sub) + 1   # +1 for NIFTY 50
+        total_tokens = len(tokens_to_sub) + 1   # +1 for BANKNIFTY index
 
         print(f"[WS SUBSCRIBED]")
-        print(f"  NIFTY      token={nifty_token}")
+        print(f"  BANKNIFTY  token={index_token}")
         print(f"  ATM CE     token={atm_ce_token}  ({atm_ce_sym})")
         print(f"  ATM PE     token={atm_pe_token}  ({atm_pe_sym})")
         print(f"  CHAIN TOKENS={chain_count}  (±{strikes_range} strikes excluding ATM)")
@@ -202,16 +202,16 @@ class ZerodhaBroker:
 
     def refresh_atm_if_drifted(self, drift_points: int = 100) -> bool:
         """
-        Re-subscribe options if NIFTY ATM has moved by drift_points since the
+        Re-subscribe options if BANKNIFTY ATM has moved by drift_points since the
         last subscribe_options() call.  Call periodically from the engine loop.
         Returns True if a re-subscription was triggered, False otherwise.
         """
         if not self._subscribed_atm:
             return False
-        spot = self.ltp("NSE:NIFTY 50")
+        spot = self.ltp("NSE:NIFTY BANK")
         if not spot:
             return False
-        current_atm = round(spot / 50) * 50
+        current_atm = round(spot / 100) * 100
         if abs(current_atm - self._subscribed_atm) >= drift_points:
             print(
                 f"[OPTIONS FEED] ATM drifted: {self._subscribed_atm} -> {current_atm} "
@@ -300,11 +300,11 @@ class ZerodhaBroker:
     # ── options ──────────────────────────────────────────────────────────────
 
     def get_atm_option(self, option_type="CE", strike_shift=0):
-        spot = self.ltp("NSE:NIFTY 50")
+        spot = self.ltp("NSE:NIFTY BANK")
         if not spot:
             return None, None
-        atm    = round(spot / 50) * 50
-        strike = atm - strike_shift * 50 if option_type == "CE" else atm + strike_shift * 50
+        atm    = round(spot / 100) * 100
+        strike = atm - strike_shift * 100 if option_type == "CE" else atm + strike_shift * 100
         opts   = self.option_index.get((strike, option_type))
         if not opts:
             return None, None
@@ -313,13 +313,13 @@ class ZerodhaBroker:
 
     def get_option_chain_near_atm(self, strikes_range=5):
         try:
-            spot = self.ltp("NSE:NIFTY 50")
+            spot = self.ltp("NSE:NIFTY BANK")
             if not spot:
                 return []
-            atm   = round(spot / 50) * 50
+            atm   = round(spot / 100) * 100
             chain = []
             for i in range(-strikes_range, strikes_range + 1):
-                s = atm + i * 50
+                s = atm + i * 100
                 ce_list = self.option_index.get((s, "CE"))
                 pe_list = self.option_index.get((s, "PE"))
                 if not ce_list or not pe_list:

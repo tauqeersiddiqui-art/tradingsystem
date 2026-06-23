@@ -439,7 +439,7 @@ def _profit_retention_sim(ctx: TradingContext) -> str | None:
     for i in range(n):
         actual   = ea["realized_list"][i]
         mfe_pts  = ea.get("mfe_pts_list", [0] * n)[i]
-        qty      = ea.get("qty_list",     [65] * n)[i]
+        qty      = ea.get("qty_list",     [30] * n)[i]
 
         best_lock_pts = None
         for trigger_pts, lock_pts in reversed(_LADDER_LEVELS):
@@ -529,7 +529,7 @@ def _log_feed_health(broker, ctx, builder) -> None:
         datetime.fromtimestamp(broker._last_tick_time).strftime("%H:%M:%S")
         if broker._last_ticks else "none"
     )
-    subscribed_cnt  = len(broker._option_tokens) + 1   # +1 NIFTY 50
+    subscribed_cnt  = len(broker._option_tokens) + 1   # +1 BANKNIFTY index
     orb_status      = (
         "RECONSTRUCTED" if (ctx.live_engine.orb_done and
                             ctx.live_engine.orb_high is not None)
@@ -761,7 +761,7 @@ def build_context(broker) -> TradingContext:
 # ══════════════════════════════════════════════════════════════════════
 
 def init_candle_builder(broker) -> CandleBuilder:
-    token = CandleBuilder.nifty_token()   # 256265
+    token = CandleBuilder.nifty_token()   # 260105 (NSE:NIFTY BANK)
 
     builder = CandleBuilder(broker, instrument_token=token, max_candles=300)
 
@@ -953,7 +953,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             key="watchdog", interval=120.0
                         )
                         try:
-                            ctx.broker.start_feed(["NIFTY 50"])
+                            ctx.broker.start_feed(["NIFTY BANK"])
                         except Exception as _wde:
                             logger.error(f"[WATCHDOG] Reconnect failed: {_wde}")
 
@@ -1078,8 +1078,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # ══════════════════════════════════════════════════════════
 
             if position is not None:
-                # CRITICAL FIX: use option premium LTP, NOT NIFTY spot.
-                # builder.ltp() returns NIFTY 50 spot (~23500) which is always
+                # CRITICAL FIX: use option premium LTP, NOT BANKNIFTY spot.
+                # builder.ltp() returns BANKNIFTY spot (~52000) which is always
                 # above the option target (~42), causing TARGET_HIT every cycle.
                 _opt_ltp = ctx.broker.ltp(position["symbol"])
 
@@ -1514,7 +1514,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # ── OI wall filter ────────────────────────────────────
                 # FIX-10: was never called
                 try:
-                    atm_strike = round(current_price / 50) * 50
+                    atm_strike = round(current_price / 100) * 100
                     option_chain = ctx.broker.get_option_chain_near_atm(strikes_range=5)
                     
                     if has_oi_wall(option_chain, atm_strike, side):
@@ -2029,7 +2029,7 @@ def _acquire_singleton_lock():
     """
     Refuse to start if another master_runner is already running.
 
-    Multiple concurrent instances each append to data/historical/nifty_1m_full.csv
+    Multiple concurrent instances each append to data/historical/banknifty_1m_full.csv
     every minute, producing duplicate candles that corrupt the feature-seed window
     and zero out ML predictions (root-caused 2026-06-18). One engine only.
     """

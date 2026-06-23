@@ -26,6 +26,7 @@ from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
 from engine.risk.risk_manager import compute_entry_stops
+from backtest.option_pricer import OptionPriceSimulator
 
 logger = logging.getLogger("backtest")
 
@@ -47,13 +48,13 @@ _MIN_EXPECTED_PNL = 150.0
 # Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
 _MIN_ML_FLOOR = 0.65
 
-BANKBANKNIFTY_LOT_SIZE = 30      # BANKNIFTY lot size
+BANKNIFTY_LOT_SIZE = 30      # BANKNIFTY lot size
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
 
 
 def _lot_size_for_date(d) -> int:
     """BANKNIFTY lot size (fixed at 30)."""
-    return BANKBANKNIFTY_LOT_SIZE
+    return BANKNIFTY_LOT_SIZE
 
 
 def _mins_to_close(ts) -> float:
@@ -929,7 +930,7 @@ class BacktestEngine:
         daily_limit       = self.config["DAILY_LOSS_LIMIT"]
         max_trades        = self.config["MAX_TRADES_PER_DAY"]
         cooldown          = self.config["COOLDOWN_SECONDS"]
-        lot_size          = _lot_size_for_date(day_df["date"].iloc[0])   # 75 pre-2026, 65 from Jan 2026
+        lot_size          = _lot_size_for_date(day_df["date"].iloc[0])   # BANKNIFTY = 30
         qty               = lot_size * self.config["LOTS_PER_TRADE"]
         entry_on          = self.config["ENTRY_ON"]
 
@@ -1081,8 +1082,8 @@ class BacktestEngine:
                     else:
                         entry_spot = float(row["close"]) + 0.5
 
-                    # ATM strike proxy
-                    atm_strike = round(entry_spot / 50) * 50
+                    # ATM strike proxy (BANKNIFTY: 100-pt strikes)
+                    atm_strike = round(entry_spot / 100) * 100
 
                     # mins to close at entry
                     mins_to_close = _mins_to_close(ts)
@@ -1353,7 +1354,7 @@ if __name__ == "__main__":
 
     engine = BacktestEngine()
 
-    df = engine.load_data(r"D:\All Bots\trading_system\data\historical\nifty_1m_full.csv")
+    df = engine.load_data(r"D:\All Bots\trading_system\data\historical\banknifty_1m_full.csv")
     df = df.tail(200000)
     print("Data loaded:", df.shape)
 

@@ -23,7 +23,7 @@ FEEDBACK_PATH = str(_ROOT / "data" / "ml_feedback.csv")
 HIST_PATH     = str(_ROOT / "ml" / "models" / "training_dataset_trade.csv")
 FIELDNAMES    = FEATURE_COLUMNS + ["direction", "outcome", "pnl", "reason", "date"]
 
-BROKERAGE_ROUND_TRIP = 65 * 2   # FIX-2
+BROKERAGE_ROUND_TRIP = 66 * 2   # 2x BANKNIFTY round-trip cost (Rs66/lot)
 
 
 def log_trade_outcome(features: dict, direction: str, pnl: float,

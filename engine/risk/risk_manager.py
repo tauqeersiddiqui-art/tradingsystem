@@ -2,7 +2,7 @@
 #
 # Redesigned for small capital (1-2 lot) profitability:
 #   - Hard cap: never risk more than 10 premium pts per trade
-#     = ₹650 at 1 lot (65 qty), ₹1300 at 2 lots (130 qty)
+#     = ₹300 at 1 lot (30 qty BANKNIFTY), ₹600 at 2 lots (60 qty)
 #   - 3.5R target gives strong positive expectancy at 55%+ WR
 #   - Trailing in profit_manager handles the real exit, not fixed TP
 #

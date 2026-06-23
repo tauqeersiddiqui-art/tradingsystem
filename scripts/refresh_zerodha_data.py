@@ -27,8 +27,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-CSV_PATH   = "data/historical/nifty_1m_full.csv"
-NIFTY_TOKEN = 256265            # NSE:NIFTY 50 index
+CSV_PATH   = "data/historical/banknifty_1m_full.csv"
+NIFTY_TOKEN = 260105            # NSE:NIFTY BANK (BANKNIFTY) index
 YEARS_BACK  = float(os.getenv("YEARS_BACK", "3"))
 CHUNK_DAYS  = 60                # Zerodha minute-data max window per request
 

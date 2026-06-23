@@ -35,7 +35,7 @@ OUTPUT    = "ml/models/training_dataset_v3.csv"
 # IMPORTANT: keep these IN SYNC with backtest/walkforward_oos.py.
 LOOKAHEAD          = int(os.getenv("V3_LOOKAHEAD", "12"))   # candles forward
 SPREAD_PTS         = float(os.getenv("BT_SPREAD_PTS", "1.0"))  # round-trip option spread (premium pts)
-LOT_UNITS          = int(os.getenv("V3_LOT_UNITS", "65"))
+LOT_UNITS          = int(os.getenv("V3_LOT_UNITS", "30"))
 MIN_NET_RS         = float(os.getenv("V3_MIN_NET_RS", "0.0"))  # profit floor; raise to demand margin
 START_DATE         = os.getenv("V3_START_DATE", "2021-01-01")
 

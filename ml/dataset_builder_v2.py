@@ -26,7 +26,7 @@ import pandas as pd
 
 from ml.indicators import supertrend as compute_supertrend, adx as compute_adx, vwap_session
 
-DATA_PATH = "data/historical/nifty_1m_full.csv"
+DATA_PATH = "data/historical/banknifty_1m_full.csv"
 OUTPUT    = "ml/models/training_dataset_v2.csv"
 
 # ── Label parameters ──────────────────────────────────────────────────

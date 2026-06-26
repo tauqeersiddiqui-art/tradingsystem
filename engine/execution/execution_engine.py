@@ -36,6 +36,10 @@ class ExecutionEngine:
         Fetch actual lot size from instrument map.
         Falls back to 30 (BANKNIFTY default) if not found.
         """
+        if str(symbol).upper().startswith("BANKNIFTY"):
+            configured_lot = int(getattr(self.config, "LOT_SIZE", 30) or 30)
+            return configured_lot
+
         try:
             inst = self.broker.instrument_map.get(symbol)
             if inst and inst.get("lot_size", 0) > 0:

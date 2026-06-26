@@ -49,7 +49,7 @@ class ScalpEngine:
             return None
 
         cutoff = ts - timedelta(seconds=self._mom_window)
-        past = [(t, ltp) for t, ltp in ltp_history if t >= cutoff]
+        past = [(t, ltp) for t, ltp in ltp_history if cutoff <= t < ts]
         if not past:
             return None
 

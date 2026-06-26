@@ -13,9 +13,8 @@ class Config:
         self.INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", 100000))
         self.RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.02))
         self.DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", -2000))
-        # Overtrading guard: was 10 (today fired 10 trades = Rs1320 cost drag).
-        # 4 keeps cost bounded; scalp + ML share this counter.
-        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 4))
+        # Session trade limit. Scalp + ML share this counter.
+        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 20))
 
         # Round-trip cost per 30-qty BANKNIFTY lot (buy+sell). Drives the cost-aware
         # profit ladder so it never locks a profit below the trade's own cost.

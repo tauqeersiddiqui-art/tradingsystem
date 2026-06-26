@@ -1054,13 +1054,38 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     "ts":     ts,
                 }
 
+            df_decision_window = df_window
+            try:
+                _live_row = {
+                    "ts": latest_candle["ts"],
+                    "open": latest_candle["open"],
+                    "high": latest_candle["high"],
+                    "low": latest_candle["low"],
+                    "close": latest_candle["close"],
+                    "volume": latest_candle["volume"],
+                }
+                if not df_window.empty:
+                    _last_ts = pd.to_datetime(df_window["ts"].iloc[-1])
+                    _live_ts = pd.to_datetime(_live_row["ts"])
+                    if _live_ts > _last_ts:
+                        df_decision_window = pd.concat(
+                            [df_window, pd.DataFrame([_live_row])],
+                            ignore_index=True,
+                        ).tail(120).reset_index(drop=True)
+                    elif _live_ts == _last_ts:
+                        df_decision_window = df_window.copy()
+                        for _k in ("open", "high", "low", "close", "volume"):
+                            df_decision_window.at[df_decision_window.index[-1], _k] = _live_row[_k]
+            except Exception as _dw_e:
+                logger.debug(f"[DECISION WINDOW] live candle merge failed: {_dw_e}")
+
             market_data = {
                 "candle":    latest_candle,
-                "df_window": df_window,
+                "df_window": df_decision_window,
                 # Legacy keys for dashboard compat
-                "candles": df_window["close"].tolist(),
-                "highs":   df_window["high"].tolist(),
-                "lows":    df_window["low"].tolist(),
+                "candles": df_decision_window["close"].tolist(),
+                "highs":   df_decision_window["high"].tolist(),
+                "lows":    df_decision_window["low"].tolist(),
             }
 
             # ── Run decision engine ───────────────────────────────────
@@ -1516,11 +1541,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 try:
                     atm_strike = round(current_price / 100) * 100
                     option_chain = ctx.broker.get_option_chain_near_atm(strikes_range=5)
-                    
+
                     if has_oi_wall(option_chain, atm_strike, side):
                         logger.info(
                             f"[GATE] OI wall blocked {side} entry | ATM={atm_strike}"
                         )
+                        ctx.live_engine.record_block("OI_WALL")
                         decision = None
                 except Exception as _oi_e:
                     logger.warning(f"[OI FILTER] Error (non-fatal): {_oi_e}")
@@ -1815,6 +1841,17 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
                                 _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
                                 if _s_order:
+                                    _ms_s = ctx.live_engine.get_market_state(ts)
+                                    _s_ml_prob = (
+                                        _ms_s.get("ce_adj", 0.0)
+                                        if _s_side == "CE"
+                                        else _ms_s.get("pe_adj", 0.0)
+                                    )
+                                    _s_opp_prob = (
+                                        _ms_s.get("pe_adj", 0.0)
+                                        if _s_side == "CE"
+                                        else _ms_s.get("ce_adj", 0.0)
+                                    )
                                     scalp_position = {
                                         "symbol":         _s_symbol,
                                         "side":           _s_side,
@@ -1825,7 +1862,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
                                         "max_pnl":        0.0,
                                         "min_pnl":        0.0,
-                                        "ml_prob":        0.0,
+                                        "ml_prob":        float(_s_ml_prob or 0.0),
+                                        "features":       ctx.live_engine._last_features or {},
                                         "regime":         "SCALP",
                                         "reason":         _s_sig["reason"],
                                         "entry_ts":       ts,
@@ -1834,7 +1872,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     logger.info(
                                         f"[SCALP ENTRY] {_s_side} {_s_symbol} "
                                         f"@ {_s_order['price']:.1f} "
-                                        f"| BANKNIFTY move={_s_sig['move_pts']:+.1f}pt"
+                                        f"| BANKNIFTY move={_s_sig['move_pts']:+.1f}pt "
+                                        f"| ml={float(_s_ml_prob or 0.0):.3f} "
+                                        f"opp_ml={float(_s_opp_prob or 0.0):.3f}"
                                     )
                                     _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
                                     send_scalp_entry(_scalp_entry_msg)

@@ -70,8 +70,10 @@ class ZerodhaBroker:
         self.ticker = KiteTicker(self.api_key, self.access_token)
 
         def on_ticks(ws, ticks):
+            now_ts = time.time()
             for tick in ticks:
                 token = tick["instrument_token"]
+                tick["_price_updated_at"] = now_ts
                 # Preserve OI from a previous FULL-mode tick when a QUOTE-mode
                 # packet arrives without the oi key. Zerodha sends mixed packet
                 # sizes (44-byte QUOTE on price changes, 184-byte FULL when OI
@@ -81,8 +83,12 @@ class ZerodhaBroker:
                     for _k in ("oi", "oi_day_high", "oi_day_low"):
                         if _k in prev:
                             tick[_k] = prev[_k]
+                    if "_oi_updated_at" in prev:
+                        tick["_oi_updated_at"] = prev["_oi_updated_at"]
+                elif "oi" in tick:
+                    tick["_oi_updated_at"] = now_ts
                 self._last_ticks[token] = tick
-            self._last_tick_time = time.time()
+            self._last_tick_time = now_ts
 
         def on_connect(ws, _):
             ws.subscribe(tokens)
@@ -126,7 +132,7 @@ class ZerodhaBroker:
         ATM + strikes_range*100] for both CE and PE (11 strikes × 2 sides = 22
         tokens plus the BANKNIFTY index already subscribed = 23 total).
 
-        MODE_QUOTE is used so ticks carry both `last_price` and `oi`.
+        MODE_FULL is used for options so ticks carry both `last_price` and `oi`.
         Once subscribed, `get_option_chain_near_atm()` will return live OI
         values instead of zero.
 
@@ -326,10 +332,20 @@ class ZerodhaBroker:
                     continue
                 ce   = sorted(ce_list, key=lambda x: x["expiry"])[0]
                 pe   = sorted(pe_list, key=lambda x: x["expiry"])[0]
+                ce_tick = self._last_ticks.get(ce["instrument_token"], {})
+                pe_tick = self._last_ticks.get(pe["instrument_token"], {})
                 chain.append({
                     "strike": s,
-                    "ce_oi":  self._last_ticks.get(ce["instrument_token"], {}).get("oi", 0),
-                    "pe_oi":  self._last_ticks.get(pe["instrument_token"], {}).get("oi", 0),
+                    "ce_oi":  ce_tick.get("oi", 0),
+                    "pe_oi":  pe_tick.get("oi", 0),
+                    "updated_at": min(
+                        float(ce_tick.get("_oi_updated_at", 0) or 0),
+                        float(pe_tick.get("_oi_updated_at", 0) or 0),
+                    ),
+                    "stale": (
+                        not ce_tick or not pe_tick
+                        or "oi" not in ce_tick or "oi" not in pe_tick
+                    ),
                 })
             return chain
         except Exception:

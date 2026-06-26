@@ -128,6 +128,7 @@ class LiveEngine:
         self._last_pe_prob: float    = 0.0
         self._last_ce_adj: float     = 0.0
         self._last_pe_adj: float     = 0.0
+        self._last_predict_error: str = ""
         self._last_features: dict    = {}
         self._ml_history: list       = []   # rolling window for percentile scoring
 
@@ -512,6 +513,20 @@ class LiveEngine:
             self._last_features = features
             _ce_p = self.predictor.predict(features, "CE")
             _pe_p = self.predictor.predict(features, "PE")
+            if _ce_p is None or _pe_p is None:
+                self._last_ce_prob = 0.0
+                self._last_pe_prob = 0.0
+                self._last_ce_adj = 0.0
+                self._last_pe_adj = 0.0
+                self._last_ml_edge = 0.0
+                self._last_predict_error = (
+                    f"CE={'None' if _ce_p is None else _ce_p} "
+                    f"PE={'None' if _pe_p is None else _pe_p}"
+                )
+                self._count_block("PREDICT_FAILED")
+                self._last_block_reason = f"PREDICT_FAILED ({self._last_predict_error})"
+                return None
+            self._last_predict_error = ""
             if _ce_p is not None:
                 self._last_ce_prob = float(_ce_p)
                 self._ml_history.append(float(_ce_p))

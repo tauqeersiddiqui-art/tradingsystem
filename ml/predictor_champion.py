@@ -193,10 +193,7 @@ class ChampionPredictor:
             else:
                 prob = lgbm_prob
 
-            if prob < 0.01:
-                return 0.0
-
-            return round(prob, 4)
+            return round(prob, 6)
 
         except Exception as e:
             logger.error(f"[PREDICTOR ERROR] {direction}: {e}")

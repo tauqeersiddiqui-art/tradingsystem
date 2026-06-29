@@ -1,0 +1,118 @@
+{
+  "symbol": "BANKNIFTY26JUN58100CE",
+  "side": "CE",
+  "entry": 249.05,
+  "qty": 30,
+  "summary": {
+    "max_pnl": 264.0,
+    "mae_rs": 0.0,
+    "mae_pts": 0.0,
+    "ladder_stage": "S2_TRAIL62%",
+    "locked_profit": 163.68,
+    "retained_profit_pct": 0.574,
+    "exit_reason": "STOP",
+    "exit_price": 254.1,
+    "final_stop_loss": 254.51,
+    "pnl": 151.5
+  },
+  "events": [
+    {
+      "t": "10:55:16",
+      "type": "ENTRY",
+      "price": 249.05,
+      "spot": 58077.7,
+      "ml_ce": 0.765,
+      "ml_pe": 0.164,
+      "adx": 24.1,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 239.05,
+      "regime": "RANGE"
+    },
+    {
+      "t": "10:55:27",
+      "type": "MFE_PEAK",
+      "mfe_pts": 3.8,
+      "price": 255
+    },
+    {
+      "t": "10:55:27",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 251.41,
+      "pts_locked": 2.36,
+      "mfe_pts": 3.8,
+      "locked_rs": 70.68
+    },
+    {
+      "t": "10:55:28",
+      "type": "MFE_PEAK",
+      "mfe_pts": 5.95,
+      "price": 256.2
+    },
+    {
+      "t": "10:55:28",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 252.74,
+      "pts_locked": 3.69,
+      "mfe_pts": 5.95,
+      "locked_rs": 110.67
+    },
+    {
+      "t": "10:55:29",
+      "type": "MFE_PEAK",
+      "mfe_pts": 7.15,
+      "price": 255.75
+    },
+    {
+      "t": "10:55:29",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 253.48,
+      "pts_locked": 4.43,
+      "mfe_pts": 7.15,
+      "locked_rs": 132.99
+    },
+    {
+      "t": "10:55:34",
+      "type": "MFE_PEAK",
+      "mfe_pts": 8.05,
+      "price": 257.1
+    },
+    {
+      "t": "10:55:34",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 254.04,
+      "pts_locked": 4.99,
+      "mfe_pts": 8.05,
+      "locked_rs": 149.73
+    },
+    {
+      "t": "10:55:36",
+      "type": "MFE_PEAK",
+      "mfe_pts": 8.8,
+      "price": 255.9
+    },
+    {
+      "t": "10:55:36",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 254.51,
+      "pts_locked": 5.46,
+      "mfe_pts": 8.8,
+      "locked_rs": 163.68
+    },
+    {
+      "t": "10:55:38",
+      "type": "EXIT",
+      "price": 254.1,
+      "reason": "STOP",
+      "pnl": 151.5,
+      "mfe_pts": 8.8,
+      "mae_pts": 0.0
+    }
+  ]
+}

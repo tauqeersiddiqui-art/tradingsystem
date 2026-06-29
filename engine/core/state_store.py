@@ -37,17 +37,18 @@ def _serialize_position(position):
     return out
 
 
-def save_state(ctx, position=None, scalp_position=None):
+def save_state(ctx, position=None, scalp_position=None, scalp_trades_today=0):
     """Persist pnl, trades_today, closed-pnl list, and open positions."""
     try:
         snap = {
-            "session_date": date.today().isoformat(),
-            "saved_at":     datetime.now().isoformat(),
-            "pnl":          float(getattr(ctx, "pnl", 0.0)),
-            "trades_today": int(getattr(ctx, "trades_today", 0)),
-            "positions":    list(getattr(ctx, "positions", [])),
-            "open_position":  _serialize_position(position),
-            "scalp_position": _serialize_position(scalp_position),
+            "session_date":      date.today().isoformat(),
+            "saved_at":          datetime.now().isoformat(),
+            "pnl":               float(getattr(ctx, "pnl", 0.0)),
+            "trades_today":      int(getattr(ctx, "trades_today", 0)),
+            "scalp_trades_today": int(scalp_trades_today),
+            "positions":         list(getattr(ctx, "positions", [])),
+            "open_position":     _serialize_position(position),
+            "scalp_position":    _serialize_position(scalp_position),
         }
         os.makedirs(os.path.dirname(_STATE_PATH), exist_ok=True)
         # Per-process temp name + atomic os.replace => readers never observe a

@@ -800,6 +800,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _last_exit_epoch  = 0.0     # epoch time of that exit (for same-symbol cooldown)
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
     _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of BANKNIFTY spot
+    _scalp_trades_today   = 0                                # scalp-only exit counter (capped at SCALP_MAX_TRADES)
 
     # ══════════════════════════════════════════════════════════════════
     # RESTART RECOVERY + BROKER RECONCILIATION  (Tasks 3, 4, 8)
@@ -810,9 +811,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     try:
         _snap = load_state()
         if _snap:
-            ctx.pnl          = float(_snap.get("pnl", ctx.pnl))
-            ctx.trades_today = int(_snap.get("trades_today", ctx.trades_today))
-            ctx.positions    = list(_snap.get("positions", ctx.positions))
+            ctx.pnl             = float(_snap.get("pnl", ctx.pnl))
+            ctx.trades_today    = int(_snap.get("trades_today", ctx.trades_today))
+            ctx.positions       = list(_snap.get("positions", ctx.positions))
+            _scalp_trades_today = int(_snap.get("scalp_trades_today", 0))
         _restored_pos   = deserialize_position(_snap.get("open_position"))   if _snap else None
         _restored_scalp = deserialize_position(_snap.get("scalp_position"))  if _snap else None
 
@@ -932,6 +934,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     logger.info("[DAILY RESET]")
 
                     ctx.ml_learner.reset_day()
+                    _scalp_trades_today = 0   # reset scalp-only counter
 
                     ctx._last_daily_reset = today
             # ── Poll Telegram: buttons + text commands (every cycle) ──
@@ -1421,7 +1424,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _last_exit_symbol = _exited_symbol
                     _last_exit_epoch  = time.time()
                     # Persist closed state immediately (open_position -> None)
-                    save_state(ctx, None, scalp_position)
+                    save_state(ctx, None, scalp_position, _scalp_trades_today)
 
                     # Auto-pause after 2 consecutive LOSING stops
                     # A profitable trailing-stop exit is NOT a consecutive loss.
@@ -1654,7 +1657,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _sl_create(ctx, position)
 
                     # Persist new open position immediately (survives restart)
-                    save_state(ctx, position, scalp_position)
+                    save_state(ctx, position, scalp_position, _scalp_trades_today)
                     _signal_first_ts = None   # reset for next trade
 
                     # F1: start replay timeline (observational)
@@ -1819,11 +1822,14 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         freeze_scalp_message(_scalp_exit_msg)
                         send_trade_channel(_scalp_exit_msg)
                         scalp_position = None
+                        _scalp_trades_today += 1
                         ctx.scalp_engine.on_exit()
 
                 # ── Scalp entry ───────────────────────────────────────
+                _scalp_max = getattr(ctx.config, "SCALP_MAX_TRADES", 10)
                 if (scalp_position is None
                         and ctx.trades_today < max_trades
+                        and _scalp_trades_today < _scalp_max
                         and ctx.pnl > ctx.config.DAILY_LOSS_LIMIT):
                     _s_sig = ctx.scalp_engine.check_entry(
                         ltp_current, _scalp_ltp_history, ts
@@ -1838,47 +1844,84 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     f"< min {ctx.config.SCALP_MIN_OPT_PTS:.0f}pt — too cheap, skipped"
                                 )
                             else:
-                                _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
-                                _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
-                                if _s_order:
-                                    _ms_s = ctx.live_engine.get_market_state(ts)
-                                    _s_ml_prob = (
-                                        _ms_s.get("ce_adj", 0.0)
-                                        if _s_side == "CE"
-                                        else _ms_s.get("pe_adj", 0.0)
-                                    )
-                                    _s_opp_prob = (
-                                        _ms_s.get("pe_adj", 0.0)
-                                        if _s_side == "CE"
-                                        else _ms_s.get("ce_adj", 0.0)
-                                    )
-                                    scalp_position = {
-                                        "symbol":         _s_symbol,
-                                        "side":           _s_side,
-                                        "qty":            _scalp_entry_qty,
-                                        "lot_size":       ctx.config.LOT_SIZE,
-                                        "entry":          _s_order["price"],
-                                        "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
-                                        "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
-                                        "max_pnl":        0.0,
-                                        "min_pnl":        0.0,
-                                        "ml_prob":        float(_s_ml_prob or 0.0),
-                                        "features":       ctx.live_engine._last_features or {},
-                                        "regime":         "SCALP",
-                                        "reason":         _s_sig["reason"],
-                                        "entry_ts":       ts,
-                                        "lock_triggered": False,
-                                    }
+                                # ── Fetch ML state BEFORE order (filter + logging) ──
+                                _ms_s = ctx.live_engine.get_market_state(ts)
+                                _s_ml_prob = (
+                                    _ms_s.get("ce_adj", 0.0)
+                                    if _s_side == "CE"
+                                    else _ms_s.get("pe_adj", 0.0)
+                                )
+                                _s_opp_prob = (
+                                    _ms_s.get("pe_adj", 0.0)
+                                    if _s_side == "CE"
+                                    else _ms_s.get("ce_adj", 0.0)
+                                )
+                                _s_ml_edge = _s_ml_prob - _s_opp_prob
+                                _ml_disagree_margin = getattr(ctx.config, "SCALP_ML_DISAGREE_MARGIN", 0.12)
+                                _ml_min_prob        = getattr(ctx.config, "SCALP_ML_MIN_PROB", 0.40)
+                                _ml_min_edge        = getattr(ctx.config, "SCALP_ML_MIN_EDGE", 0.08)
+                                _range_mom_thresh   = getattr(ctx.config, "SCALP_RANGE_MOM_THRESH", 15.0)
+                                _day_type_str       = str(ctx.ml_learner.get_day_type()).upper()
+                                _is_range_day       = (ctx.live_engine._day_classified
+                                                       and "RANGE" in _day_type_str)
+
+                                if _s_ml_edge < -_ml_disagree_margin:
+                                    # ML strongly favours opposite direction — skip
                                     logger.info(
-                                        f"[SCALP ENTRY] {_s_side} {_s_symbol} "
-                                        f"@ {_s_order['price']:.1f} "
-                                        f"| BANKNIFTY move={_s_sig['move_pts']:+.1f}pt "
-                                        f"| ml={float(_s_ml_prob or 0.0):.3f} "
-                                        f"opp_ml={float(_s_opp_prob or 0.0):.3f}"
+                                        f"[SCALP SKIP] ML disagrees {_s_side}: "
+                                        f"ml={_s_ml_prob:.3f} opp={_s_opp_prob:.3f} "
+                                        f"edge={_s_ml_edge:.3f} < -{_ml_disagree_margin}"
                                     )
-                                    _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
-                                    send_scalp_entry(_scalp_entry_msg)
-                                    send_trade_channel(_scalp_entry_msg)
+                                elif _s_ml_prob < _ml_min_prob:
+                                    # Absolute ML conviction too low
+                                    logger.info(
+                                        f"[SCALP SKIP] ML weak {_s_side}: "
+                                        f"ml={_s_ml_prob:.3f} < {_ml_min_prob}"
+                                    )
+                                elif _s_ml_edge < _ml_min_edge:
+                                    # ML edge too thin — models have no clear view
+                                    logger.info(
+                                        f"[SCALP SKIP] ML edge thin {_s_side}: "
+                                        f"edge={_s_ml_edge:.3f} < {_ml_min_edge}"
+                                    )
+                                elif _is_range_day and abs(_s_sig["move_pts"]) < _range_mom_thresh:
+                                    # RANGE_DAY: require stronger momentum to reduce chop
+                                    logger.info(
+                                        f"[SCALP SKIP] RANGE_DAY weak move {_s_side}: "
+                                        f"{_s_sig['move_pts']:+.1f}pt < {_range_mom_thresh:.0f}pt"
+                                    )
+                                else:
+                                    _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
+                                    _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
+                                    if _s_order:
+                                        scalp_position = {
+                                            "symbol":         _s_symbol,
+                                            "side":           _s_side,
+                                            "qty":            _scalp_entry_qty,
+                                            "lot_size":       ctx.config.LOT_SIZE,
+                                            "entry":          _s_order["price"],
+                                            "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
+                                            "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
+                                            "max_pnl":        0.0,
+                                            "min_pnl":        0.0,
+                                            "ml_prob":        float(_s_ml_prob or 0.0),
+                                            "features":       ctx.live_engine._last_features or {},
+                                            "regime":         "SCALP",
+                                            "reason":         _s_sig["reason"],
+                                            "entry_ts":       ts,
+                                            "lock_triggered": False,
+                                        }
+                                        logger.info(
+                                            f"[SCALP ENTRY] {_s_side} {_s_symbol} "
+                                            f"@ {_s_order['price']:.1f} "
+                                            f"| BANKNIFTY move={_s_sig['move_pts']:+.1f}pt "
+                                            f"| ml={float(_s_ml_prob or 0.0):.3f} "
+                                            f"opp_ml={float(_s_opp_prob or 0.0):.3f} "
+                                            f"| scalp={_scalp_trades_today+1}/{_scalp_max}"
+                                        )
+                                        _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
+                                        send_scalp_entry(_scalp_entry_msg)
+                                        send_trade_channel(_scalp_entry_msg)
 
             # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)
@@ -2001,7 +2044,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # Captures stop_loss / target / max_pnl / pnl / trades_today as they
             # change, so a restart resumes from at most ~1s ago.
             try:
-                save_state(ctx, position, scalp_position)
+                save_state(ctx, position, scalp_position, _scalp_trades_today)
             except Exception:
                 pass
 

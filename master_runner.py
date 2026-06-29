@@ -1588,21 +1588,17 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # qty was computed and validated in the block above — single
                 # source of truth, no fallback recompute here.
 
-                # ── Telegram confirmation (3s timeout → auto-execute) ──
-                _confirmed = ask_trade_permission(
-                    side    = side,
-                    price   = builder.ltp() or 0.0,
-                    ml_prob = decision["ml_prob"],
-                    stop    = decision.get("stop_loss", 0.0),
-                    target  = decision.get("target",    0.0),
-                )
-                if not _confirmed:
-                    logger.info(f"[GATE] Trade SKIPPED by user (Telegram SKIP)")
-                    ctx.live_engine.record_block("TG_SKIP")
-                    decision = None  # fall through cleanly
-
-                if decision is not None:
-                    pass  # proceed to execute below
+                # ── IMMEDIATE EXECUTION (no approval gate) ──
+                # The old ask_trade_permission() blocked the single-threaded engine
+                # loop for up to 3s waiting on a Telegram button. On fast BANKNIFTY
+                # options that delay caused material entry slippage, so the signal
+                # now executes instantly. The entry is still notified after fill via
+                # send_trade_entry_with_exit_button(), and /pause still halts entries.
+                import telegram.notifier as _tn_gate
+                if _tn_gate.ENGINE_PAUSED:
+                    logger.info("[GATE] Entry skipped — engine PAUSED")
+                    ctx.live_engine.record_block("PAUSED")
+                    decision = None
 
                 # F5: capture option LTP just before market order (slippage baseline)
                 _signal_opt_ltp = 0.0
@@ -1749,6 +1745,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         scalp_position["qty"],
                         scalp_position["max_pnl"],
                         scalp_position["stop_loss"],
+                        scalp_position.get("ml_prob", 0.5),
+                        str(ctx.ml_learner.get_day_type()),
                     )
                     if _sc_new_stop > scalp_position["stop_loss"] + 1e-6:
                         logger.info(

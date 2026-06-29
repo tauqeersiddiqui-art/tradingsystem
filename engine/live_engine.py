@@ -999,6 +999,8 @@ class LiveEngine:
         stop_loss = position.get("stop_loss", entry * 0.90)
         max_pnl   = position.get("max_pnl", 0.0)
         ml_prob   = position.get("ml_prob", 0.5)
+        # Live market regime drives the dynamic tight/loose trail.
+        _regime   = str(self.learner.get_day_type())
 
         # ── profit_manager handles trailing + lock system ─────────────
         new_sl, new_max_pnl, pm_reason = manage_position(
@@ -1009,6 +1011,7 @@ class LiveEngine:
             max_pnl=max_pnl,
             ml_prob=ml_prob,
             target=position.get("target"),
+            regime=_regime,
         )
 
         # Update position dict in-place so caller persists new SL
@@ -1017,7 +1020,7 @@ class LiveEngine:
 
         # Track highest ladder rung for diagnostics journal
         from engine.execution.profit_manager import ladder_locked_rs
-        _lrs, _lstage = ladder_locked_rs(new_max_pnl, size)
+        _lrs, _lstage = ladder_locked_rs(new_max_pnl, size, ml_prob, _regime)
         if _lrs > 0:
             position["_ladder_stage"] = _lstage
 

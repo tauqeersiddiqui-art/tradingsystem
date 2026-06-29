@@ -75,21 +75,68 @@ def _cost_rs(qty: int) -> float:
     return lots * cost_per_lot
 
 
-def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):
+def _dynamic_lock_profile(ml_prob, regime):
+    """
+    DYNAMIC tight/loose decision — ML conviction + market regime choose how much
+    of a winning move to give back before locking. This is what lets the engine
+    "decide when to tighten / loosen" instead of one fixed 0.72.
+
+    Returns dict: trail_pct, arm_mult, ret_hi, ret_lo, label.
+      * trail_pct  — fraction of peak profit retained by the trailing lock
+      * arm_mult   — MFE (in cost-multiples) before the first lock arms
+      * ret_hi/lo  — drawdown-exit retention for high / low ML prob
+    Logic:
+      - High conviction (>=0.78) or TREND day  -> LOOSEN (let winners run)
+      - Low  conviction (<=0.58) or RANGE/VOL  -> TIGHTEN (lock profit fast)
+    """
+    prob   = ml_prob if (ml_prob and ml_prob > 0) else 0.5
+    reg    = str(regime or "").upper()
+    trend  = "TREND" in reg
+    choppy = ("RANGE" in reg) or ("VOLATILE" in reg) or ("EXPANSION" in reg)
+
+    # conviction axis
+    if prob >= 0.78:
+        trail_pct, arm_mult, ret_hi, ret_lo, label = 0.66, 1.6, 0.66, 0.58, "LOOSE_HICONV"
+    elif prob <= 0.58:
+        trail_pct, arm_mult, ret_hi, ret_lo, label = 0.80, 1.3, 0.78, 0.70, "TIGHT_LOCONV"
+    else:
+        trail_pct, arm_mult, ret_hi, ret_lo, label = 0.72, 1.5, 0.72, 0.62, "BAL"
+
+    # regime axis (stacks on conviction)
+    if trend:
+        trail_pct -= 0.06; ret_hi -= 0.05; ret_lo -= 0.05; arm_mult += 0.3
+        label += "+TREND"
+    elif choppy:
+        trail_pct += 0.06; ret_hi += 0.05; ret_lo += 0.05; arm_mult -= 0.2
+        label += "+CHOP"
+
+    trail_pct = max(0.55, min(trail_pct, 0.88))
+    ret_hi    = max(0.55, min(ret_hi, 0.85))
+    ret_lo    = max(0.50, min(ret_lo, 0.80))
+    arm_mult  = max(1.1, min(arm_mult, 2.0))
+    return {"trail_pct": trail_pct, "arm_mult": arm_mult,
+            "ret_hi": ret_hi, "ret_lo": ret_lo, "label": label}
+
+
+def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS,
+                     ml_prob=None, regime=None):
     """
     Return (locked_profit_rs, stage_label) for the current peak PnL in Rs.
 
-    Cost-aware: never returns a lock below the trade's round-trip cost, and
-    returns 0 (no lock) until MFE clears 1.5x cost so noise can't trip it.
+    Cost-aware AND conviction/regime-aware: never returns a lock below the
+    trade's round-trip cost, and the arming multiple + trail fraction now come
+    from _dynamic_lock_profile() so high-conviction / trend trades give the move
+    more room while weak / choppy trades lock fast.
     """
     cost = _cost_rs(qty)
+    prof = _dynamic_lock_profile(ml_prob, regime)
 
     # Not enough cushion yet — rely on the initial stop (no early lock).
-    if max_pnl < cost * 1.5:
+    if max_pnl < cost * prof["arm_mult"]:
         return 0.0, "INITIAL"
 
-    # Trail a fraction of the peak, floored at break-even-after-cost.
-    locked = max(_TRAIL_PCT * max_pnl, cost)
+    # Trail a dynamic fraction of the peak, floored at break-even-after-cost.
+    locked = max(prof["trail_pct"] * max_pnl, cost)
 
     # Lock more aggressively when deep in profit (protect large winners).
     if   max_pnl >= 2000.0:
@@ -102,20 +149,21 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):
         locked = max(locked, 0.65 * max_pnl)
         stage  = "S4_TRAIL65%"
     else:
-        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else "S2_TRAIL62%"
+        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else f"S2_{prof['label']}"
 
     locked = min(locked, max_pnl)   # never lock more than the peak itself
     return locked, stage
 
 
-def ladder_stop(entry_price, qty, max_pnl, current_stop):
+def ladder_stop(entry_price, qty, max_pnl, current_stop, ml_prob=None, regime=None):
     """
     Convert the rupee profit-lock to a premium stop level and ratchet UP only.
 
     Returns (new_stop, stage_label, locked_rs).
     Used by BOTH manage_position (normal trades) and the scalp loop.
+    ml_prob / regime drive the dynamic tight-vs-loose trail.
     """
-    locked_rs, stage = ladder_locked_rs(max_pnl, qty)
+    locked_rs, stage = ladder_locked_rs(max_pnl, qty, ml_prob, regime)
     if locked_rs <= 0:
         return current_stop, stage, 0.0
     stop_floor = entry_price + locked_rs / max(qty, 1)
@@ -123,7 +171,8 @@ def ladder_stop(entry_price, qty, max_pnl, current_stop):
     return new_stop, stage, locked_rs
 
 
-def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, target=None):
+def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob,
+                    target=None, regime=None):
     """
     Args:
         entry_price : option premium at entry
@@ -150,7 +199,9 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
         return stop_loss, max_pnl, "TARGET_HIT"
 
     # ── 1  Centralized profit-lock ladder (single source of truth) ────
-    new_stop, stage, locked_rs = ladder_stop(entry_price, qty, max_pnl, stop_loss)
+    new_stop, stage, locked_rs = ladder_stop(
+        entry_price, qty, max_pnl, stop_loss, ml_prob, regime
+    )
     if new_stop > stop_loss + 1e-6:
         logger.info(
             f"[LADDER]\nMFE={max_pnl:.0f}\nLOCK={locked_rs:.0f}\n"
@@ -158,11 +209,12 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
         )
     stop_loss = new_stop
 
-    # ── 2  Drawdown exit — only after meaningful profit (kept) ────────
-    # Arms at qty*8 (was qty*10) so an ~8pt winner is protected, and retains
-    # 72%/62% (was 65%/55%) so big moves keep more of the peak before stopping.
+    # ── 2  Drawdown exit — only after meaningful profit ───────────────
+    # DYNAMIC: retention now comes from _dynamic_lock_profile(), so a trending
+    # high-conviction trade keeps running while a choppy/weak one locks fast.
+    _prof = _dynamic_lock_profile(ml_prob, regime)
     if max_pnl >= qty * 8:
-        retention = 0.72 if ml_prob >= 0.65 else 0.62
+        retention = _prof["ret_hi"] if ml_prob >= 0.65 else _prof["ret_lo"]
         if pnl <= max_pnl * retention:
             reason = "Drawdown"
 

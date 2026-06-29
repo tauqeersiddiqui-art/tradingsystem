@@ -222,9 +222,25 @@ class IntradayMLLearner:
 
         If CE has been losing today:  ce_multiplier < 1.0 → lower CE prob
         If PE has been winning today: pe_multiplier > 1.0 → boost PE prob
+
+        Regime-aware calibration (makes the prediction itself better):
+          TREND_DAY            → +3% trust  (model follows real momentum well)
+          VOLATILE / RANGE_DAY → −3% haircut (reversals fake the model out)
+        Applied to BOTH sides so the directional edge is preserved — it only
+        shifts how easily a signal clears its threshold for the current regime.
         """
         adj_ce = min(raw_ce * self.ce_multiplier, 0.99)
         adj_pe = min(raw_pe * self.pe_multiplier, 0.99)
+
+        if self.day_type == DAY_TREND:
+            _tilt = 1.03
+        elif self.day_type in (DAY_VOLATILE, DAY_RANGE):
+            _tilt = 0.97
+        else:
+            _tilt = 1.0
+        adj_ce = min(adj_ce * _tilt, 0.99)
+        adj_pe = min(adj_pe * _tilt, 0.99)
+
         return round(adj_ce, 4), round(adj_pe, 4)
 
     def record_trade_result(self, side: str, pnl: float, ml_prob: float,

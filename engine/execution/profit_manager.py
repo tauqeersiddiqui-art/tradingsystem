@@ -61,7 +61,10 @@ LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # ~6.67 pts (BANKNIFTY 30-qty lot)
 
 _COST_PER_LOT = 66.0     # round-trip cost per 30-qty BANKNIFTY lot (overridable via env)
 _LOT_UNITS    = 30
-_TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
+# Fraction of peak profit retained once cost recovered. Raised 0.62 -> 0.72 on
+# 2026-06-29: an 18pt MFE (Rs540) was booking only Rs222 (59% give-back). At 0.72
+# the same peak locks ~Rs389, so fast reversals surrender far less of the move.
+_TRAIL_PCT    = 0.72
 
 
 def _cost_rs(qty: int) -> float:
@@ -156,8 +159,10 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
     stop_loss = new_stop
 
     # ── 2  Drawdown exit — only after meaningful profit (kept) ────────
-    if max_pnl >= qty * 10:
-        retention = 0.65 if ml_prob >= 0.65 else 0.55
+    # Arms at qty*8 (was qty*10) so an ~8pt winner is protected, and retains
+    # 72%/62% (was 65%/55%) so big moves keep more of the peak before stopping.
+    if max_pnl >= qty * 8:
+        retention = 0.72 if ml_prob >= 0.65 else 0.62
         if pnl <= max_pnl * retention:
             reason = "Drawdown"
 

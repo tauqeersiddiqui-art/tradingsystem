@@ -53,5 +53,17 @@ class Config:
         self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "2.0"))   # lock SL at entry after +2pt
         self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "2.0"))  # trail SL 2pt below peak
         self.SCALP_MIN_OPT_PTS        = float(os.getenv("SCALP_MIN_OPT_PTS", "30.0"))  # skip options cheaper than this
+        # Max scalp trades per session — reserves remaining slots for ML engine
+        self.SCALP_MAX_TRADES         = int(os.getenv("SCALP_MAX_TRADES", "10"))
+        # ML filter: skip scalp if opposite ML prob exceeds side's prob by this margin
+        self.SCALP_ML_DISAGREE_MARGIN = float(os.getenv("SCALP_ML_DISAGREE_MARGIN", "0.12"))
+        # Min absolute ML prob for the trade side before scalp entry is allowed
+        self.SCALP_ML_MIN_PROB        = float(os.getenv("SCALP_ML_MIN_PROB", "0.40"))
+        # Min positive ML edge (side_prob - opp_prob) required for scalp entry.
+        # Blocks near-neutral entries where models have no view (e.g. right after restart
+        # before sufficient candles accumulate, or in choppy open conditions).
+        self.SCALP_ML_MIN_EDGE        = float(os.getenv("SCALP_ML_MIN_EDGE", "0.08"))
+        # RANGE_DAY: require stronger spot move before scalp fires (reduces chop noise)
+        self.SCALP_RANGE_MOM_THRESH   = float(os.getenv("SCALP_RANGE_MOM_THRESH", "15.0"))
 
         print(f"[CONFIG] Capital={self.INITIAL_CAPITAL} | DRY_RUN={self.DRY_RUN} | LOT_SIZE={self.LOT_SIZE}")

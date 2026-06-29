@@ -21,7 +21,9 @@ class ScalpEngine:
         self._mom_window    = config.SCALP_MOMENTUM_WINDOW
         self._mom_thresh    = config.SCALP_MOMENTUM_THRESHOLD
         self._cooldown_secs = config.SCALP_COOLDOWN
-        self._last_exit_ts  = 0.0
+        # Start with a full cooldown so first scalp cannot fire in the first N seconds
+        # after startup.  Prevents immediately acting on stale pre-restart momentum.
+        self._last_exit_ts  = time.time()
 
         logger.info(
             f"[SCALP ENGINE] initialized | threshold={self._mom_thresh}pt "

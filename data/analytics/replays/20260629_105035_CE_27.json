@@ -1,0 +1,163 @@
+{
+  "symbol": "BANKNIFTY26JUN58100CE",
+  "side": "CE",
+  "entry": 250.6,
+  "qty": 30,
+  "summary": {
+    "max_pnl": 538.5,
+    "mae_rs": 0.0,
+    "mae_pts": 0.0,
+    "ladder_stage": "S2_TRAIL62%",
+    "locked_profit": 333.87,
+    "retained_profit_pct": 0.412,
+    "exit_reason": "STOP",
+    "exit_price": 258,
+    "final_stop_loss": 261.73,
+    "pnl": 222.0
+  },
+  "events": [
+    {
+      "t": "10:50:35",
+      "type": "ENTRY",
+      "price": 250.6,
+      "spot": 58110.1,
+      "ml_ce": 0.739,
+      "ml_pe": 0.383,
+      "adx": 16.4,
+      "rsi": 50.0,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 240.6,
+      "regime": "RANGE"
+    },
+    {
+      "t": "10:50:53",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.65,
+      "price": 254.2
+    },
+    {
+      "t": "10:50:54",
+      "type": "MFE_PEAK",
+      "mfe_pts": 3.6,
+      "price": 254.85
+    },
+    {
+      "t": "10:50:54",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 252.83,
+      "pts_locked": 2.23,
+      "mfe_pts": 3.6,
+      "locked_rs": 66.96
+    },
+    {
+      "t": "10:50:55",
+      "type": "MFE_PEAK",
+      "mfe_pts": 4.25,
+      "price": 254.45
+    },
+    {
+      "t": "10:50:55",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 253.23,
+      "pts_locked": 2.63,
+      "mfe_pts": 4.25,
+      "locked_rs": 79.05
+    },
+    {
+      "t": "10:50:57",
+      "type": "MFE_PEAK",
+      "mfe_pts": 5.7,
+      "price": 261.2
+    },
+    {
+      "t": "10:50:57",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 254.13,
+      "pts_locked": 3.53,
+      "mfe_pts": 5.7,
+      "locked_rs": 106.02
+    },
+    {
+      "t": "10:50:58",
+      "type": "MFE_PEAK",
+      "mfe_pts": 10.6,
+      "price": 266.5
+    },
+    {
+      "t": "10:50:58",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 257.17,
+      "pts_locked": 6.57,
+      "mfe_pts": 10.6,
+      "locked_rs": 197.16
+    },
+    {
+      "t": "10:51:00",
+      "type": "MFE_PEAK",
+      "mfe_pts": 15.9,
+      "price": 267.4
+    },
+    {
+      "t": "10:51:00",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 260.46,
+      "pts_locked": 9.86,
+      "mfe_pts": 15.9,
+      "locked_rs": 295.74
+    },
+    {
+      "t": "10:51:01",
+      "type": "MFE_PEAK",
+      "mfe_pts": 16.8,
+      "price": 267.8
+    },
+    {
+      "t": "10:51:01",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 261.02,
+      "pts_locked": 10.42,
+      "mfe_pts": 16.8,
+      "locked_rs": 312.48
+    },
+    {
+      "t": "10:51:02",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 261.26,
+      "pts_locked": 10.66,
+      "mfe_pts": 17.2,
+      "locked_rs": 319.92
+    },
+    {
+      "t": "10:51:05",
+      "type": "MFE_PEAK",
+      "mfe_pts": 17.95,
+      "price": 266.35
+    },
+    {
+      "t": "10:51:05",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 261.73,
+      "pts_locked": 11.13,
+      "mfe_pts": 17.95,
+      "locked_rs": 333.87
+    },
+    {
+      "t": "10:51:15",
+      "type": "EXIT",
+      "price": 258,
+      "reason": "STOP",
+      "pnl": 222.0,
+      "mfe_pts": 17.95,
+      "mae_pts": 0.0
+    }
+  ]
+}

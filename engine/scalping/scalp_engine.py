@@ -58,9 +58,41 @@ class ScalpEngine:
         earliest_ltp = past[0][1]
         move = ltp_now - earliest_ltp
 
+        # ── Fresh-extreme gate (2026-06-30) ──────────────────────────────
+        # ROOT CAUSE of scalp losses: 23% of trades were MFE=0 "instant
+        # reversals" — entered AFTER the spot spike had already peaked, bought
+        # the inflated option premium at the local top, then gapped through the
+        # stop on the mean-revert (−363 avg). These are LATE entries into an
+        # EXHAUSTED move; raising the cumulative threshold only buys a bigger,
+        # later spike and makes it worse.
+        #
+        # Fix: only fire when price is STILL making a fresh extreme in the trade
+        # direction — i.e. momentum is still extending (a real breakout), not
+        # already rolling over. For CE the current tick must be at/near the
+        # window HIGH; for PE at/near the window LOW. A move that cleared the
+        # threshold earlier but has since faded off its extreme is rejected.
+        prices  = [ltp for _, ltp in past] + [ltp_now]
+        win_hi  = max(prices)
+        win_lo  = min(prices)
+        # Tolerance: allow entry within this many points of the extreme so a
+        # 1-tick micro-wobble at the high doesn't block a genuine breakout.
+        _eps = getattr(self, "_fresh_extreme_tol", 2.0)
+
         if move >= self._mom_thresh:
+            if ltp_now < win_hi - _eps:
+                logger.info(
+                    f"[SCALP SKIP] CE move=+{move:.1f}pt but faded off high "
+                    f"(now={ltp_now:.1f} hi={win_hi:.1f}) — exhausted, not fresh"
+                )
+                return None
             return {"side": "CE", "reason": "SCALP_MOM", "move_pts": round(move, 2)}
         if move <= -self._mom_thresh:
+            if ltp_now > win_lo + _eps:
+                logger.info(
+                    f"[SCALP SKIP] PE move={move:.1f}pt but faded off low "
+                    f"(now={ltp_now:.1f} lo={win_lo:.1f}) — exhausted, not fresh"
+                )
+                return None
             return {"side": "PE", "reason": "SCALP_MOM", "move_pts": round(move, 2)}
 
         return None

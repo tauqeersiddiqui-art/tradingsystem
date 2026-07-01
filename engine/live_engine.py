@@ -813,8 +813,8 @@ class LiveEngine:
         # Per-side thresholds: max of the model's calibrated threshold and the
         # learner's adaptive threshold (rises after losses).
         learn_thr = self.learner.get_ml_threshold()
-        ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr)
-        pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr)
+        ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr, _CE_ML_FLOOR)
+        pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr, _MIN_ML_FLOOR)
 
         # 1. PREDICT direction
         side   = "CE" if ce_adj >= pe_adj else "PE"
@@ -942,6 +942,7 @@ class LiveEngine:
             "rsi_1m":          f.get("rsi_1m", 50.0),
             "atr":             f.get("atr", 0.0),
             "supertrend_dir":  int(f.get("supertrend_dir", 0)),
+            "htf5_dir":         int(getattr(self, "_htf5_dir", 0)),
             "supertrend_dist": f.get("supertrend_dist", 0.0),
             "vwap":            self._vwap.value,
             "price_vs_vwap":   f.get("price_vs_vwap", 0.0),

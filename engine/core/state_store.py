@@ -37,7 +37,13 @@ def _serialize_position(position):
     return out
 
 
-def save_state(ctx, position=None, scalp_position=None, scalp_trades_today=0):
+def save_state(
+    ctx,
+    position=None,
+    scalp_position=None,
+    scalp_trades_today=0,
+    daily_profit_locked=False,
+):
     """Persist pnl, trades_today, closed-pnl list, and open positions."""
     try:
         snap = {
@@ -46,6 +52,7 @@ def save_state(ctx, position=None, scalp_position=None, scalp_trades_today=0):
             "pnl":               float(getattr(ctx, "pnl", 0.0)),
             "trades_today":      int(getattr(ctx, "trades_today", 0)),
             "scalp_trades_today": int(scalp_trades_today),
+            "daily_profit_locked": bool(daily_profit_locked),
             "positions":         list(getattr(ctx, "positions", [])),
             "open_position":     _serialize_position(position),
             "scalp_position":    _serialize_position(scalp_position),

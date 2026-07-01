@@ -280,6 +280,10 @@ def send_bot(message, parse_mode="HTML"):
     _tg_enqueue(_send, BOT_CHAT_ID, message, parse_mode=parse_mode)
 
 
+def send_bot_force(message, parse_mode="HTML"):
+    _tg_enqueue(_send, BOT_CHAT_ID, message, parse_mode=parse_mode)
+
+
 def send_trade_channel(message):
     if TRADE_QUIET_MODE:
         _log.debug("[TG QUIET] suppressed channel message")

@@ -1,0 +1,43 @@
+{
+  "symbol": "BANKNIFTY26JUN57700CE",
+  "side": "CE",
+  "entry": 52.9,
+  "qty": 30,
+  "summary": {
+    "max_pnl": 0.0,
+    "mae_rs": -231.0,
+    "mae_pts": -7.7,
+    "ladder_stage": "INITIAL",
+    "locked_profit": 0.0,
+    "retained_profit_pct": 0.0,
+    "exit_reason": "FAST_REVERSAL_30S",
+    "exit_price": 45.2,
+    "final_stop_loss": 42.9,
+    "pnl": -231.0
+  },
+  "events": [
+    {
+      "t": "14:55:40",
+      "type": "ENTRY",
+      "price": 52.9,
+      "spot": 57707.55,
+      "ml_ce": 0.721,
+      "ml_pe": 0.519,
+      "adx": 17.2,
+      "rsi": 50.0,
+      "vwap": "above",
+      "st_dir": 1,
+      "stop": 42.9,
+      "regime": "RANGE"
+    },
+    {
+      "t": "14:55:54",
+      "type": "EXIT",
+      "price": 45.2,
+      "reason": "FAST_REVERSAL_30S",
+      "pnl": -231.0,
+      "mfe_pts": 0.0,
+      "mae_pts": -7.7
+    }
+  ]
+}

@@ -94,6 +94,7 @@ from telegram.notifier import (
     delete_trade_message,
     repost_engine_dashboard,
     send_bot,
+    send_bot_force,
     send_trade_channel,
     remove_exit_button,
     poll_commands,
@@ -533,7 +534,7 @@ def tg_bot(msg: str, key: str = "", interval: float = 10.0):
 def tg_force(msg: str):
     """Unconditional send — for trade entry/exit alerts."""
     try:
-        send_bot(msg)
+        send_bot_force(msg)
     except Exception as e:
         logger.warning(f"[TELEGRAM] force send failed: {e}")
 
@@ -836,6 +837,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             ctx.trades_today    = int(_snap.get("trades_today", ctx.trades_today))
             ctx.positions       = list(_snap.get("positions", ctx.positions))
             _scalp_trades_today = int(_snap.get("scalp_trades_today", 0))
+            _daily_profit_locked = (
+                bool(_snap.get("daily_profit_locked", False))
+                and bool(getattr(ctx.config, "DAILY_PROFIT_LOCK_ENABLED", True))
+            )
         _restored_pos   = deserialize_position(_snap.get("open_position"))   if _snap else None
         _restored_scalp = deserialize_position(_snap.get("scalp_position"))  if _snap else None
 
@@ -874,6 +879,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 )
             except Exception:
                 pass
+            set_trade_quiet(True)
             # Verify the broker protective stop still matches; repair if not.
             try:
                 _sl_verify_or_repair(ctx, position)
@@ -887,6 +893,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 f"[RECOVERY] Adopted scalp position {scalp_position['symbol']} "
                 f"SL={scalp_position.get('stop_loss',0):.2f} — management resumed"
             )
+            set_trade_quiet(True)
 
         elif _broker_open:
             # Case B: broker holds a position we have NO state for.  Never run
@@ -1278,6 +1285,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     ctx.pnl         += pnl
                     ctx.positions.append(pnl)
+                    save_state(
+                        ctx,
+                        None,
+                        scalp_position,
+                        _scalp_trades_today,
+                        daily_profit_locked=_daily_profit_locked,
+                    )
 
                     # ── Persist trade to CSV ───────────────────────────
                     try:
@@ -1452,8 +1466,6 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     # Same-symbol cooldown tracking
                     _last_exit_symbol = _exited_symbol
                     _last_exit_epoch  = time.time()
-                    # Persist closed state immediately (open_position -> None)
-                    save_state(ctx, None, scalp_position, _scalp_trades_today)
 
                     # Auto-pause after 2 consecutive LOSING stops
                     # A profitable trailing-stop exit is NOT a consecutive loss.
@@ -1693,8 +1705,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _sl_create(ctx, position)
 
                     # Persist new open position immediately (survives restart)
-                    save_state(ctx, position, scalp_position, _scalp_trades_today)
-                    set_trade_quiet(True)
+                    save_state(
+                        ctx,
+                        position,
+                        scalp_position,
+                        _scalp_trades_today,
+                        daily_profit_locked=_daily_profit_locked,
+                    )
                     _signal_first_ts = None   # reset for next trade
 
                     # F1: start replay timeline (observational)
@@ -1738,6 +1755,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "regime":  position["regime"],
                     })
                     send_trade_entry_with_exit_button(entry_msg)
+                    set_trade_quiet(True)
 
                     logger.info(
                         f"[ENTRY] {side} {symbol} "
@@ -1875,15 +1893,25 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
                         ctx.pnl          += _s_pnl
                         ctx.trades_today += 1
+                        _scalp_exit_pos = scalp_position
+                        scalp_position = None
+                        _scalp_trades_today += 1
+                        save_state(
+                            ctx,
+                            position,
+                            None,
+                            _scalp_trades_today,
+                            daily_profit_locked=_daily_profit_locked,
+                        )
                         try:
                             log_trade(
-                                entry_order  = {"symbol": scalp_position["symbol"],
-                                                "price":  scalp_position["entry"],
-                                                "qty":    scalp_position["qty"]},
+                                entry_order  = {"symbol": _scalp_exit_pos["symbol"],
+                                                "price":  _scalp_exit_pos["entry"],
+                                                "qty":    _scalp_exit_pos["qty"]},
                                 exit_price   = _s_fill,
                                 exit_reason  = f"SCALP_{_s_reason}",
-                                position     = scalp_position,
-                                entry_time   = scalp_position["entry_ts"],
+                                position     = _scalp_exit_pos,
+                                entry_time   = _scalp_exit_pos["entry_ts"],
                                 exit_time    = ts,
                                 ce_threshold = 0.0,
                                 pe_threshold = 0.0,
@@ -1891,18 +1919,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         except Exception as _sl_e:
                             logger.warning(f"[SCALP] log_trade failed: {_sl_e}")
                         logger.info(
-                            f"[SCALP EXIT] {_s_reason} | {scalp_position['symbol']} "
+                            f"[SCALP EXIT] {_s_reason} | {_scalp_exit_pos['symbol']} "
                             f"| pnl={_s_pnl:+.0f} | day={ctx.pnl:+.0f}"
                         )
-                        _scalp_exit_msg = format_scalp_exit(scalp_position, _s_fill,
+                        _scalp_exit_msg = format_scalp_exit(_scalp_exit_pos, _s_fill,
                                                            f"SCALP_{_s_reason}", _s_pnl)
                         # Freeze scalp card to final exit summary (stays in chat),
                         # then post exit to channel as separate message.
                         set_trade_quiet(False)
                         freeze_scalp_message(_scalp_exit_msg)
                         send_trade_channel(_scalp_exit_msg)
-                        scalp_position = None
-                        _scalp_trades_today += 1
                         ctx.scalp_engine.on_exit()
 
                 # ── Scalp entry ───────────────────────────────────────
@@ -2017,8 +2043,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                             "lock_triggered": False,
                                         }
                                         _sl_create(ctx, scalp_position)
-                                        save_state(ctx, position, scalp_position, _scalp_trades_today)
-                                        set_trade_quiet(True)
+                                        save_state(
+                                            ctx,
+                                            position,
+                                            scalp_position,
+                                            _scalp_trades_today,
+                                            daily_profit_locked=_daily_profit_locked,
+                                        )
                                         logger.info(
                                             f"[SCALP ENTRY] {_s_side} {_s_symbol} "
                                             f"@ {_s_order['price']:.1f} "
@@ -2030,6 +2061,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
                                         send_scalp_entry(_scalp_entry_msg)
                                         send_trade_channel(_scalp_entry_msg)
+                                        set_trade_quiet(True)
 
             # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)
@@ -2152,7 +2184,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # Captures stop_loss / target / max_pnl / pnl / trades_today as they
             # change, so a restart resumes from at most ~1s ago.
             try:
-                save_state(ctx, position, scalp_position, _scalp_trades_today)
+                save_state(
+                    ctx,
+                    position,
+                    scalp_position,
+                    _scalp_trades_today,
+                    daily_profit_locked=_daily_profit_locked,
+                )
             except Exception:
                 pass
 

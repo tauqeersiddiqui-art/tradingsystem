@@ -49,9 +49,16 @@ ENGINE_PAUSED         = False
 ENGINE_STOP_REQUESTED = False
 CE_THRESHOLD_OVERRIDE = None
 PE_THRESHOLD_OVERRIDE = None
+TRADE_QUIET_MODE      = False
 
 _pending_confirm_id   = None
 _pending_confirm_resp = None
+
+
+def set_trade_quiet(enabled: bool):
+    """Suppress non-live Telegram sends while a trade is open."""
+    global TRADE_QUIET_MODE
+    TRADE_QUIET_MODE = bool(enabled)
 
 # ─────────────────────────────────────────────────────────────────────
 # BACKGROUND TELEGRAM THREAD
@@ -267,10 +274,16 @@ def _answer_cb(callback_id, text=""):
 # ─────────────────────────────────────────────────────────────────────
 
 def send_bot(message, parse_mode="HTML"):
+    if TRADE_QUIET_MODE:
+        _log.debug("[TG QUIET] suppressed bot message")
+        return
     _tg_enqueue(_send, BOT_CHAT_ID, message, parse_mode=parse_mode)
 
 
 def send_trade_channel(message):
+    if TRADE_QUIET_MODE:
+        _log.debug("[TG QUIET] suppressed channel message")
+        return
     _tg_enqueue(_send, CHANNEL_ID, message, parse_mode="HTML")
 
 

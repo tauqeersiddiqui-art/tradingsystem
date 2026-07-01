@@ -13,6 +13,9 @@ class Config:
         self.INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", 100000))
         self.RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.02))
         self.DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", -2000))
+        self.DAILY_PROFIT_TARGET = float(os.getenv("DAILY_PROFIT_TARGET", "800"))
+        self.DAILY_PROFIT_LOCK_ENABLED = os.getenv("DAILY_PROFIT_LOCK_ENABLED", "1") == "1"
+        self.TRADE_LIVE_UPDATE_SECONDS = float(os.getenv("TRADE_LIVE_UPDATE_SECONDS", "3.0"))
         # Session trade limit. Scalp + ML share this counter.
         self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 20))
 
@@ -52,6 +55,10 @@ class Config:
         self.SCALP_LOTS               = int(os.getenv("SCALP_LOTS", "2"))
         self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "2.0"))   # lock SL at entry after +2pt
         self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "2.0"))  # trail SL 2pt below peak
+        self.SCALP_STOP_MODIFY_MIN_STEP = float(os.getenv("SCALP_STOP_MODIFY_MIN_STEP", "1.0"))
+        self.SCALP_BANK_MFE_RS        = float(os.getenv("SCALP_BANK_MFE_RS", "90.0"))
+        self.SCALP_BANK_LOCK_PCT      = float(os.getenv("SCALP_BANK_LOCK_PCT", "0.70"))
+        self.SCALP_BANK_MIN_LOCK_RS   = float(os.getenv("SCALP_BANK_MIN_LOCK_RS", "30.0"))
         self.SCALP_MIN_OPT_PTS        = float(os.getenv("SCALP_MIN_OPT_PTS", "30.0"))  # skip options cheaper than this
         # Max scalp trades per session — reserves remaining slots for ML engine
         self.SCALP_MAX_TRADES         = int(os.getenv("SCALP_MAX_TRADES", "10"))
@@ -63,6 +70,9 @@ class Config:
         # Blocks near-neutral entries where models have no view (e.g. right after restart
         # before sufficient candles accumulate, or in choppy open conditions).
         self.SCALP_ML_MIN_EDGE        = float(os.getenv("SCALP_ML_MIN_EDGE", "0.08"))
+        self.SCALP_REQUIRE_HTF5_CONFIRM = os.getenv("SCALP_REQUIRE_HTF5_CONFIRM", "1") == "1"
+        self.SCALP_REQUIRE_VWAP_CONFIRM = os.getenv("SCALP_REQUIRE_VWAP_CONFIRM", "1") == "1"
+        self.SCALP_VWAP_TOLERANCE       = float(os.getenv("SCALP_VWAP_TOLERANCE", "0.0015"))
         # RANGE_DAY: require stronger spot move before scalp fires (reduces chop noise)
         self.SCALP_RANGE_MOM_THRESH   = float(os.getenv("SCALP_RANGE_MOM_THRESH", "15.0"))
 

@@ -106,6 +106,7 @@ from telegram.notifier import (
     delete_scalp_message,
     freeze_trade_message,
     freeze_scalp_message,
+    set_trade_quiet,
 )
 
 # ── Candle builder (live + paper) ─────────────────────────────────────
@@ -221,6 +222,25 @@ def _sl_modify(ctx, position: dict, new_stop: float) -> None:
         )
     else:
         _sl_failsafe("modify", position)
+
+
+def _raise_stop(ctx, position: dict, new_stop: float, min_step: float = 0.0) -> bool:
+    """Raise virtual/broker stop only when the new level is meaningfully tighter."""
+    current = float(position.get("stop_loss", 0.0) or 0.0)
+    new_stop = float(new_stop or 0.0)
+    min_step = max(float(min_step or 0.0), 1e-6)
+    if (new_stop - current) + 1e-6 < min_step:
+        return False
+    position["stop_loss"] = new_stop
+    _sl_modify(ctx, position, new_stop)
+    return True
+
+
+def _daily_bank_reached(ctx, open_pnl: float = 0.0) -> bool:
+    if not getattr(ctx.config, "DAILY_PROFIT_LOCK_ENABLED", True):
+        return False
+    target = float(getattr(ctx.config, "DAILY_PROFIT_TARGET", 0.0) or 0.0)
+    return target > 0 and (float(getattr(ctx, "pnl", 0.0)) + float(open_pnl)) >= target
 
 
 def _sl_cancel(ctx, position: dict) -> None:
@@ -798,6 +818,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _signal_first_ts  = None    # ts when this signal was first produced (entry delay tracking)
     _last_exit_symbol = None    # symbol of most-recently exited ML trade
     _last_exit_epoch  = 0.0     # epoch time of that exit (for same-symbol cooldown)
+    _daily_profit_locked = False
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
     _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of BANKNIFTY spot
     _scalp_trades_today   = 0                                # scalp-only exit counter (capped at SCALP_MAX_TRADES)
@@ -935,6 +956,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     ctx.ml_learner.reset_day()
                     _scalp_trades_today = 0   # reset scalp-only counter
+                    _daily_profit_locked = False
 
                     ctx._last_daily_reset = today
             # ── Poll Telegram: buttons + text commands (every cycle) ──
@@ -1137,7 +1159,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         pass
 
                 # ── Live trade card update (every 2s) ────────────────
-                if _tg.can_send("trade_live", 2.0) and entry_time is not None:
+                _trade_live_interval = float(getattr(ctx.config, "TRADE_LIVE_UPDATE_SECONDS", 3.0) or 3.0)
+                if _tg.can_send("trade_live", _trade_live_interval) and entry_time is not None:
                     try:
                         live_msg = format_trade_live(position, pos_ltp, entry_time)
                         update_trade_live(live_msg)
@@ -1161,6 +1184,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         )
                         exit_flag  = False
                         exit_reason = ""
+
+                if not exit_flag and _daily_bank_reached(ctx, _cycle_pnl):
+                    exit_flag = True
+                    exit_reason = "DAILY_PROFIT_LOCK"
+                    _daily_profit_locked = True
 
                 # ── Hard stop loss (belt + suspenders) ────────────────
                 if pos_ltp <= position.get("stop_loss", position["entry"] * 0.90):
@@ -1338,6 +1366,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     })
                     # Freeze live trade card to final exit summary (stays in chat),
                     # then post exit summary to channel as a separate message.
+                    set_trade_quiet(False)
                     freeze_trade_message(exit_msg)
                     send_trade_channel(exit_msg)
                     # Repost engine dashboard so it appears fresh at bottom
@@ -1462,9 +1491,20 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 )
                 break
 
+            if _daily_bank_reached(ctx, 0.0):
+                _daily_profit_locked = True
+
             # ══════════════════════════════════════════════════════════
             # ENTRY — only if no open position
             # ══════════════════════════════════════════════════════════
+
+            if decision is not None and position is None:
+                if _daily_profit_locked:
+                    logger.info(
+                        f"[GATE] Daily profit locked at {ctx.pnl:.0f}; no new entries"
+                    )
+                    ctx.live_engine.record_block("DAILY_PROFIT_LOCK")
+                    decision = None
 
             if decision is not None and position is None:
 
@@ -1654,6 +1694,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     # Persist new open position immediately (survives restart)
                     save_state(ctx, position, scalp_position, _scalp_trades_today)
+                    set_trade_quiet(True)
                     _signal_first_ts = None   # reset for next trade
 
                     # F1: start replay timeline (observational)
@@ -1719,7 +1760,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _scalp_ltp_history.append((ts, ltp_current))
 
                 # ── Scalp live card update (every 2s while in scalp) ──
-                if scalp_position is not None and _tg.can_send("scalp_live", 2.0):
+                _trade_live_interval = float(getattr(ctx.config, "TRADE_LIVE_UPDATE_SECONDS", 3.0) or 3.0)
+                if scalp_position is not None and _tg.can_send("scalp_live", _trade_live_interval):
                     try:
                         _sl_live_ltp = ctx.broker.ltp(scalp_position["symbol"]) or scalp_position["entry"]
                         update_scalp_live(format_scalp_live(scalp_position, _sl_live_ltp))
@@ -1729,6 +1771,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # ── Scalp exit management ─────────────────────────────
                 if scalp_position is not None:
                     _s_ltp = ctx.broker.ltp(scalp_position["symbol"]) or scalp_position["entry"]
+                    _sc_stop_step = max(
+                        float(getattr(ctx.config, "SCALP_STOP_MODIFY_MIN_STEP", 1.0) or 0.0),
+                        0.0,
+                    )
                     scalp_position["max_pnl"] = max(
                         scalp_position.get("max_pnl", 0.0),
                         (_s_ltp - scalp_position["entry"]) * scalp_position["qty"],
@@ -1737,6 +1783,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         scalp_position.get("min_pnl", 0.0),
                         (_s_ltp - scalp_position["entry"]) * scalp_position["qty"],
                     )
+                    _s_open_pnl = (_s_ltp - scalp_position["entry"]) * scalp_position["qty"]
 
                     # Centralized profit-lock ladder also governs scalp trades
                     # (single source of truth — identical to normal trades).
@@ -1754,43 +1801,77 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             f"LOCK={_sc_lock:.0f}\nstage={_sc_stage} (scalp)  "
                             f"SL {scalp_position['stop_loss']:.2f}->{_sc_new_stop:.2f}"
                         )
-                        scalp_position["stop_loss"] = _sc_new_stop
+                        _raise_stop(ctx, scalp_position, _sc_new_stop, _sc_stop_step)
+
+                    _bank_mfe = float(getattr(ctx.config, "SCALP_BANK_MFE_RS", 90.0) or 0.0)
+                    if _bank_mfe > 0 and scalp_position["max_pnl"] >= _bank_mfe:
+                        _bank_pct = max(0.0, min(float(getattr(ctx.config, "SCALP_BANK_LOCK_PCT", 0.70) or 0.0), 1.0))
+                        _bank_min = max(0.0, float(getattr(ctx.config, "SCALP_BANK_MIN_LOCK_RS", 30.0) or 0.0))
+                        _bank_lock_rs = min(scalp_position["max_pnl"], max(_bank_min, scalp_position["max_pnl"] * _bank_pct))
+                        _bank_stop = scalp_position["entry"] + (_bank_lock_rs / max(scalp_position["qty"], 1))
+                        if _raise_stop(ctx, scalp_position, _bank_stop, 0.0):
+                            logger.info(
+                                f"[SCALP BANK] MFE={scalp_position['max_pnl']:.0f} "
+                                f"lock={_bank_lock_rs:.0f} SL={scalp_position['stop_loss']:.2f}"
+                            )
 
                     # ── Lock at +2pt then trail 2pt behind peak (all lots held) ──
                     _s_move = _s_ltp - scalp_position["entry"]
                     if _s_move >= ctx.config.SCALP_LOCK_PTS:
                         if not scalp_position.get("lock_triggered"):
-                            scalp_position["stop_loss"]      = scalp_position["entry"] + 1.0
+                            _lock_stop = scalp_position["entry"] + 1.0
+                            _raise_stop(ctx, scalp_position, _lock_stop, 0.0)
                             scalp_position["lock_triggered"] = True
                             logger.info(
                                 f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt → "
-                                f"SL locked at entry+1={scalp_position['entry'] + 1.0:.1f} | "
+                                f"SL locked at entry+1={_lock_stop:.1f} | "
                                 f"trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt below peak"
-                            )
-                            import telegram.notifier as _tgn
-                            _tgn.send_bot(
-                                f"🔒 <b>SCALP LOCK</b> +{ctx.config.SCALP_LOCK_PTS:.0f}pt\n"
-                                f"SL → entry+1pt  |  trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt  |  riding all lots"
                             )
                         # Trail SL 2pt below current ltp — ratchet up only, never down
                         _trail_sl = _s_ltp - ctx.config.SCALP_TRAIL_PTS
-                        if _trail_sl > scalp_position["stop_loss"]:
-                            scalp_position["stop_loss"] = _trail_sl
+                        _raise_stop(ctx, scalp_position, _trail_sl, _sc_stop_step)
 
                     _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
                     # Honor the ladder-raised stop (virtual trigger) in addition
                     # to the scalp engine's fixed initial stop / target / time.
+                    if not _s_exit and _daily_bank_reached(ctx, _s_open_pnl):
+                        _s_exit, _s_reason = True, "DAILY_PROFIT_LOCK"
+                        _daily_profit_locked = True
                     if not _s_exit and _s_ltp <= scalp_position["stop_loss"]:
                         _s_exit, _s_reason = True, "STOP"
                     if _s_exit:
                         if _s_reason in ("STOP",):
                             _log_stop_audit("SCALP STOP HIT", _s_ltp, scalp_position)
-                        _s_exit_order = ctx.executor.execute_exit(
-                            scalp_position["symbol"],
-                            scalp_position["qty"],
-                            side=scalp_position["side"],
-                        )
-                        _s_fill = _s_exit_order["price"] if _s_exit_order else _s_ltp
+                        _sl_already_filled = False
+                        _sl_fill_price     = 0.0
+                        if scalp_position.get("sl_order_id"):
+                            _sl_info = ctx.executor.get_order_info(scalp_position["sl_order_id"])
+                            ctx.executor.cancel_protective_stop(scalp_position["sl_order_id"])
+                            logger.info(
+                                f"[BROKER SL CANCELLED]\n{scalp_position['symbol']}  "
+                                f"id={scalp_position['sl_order_id']}"
+                            )
+                            if (_sl_info and _sl_info.get("status") == "COMPLETE"
+                                    and _sl_info.get("average_price", 0) > 0
+                                    and ctx.executor.verify_flat(scalp_position["symbol"])):
+                                _sl_already_filled = True
+                                _sl_fill_price     = _sl_info["average_price"]
+                                logger.critical(
+                                    f"[BROKER SL FILLED] {scalp_position['symbol']} "
+                                    f"fill={_sl_fill_price:.2f} - scalp broker stop executed the exit"
+                                )
+                            scalp_position["sl_order_id"] = None
+                        if _sl_already_filled:
+                            _s_exit_order = None
+                            _s_fill = _sl_fill_price
+                            ctx.executor._active_order_id = None
+                        else:
+                            _s_exit_order = ctx.executor.execute_exit(
+                                scalp_position["symbol"],
+                                scalp_position["qty"],
+                                side=scalp_position["side"],
+                            )
+                            _s_fill = _s_exit_order["price"] if _s_exit_order else _s_ltp
                         _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
                         ctx.pnl          += _s_pnl
                         ctx.trades_today += 1
@@ -1817,6 +1898,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                                            f"SCALP_{_s_reason}", _s_pnl)
                         # Freeze scalp card to final exit summary (stays in chat),
                         # then post exit to channel as separate message.
+                        set_trade_quiet(False)
                         freeze_scalp_message(_scalp_exit_msg)
                         send_trade_channel(_scalp_exit_msg)
                         scalp_position = None
@@ -1826,6 +1908,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # ── Scalp entry ───────────────────────────────────────
                 _scalp_max = getattr(ctx.config, "SCALP_MAX_TRADES", 10)
                 if (scalp_position is None
+                        and not _daily_profit_locked
                         and ctx.trades_today < max_trades
                         and _scalp_trades_today < _scalp_max
                         and ctx.pnl > ctx.config.DAILY_LOSS_LIMIT):
@@ -1862,6 +1945,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 _day_type_str       = str(ctx.ml_learner.get_day_type()).upper()
                                 _is_range_day       = (ctx.live_engine._day_classified
                                                        and "RANGE" in _day_type_str)
+                                _htf5_dir           = int(_ms_s.get("htf5_dir", 0) or 0)
+                                _pvwap              = float(_ms_s.get("price_vs_vwap", 0.0) or 0.0)
+                                _require_htf5       = bool(getattr(ctx.config, "SCALP_REQUIRE_HTF5_CONFIRM", True))
+                                _require_vwap       = bool(getattr(ctx.config, "SCALP_REQUIRE_VWAP_CONFIRM", True))
+                                _vwap_tol           = float(getattr(ctx.config, "SCALP_VWAP_TOLERANCE", 0.0015))
 
                                 if _s_ml_edge < -_ml_disagree_margin:
                                     # ML strongly favours opposite direction — skip
@@ -1881,6 +1969,24 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     logger.info(
                                         f"[SCALP SKIP] ML edge thin {_s_side}: "
                                         f"edge={_s_ml_edge:.3f} < {_ml_min_edge}"
+                                    )
+                                elif _require_htf5 and _s_side == "CE" and _htf5_dir == -1:
+                                    logger.info(
+                                        f"[SCALP SKIP] CE HTF5 opposes: 5m={_htf5_dir} "
+                                        f"ml={_s_ml_prob:.3f}"
+                                    )
+                                elif _require_htf5 and _s_side == "PE" and _htf5_dir == 1:
+                                    logger.info(
+                                        f"[SCALP SKIP] PE HTF5 opposes: 5m={_htf5_dir} "
+                                        f"ml={_s_ml_prob:.3f}"
+                                    )
+                                elif _require_vwap and _s_side == "CE" and _pvwap < -_vwap_tol:
+                                    logger.info(
+                                        f"[SCALP SKIP] CE below VWAP: pvwap={_pvwap:.4f}"
+                                    )
+                                elif _require_vwap and _s_side == "PE" and _pvwap > _vwap_tol:
+                                    logger.info(
+                                        f"[SCALP SKIP] PE above VWAP: pvwap={_pvwap:.4f}"
                                     )
                                 elif _is_range_day and abs(_s_sig["move_pts"]) < _range_mom_thresh:
                                     # RANGE_DAY: require stronger momentum to reduce chop
@@ -1907,8 +2013,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                             "regime":         "SCALP",
                                             "reason":         _s_sig["reason"],
                                             "entry_ts":       ts,
+                                            "sl_order_id":    None,
                                             "lock_triggered": False,
                                         }
+                                        _sl_create(ctx, scalp_position)
+                                        save_state(ctx, position, scalp_position, _scalp_trades_today)
+                                        set_trade_quiet(True)
                                         logger.info(
                                             f"[SCALP ENTRY] {_s_side} {_s_symbol} "
                                             f"@ {_s_order['price']:.1f} "

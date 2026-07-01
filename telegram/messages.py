@@ -457,6 +457,52 @@ def _section_ml_analytics(ms: dict) -> str:
     )
 
 
+def _sparkline(values: list, width: int = 32) -> str:
+    vals = [float(v) for v in values if v is not None]
+    if len(vals) < 2:
+        return ""
+    if len(vals) > width:
+        step = len(vals) / width
+        vals = [vals[int(i * step)] for i in range(width)]
+    low = min(vals)
+    high = max(vals)
+    if high <= low:
+        return "-" * len(vals)
+    chars = "._:-=+*#"
+    scale = (len(chars) - 1) / (high - low)
+    return "".join(chars[int((v - low) * scale)] for v in vals)
+
+
+def _section_banknifty_chart(ms: dict) -> str:
+    chart = ms.get("banknifty_chart") or {}
+    closes = chart.get("closes") or []
+    line = _sparkline(closes)
+    if not line:
+        return ""
+
+    first = float(chart.get("first", closes[0]))
+    last = float(chart.get("last", closes[-1]))
+    high = float(chart.get("high", max(closes)))
+    low = float(chart.get("low", min(closes)))
+    change = last - first
+    start_ts = chart.get("start", "--")
+    end_ts = chart.get("end", "--")
+    moves = chart.get("moves") or {}
+
+    def _fmt_move(value):
+        return "--" if value is None else f"{float(value):+.1f}"
+
+    return (
+        f"\n<b>BANKNIFTY 30M CHART</b>\n"
+        f"<code>{line}</code>\n"
+        f"<code>{start_ts} {first:,.1f} -> {end_ts} {last:,.1f} ({change:+.1f})</code>\n"
+        f"<code>H {high:,.1f}  L {low:,.1f}  "
+        f"5m {_fmt_move(moves.get('5m'))}  "
+        f"15m {_fmt_move(moves.get('15m'))}  "
+        f"30m {_fmt_move(moves.get('30m'))}</code>\n"
+    )
+
+
 def _section_exit_analytics(ctx) -> str:
     ea = getattr(ctx, "exit_analytics", None)
     if not ea or not ea.get("realized_list"):
@@ -502,6 +548,10 @@ def _section_feed_health(ms: dict) -> str:
     ce_oi = fh.get("ce_oi", 0) / 1_000_000
     pe_oi = fh.get("pe_oi", 0) / 1_000_000
     orb   = ms.get("orb_mode", "")
+    orb_high = ms.get("orb_high")
+    orb_low = ms.get("orb_low")
+    if orb and orb_high is not None and orb_low is not None:
+        orb = f"{orb} OR(9:15-9:29) H={float(orb_high):.0f} L={float(orb_low):.0f}"
     rows  = (
         f"{'WS Connected':<18} {ws_s}\n"
         f"{'Tick Age':<18} {age_s}\n"
@@ -525,8 +575,9 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
     st_dir   = ms.get("supertrend_dir", 0)
     vwap     = ms.get("vwap", 0.0)
     pvwap    = ms.get("price_vs_vwap", 0.0) * 100
-    rsi      = ms.get("rsi_1m", 50.0)
+    rsi      = ms.get("rsi_1m", ms.get("rsi", 50.0))
     adx      = ms.get("adx", 0.0)
+    htf5_dir = ms.get("htf5_dir", 0)
 
     if st_dir > 0:
         dir_line = "📈 SuperTrend: <b>BULLISH</b> ↑"
@@ -536,6 +587,12 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
         dir_line = "〰️ SuperTrend: <b>NEUTRAL</b>"
 
     vwap_sign = "above" if pvwap >= 0 else "below"
+    if htf5_dir > 0:
+        htf_line = "5m SuperTrend: <b>BULLISH</b>"
+    elif htf5_dir < 0:
+        htf_line = "5m SuperTrend: <b>BEARISH</b>"
+    else:
+        htf_line = "5m SuperTrend: <b>NEUTRAL</b>"
     vwap_e    = "✅" if pvwap >= 0 else "⚠️"
 
     # ML bias bars
@@ -543,6 +600,7 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
     pe_adj  = ms.get("pe_adj", 0.0)
     ce_thr  = ms.get("ce_threshold", 0.70)
     pe_thr  = ms.get("ml_threshold", 0.65)
+    candidate = "CE" if ce_adj >= pe_adj else "PE"
 
     def _bar(v, thr):
         filled = max(0, min(10, round(v * 10)))
@@ -579,12 +637,15 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
         f"\n"
         f"<b>MARKET DIRECTION</b>\n"
         f"{dir_line}\n"
+        f"{htf_line}\n"
         f"{vwap_e} VWAP: {vwap:,.0f}  ({pvwap:+.2f}%  —  price {vwap_sign})\n"
         f"📊 RSI: {rsi:.1f}   ADX: {adx:.1f}\n"
         f"\n"
         f"<b>ML CONFIDENCE</b>\n"
+        f"Candidate: <b>{candidate}</b> (no entry until threshold + structure pass)\n"
         f"📈 CE  {_bar(ce_adj, ce_thr)}\n"
         f"📉 PE  {_bar(pe_adj, pe_thr)}\n"
+        + _section_banknifty_chart(ms)
         + _section_ml_analytics(ms)
         + f"\n\n"
         f"<b>DECISION</b>\n"

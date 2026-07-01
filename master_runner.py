@@ -114,6 +114,7 @@ from telegram.notifier import (
 from engine.data.candle_builder import CandleBuilder
 
 _engine_thread = None
+_PROCESS_STOP_REQUESTED = threading.Event()
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -539,6 +540,73 @@ def tg_force(msg: str):
         logger.warning(f"[TELEGRAM] force send failed: {e}")
 
 
+def _request_process_stop(reason: str) -> None:
+    try:
+        import telegram.notifier as _tn
+        _tn.ENGINE_STOP_REQUESTED = True
+    except Exception:
+        pass
+    logger.info(f"[SHUTDOWN] Process stop requested: {reason}")
+    _PROCESS_STOP_REQUESTED.set()
+
+
+def _build_banknifty_chart_state(df_window, builder, ltp_current: float) -> dict:
+    """Compact read-only chart state for Telegram dashboard."""
+    try:
+        if df_window is None or len(df_window) < 2:
+            return {}
+
+        view = df_window.tail(30).copy()
+        closes = [float(x) for x in view["close"].tolist()]
+        if not closes:
+            return {}
+
+        wip = builder.current_wip() if builder else None
+        if wip and float(wip.get("close", 0.0) or 0.0) > 0:
+            live_close = float(wip["close"])
+            if live_close != closes[-1]:
+                closes.append(live_close)
+        elif ltp_current:
+            live_close = float(ltp_current)
+            if live_close != closes[-1]:
+                closes.append(live_close)
+
+        if len(closes) > 31:
+            closes = closes[-31:]
+
+        ts_vals = view["ts"].tolist() if "ts" in view.columns else []
+        start = "--"
+        end = "--"
+        if ts_vals:
+            start = pd.to_datetime(ts_vals[0]).strftime("%H:%M")
+            end = pd.to_datetime(ts_vals[-1]).strftime("%H:%M")
+        if wip and wip.get("ts") is not None:
+            end = pd.to_datetime(wip["ts"]).strftime("%H:%M")
+
+        def _move(minutes: int):
+            if len(closes) <= minutes:
+                return None
+            return round(closes[-1] - closes[-minutes - 1], 1)
+
+        return {
+            "closes": [round(x, 1) for x in closes],
+            "first": round(closes[0], 1),
+            "last": round(closes[-1], 1),
+            "high": round(max(closes), 1),
+            "low": round(min(closes), 1),
+            "start": start,
+            "end": end,
+            "moves": {
+                "5m": _move(5),
+                "15m": _move(15),
+                "30m": _move(30),
+            },
+        }
+    except Exception as exc:
+        logger.debug(f"[DASH] banknifty chart state failed: {exc}")
+        return {}
+
+
 def _log_feed_health(broker, ctx, builder) -> None:
     """
     Log and Telegram a single startup feed-health snapshot.
@@ -810,6 +878,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     max_trades        = ctx.config.MAX_TRADES_PER_DAY
     consecutive_stops = 0       # auto-pause trigger
     _eod_sent         = False   # send EOD summary once at 15:30
+    _eod_shutdown_requested = False
     _last_feed_warn   = 0.0     # watchdog: last time we warned about stale feed
     _journal_id       = None    # diagnostics journal id for current open trade
     _last_atm_check   = 0.0     # epoch time of last ATM drift check
@@ -1967,15 +2036,25 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 _ml_disagree_margin = getattr(ctx.config, "SCALP_ML_DISAGREE_MARGIN", 0.12)
                                 _ml_min_prob        = getattr(ctx.config, "SCALP_ML_MIN_PROB", 0.40)
                                 _ml_min_edge        = getattr(ctx.config, "SCALP_ML_MIN_EDGE", 0.08)
+                                _use_main_ai_thr    = bool(getattr(ctx.config, "SCALP_USE_MAIN_AI_THRESHOLD", True))
                                 _range_mom_thresh   = getattr(ctx.config, "SCALP_RANGE_MOM_THRESH", 15.0)
                                 _day_type_str       = str(ctx.ml_learner.get_day_type()).upper()
                                 _is_range_day       = (ctx.live_engine._day_classified
                                                        and "RANGE" in _day_type_str)
+                                _supertrend_dir     = int(_ms_s.get("supertrend_dir", 0) or 0)
                                 _htf5_dir           = int(_ms_s.get("htf5_dir", 0) or 0)
                                 _pvwap              = float(_ms_s.get("price_vs_vwap", 0.0) or 0.0)
+                                _require_st         = bool(getattr(ctx.config, "SCALP_REQUIRE_SUPERTREND_CONFIRM", True))
                                 _require_htf5       = bool(getattr(ctx.config, "SCALP_REQUIRE_HTF5_CONFIRM", True))
                                 _require_vwap       = bool(getattr(ctx.config, "SCALP_REQUIRE_VWAP_CONFIRM", True))
                                 _vwap_tol           = float(getattr(ctx.config, "SCALP_VWAP_TOLERANCE", 0.0015))
+                                if _use_main_ai_thr:
+                                    _side_thr_key = "ce_threshold" if _s_side == "CE" else "pe_threshold"
+                                    _main_ai_thr = float(
+                                        _ms_s.get(_side_thr_key, _ms_s.get("ml_threshold", _ml_min_prob))
+                                        or _ml_min_prob
+                                    )
+                                    _ml_min_prob = max(float(_ml_min_prob), _main_ai_thr)
 
                                 if _s_ml_edge < -_ml_disagree_margin:
                                     # ML strongly favours opposite direction — skip
@@ -1985,9 +2064,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         f"edge={_s_ml_edge:.3f} < -{_ml_disagree_margin}"
                                     )
                                 elif _s_ml_prob < _ml_min_prob:
-                                    # Absolute ML conviction too low
                                     logger.info(
-                                        f"[SCALP SKIP] ML weak {_s_side}: "
+                                        f"[SCALP SKIP] ML below main AI threshold {_s_side}: "
                                         f"ml={_s_ml_prob:.3f} < {_ml_min_prob}"
                                     )
                                 elif _s_ml_edge < _ml_min_edge:
@@ -1995,6 +2073,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     logger.info(
                                         f"[SCALP SKIP] ML edge thin {_s_side}: "
                                         f"edge={_s_ml_edge:.3f} < {_ml_min_edge}"
+                                    )
+                                elif _require_st and _s_side == "CE" and _supertrend_dir == -1:
+                                    logger.info(
+                                        f"[SCALP SKIP] CE SuperTrend opposes: st={_supertrend_dir} "
+                                        f"ml={_s_ml_prob:.3f}"
+                                    )
+                                elif _require_st and _s_side == "PE" and _supertrend_dir == 1:
+                                    logger.info(
+                                        f"[SCALP SKIP] PE SuperTrend opposes: st={_supertrend_dir} "
+                                        f"ml={_s_ml_prob:.3f}"
                                     )
                                 elif _require_htf5 and _s_side == "CE" and _htf5_dir == -1:
                                     logger.info(
@@ -2083,6 +2171,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         else ("BUILDING" if not ctx.live_engine.orb_done else "UNAVAIL")
                     )
                     market_state["orb_mode"] = _orb_mode
+                    market_state["banknifty_chart"] = _build_banknifty_chart_state(
+                        df_window, builder, ltp_current
+                    )
                 except Exception:
                     pass
 
@@ -2176,6 +2267,34 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _thr.Thread(target=_do_retrain, daemon=True, name="weekly_retrain").start()
                 except Exception as _retrain_e:
                     logger.warning(f"[RETRAIN] Trigger error: {_retrain_e}")
+
+                _eod_shutdown_requested = True
+                if position is not None or scalp_position is not None:
+                    logger.warning(
+                        "[EOD] Summaries complete but position still open; "
+                        "shutdown will wait until flat"
+                    )
+                    tg_force("EOD summaries sent. Waiting for open trade to close before stopping engine.")
+
+            if _eod_shutdown_requested and position is None and scalp_position is None:
+                try:
+                    save_state(
+                        ctx,
+                        position,
+                        scalp_position,
+                        _scalp_trades_today,
+                        daily_profit_locked=_daily_profit_locked,
+                    )
+                except Exception as _state_e:
+                    logger.warning(f"[EOD] Final state save failed: {_state_e}")
+                try:
+                    update_health(snapshot(ctx))
+                except Exception as _health_e:
+                    logger.warning(f"[EOD] Final health update failed: {_health_e}")
+                tg_force("EOD summaries sent. Engine stopped for the day.")
+                logger.info("[EOD] Summaries complete; stopping engine for the day")
+                _request_process_stop("eod_complete")
+                break
 
             # ── Health file update ────────────────────────────────────
             update_health(snapshot(ctx))
@@ -2434,8 +2553,11 @@ def main():
 
     # ── Keep-alive ────────────────────────────────────────────────────
     try:
-        while True:
+        while not _PROCESS_STOP_REQUESTED.is_set():
             time.sleep(1)
+        if "_watchdog" in locals():
+            _watchdog.stop()
+        logger.info("System stopped cleanly")
     except KeyboardInterrupt:
         logger.info("Stopping system...")
         try:

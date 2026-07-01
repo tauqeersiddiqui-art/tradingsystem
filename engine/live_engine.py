@@ -933,13 +933,18 @@ class LiveEngine:
         else:
             session = "ACTIVE"
 
+        learn_thr = self.learner.get_ml_threshold()
+        ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr, _CE_ML_FLOOR)
+        pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr, _MIN_ML_FLOOR)
+
         return {
             "ts":              ts,
             "session":         session,
             "ema20":           ema20,
             "ema50":           ema50,
             "ema_direction":   "UP" if ema20 > ema50 else "DOWN",
-            "rsi_1m":          f.get("rsi_1m", 50.0),
+            "rsi_1m":          f.get("rsi_1m", f.get("rsi", 50.0)),
+            "rsi":             f.get("rsi", f.get("rsi_1m", 50.0)),
             "atr":             f.get("atr", 0.0),
             "supertrend_dir":  int(f.get("supertrend_dir", 0)),
             "htf5_dir":         int(getattr(self, "_htf5_dir", 0)),
@@ -957,8 +962,9 @@ class LiveEngine:
             "htf_bullish":     getattr(self, "_last_htf_bullish", True),
             "ce_adj":          self._last_ce_adj,
             "pe_adj":          self._last_pe_adj,
-            "ml_threshold":    max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR),
-            "ce_threshold":    max(self.learner.get_ml_threshold(), _CE_ML_FLOOR),
+            "ml_threshold":    max(learn_thr, _MIN_ML_FLOOR),
+            "ce_threshold":    ce_thr,
+            "pe_threshold":    pe_thr,
             "block_reason":    self._last_block_reason,
             # Scoring
             "ml_percentile":   self._ml_percentile(max(self._last_ce_adj, self._last_pe_adj)),

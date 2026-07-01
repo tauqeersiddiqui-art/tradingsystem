@@ -64,12 +64,15 @@ class Config:
         self.SCALP_MAX_TRADES         = int(os.getenv("SCALP_MAX_TRADES", "10"))
         # ML filter: skip scalp if opposite ML prob exceeds side's prob by this margin
         self.SCALP_ML_DISAGREE_MARGIN = float(os.getenv("SCALP_ML_DISAGREE_MARGIN", "0.12"))
-        # Min absolute ML prob for the trade side before scalp entry is allowed
-        self.SCALP_ML_MIN_PROB        = float(os.getenv("SCALP_ML_MIN_PROB", "0.40"))
+        # Min absolute ML prob for the trade side before scalp entry is allowed.
+        # Scalp is an execution layer, so keep it close to the main AI floor.
+        self.SCALP_ML_MIN_PROB        = float(os.getenv("SCALP_ML_MIN_PROB", "0.65"))
         # Min positive ML edge (side_prob - opp_prob) required for scalp entry.
         # Blocks near-neutral entries where models have no view (e.g. right after restart
         # before sufficient candles accumulate, or in choppy open conditions).
         self.SCALP_ML_MIN_EDGE        = float(os.getenv("SCALP_ML_MIN_EDGE", "0.08"))
+        self.SCALP_USE_MAIN_AI_THRESHOLD = os.getenv("SCALP_USE_MAIN_AI_THRESHOLD", "1") == "1"
+        self.SCALP_REQUIRE_SUPERTREND_CONFIRM = os.getenv("SCALP_REQUIRE_SUPERTREND_CONFIRM", "1") == "1"
         self.SCALP_REQUIRE_HTF5_CONFIRM = os.getenv("SCALP_REQUIRE_HTF5_CONFIRM", "1") == "1"
         self.SCALP_REQUIRE_VWAP_CONFIRM = os.getenv("SCALP_REQUIRE_VWAP_CONFIRM", "1") == "1"
         self.SCALP_VWAP_TOLERANCE       = float(os.getenv("SCALP_VWAP_TOLERANCE", "0.0015"))

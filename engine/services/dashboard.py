@@ -54,6 +54,57 @@ def _expectancy(positions: list) -> float:
     return wr * avg_w + (1 - wr) * avg_l
 
 
+def _sparkline(values: list, width: int = 32) -> str:
+    vals = [float(v) for v in values if v is not None]
+    if len(vals) < 2:
+        return ""
+
+    if len(vals) > width:
+        step = len(vals) / width
+        vals = [vals[int(i * step)] for i in range(width)]
+
+    low = min(vals)
+    high = max(vals)
+    if high <= low:
+        return "-" * len(vals)
+
+    chars = "._:-=+*#"
+    scale = (len(chars) - 1) / (high - low)
+    return "".join(chars[int((v - low) * scale)] for v in vals)
+
+
+def _section_banknifty_chart(ms: dict) -> str:
+    chart = ms.get("banknifty_chart") or {}
+    closes = chart.get("closes") or []
+    line = _sparkline(closes)
+    if not line:
+        return ""
+
+    first = float(chart.get("first", closes[0]))
+    last = float(chart.get("last", closes[-1]))
+    high = float(chart.get("high", max(closes)))
+    low = float(chart.get("low", min(closes)))
+    change = last - first
+    change_pct = (change / first * 100) if first else 0.0
+    start_ts = chart.get("start", "--")
+    end_ts = chart.get("end", "--")
+    moves = chart.get("moves") or {}
+
+    def _fmt_move(value):
+        return "--" if value is None else f"{float(value):+.1f}"
+
+    return (
+        "\n<b>BANKNIFTY LIVE CHART</b>\n"
+        f"<code>{line}</code>\n"
+        f"<code>{start_ts} {first:,.1f} -> {end_ts} {last:,.1f} "
+        f"({change:+.1f}, {change_pct:+.2f}%)</code>\n"
+        f"<code>H {high:,.1f}  L {low:,.1f}  "
+        f"5m {_fmt_move(moves.get('5m'))}  "
+        f"15m {_fmt_move(moves.get('15m'))}  "
+        f"30m {_fmt_move(moves.get('30m'))}</code>\n"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # DASHBOARD 1  — AI ENGINE STATUS
 # ─────────────────────────────────────────────────────────────────────
@@ -118,7 +169,7 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
     return (
         f"<b>AGENTIC TRADER — AI ENGINE</b>\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
-        f"\U0001f551 {now_str}  |  NIFTY {ltp_str}  |  {_dir_arrow(dir_bias)}\n"
+        f"\U0001f551 {now_str}  |  BANKNIFTY {ltp_str}  |  {_dir_arrow(dir_bias)}\n"
         f"Session: {session}\n"
         f"\n"
         f"<b>TECHNICALS</b>\n"
@@ -222,7 +273,8 @@ def render_market(ctx, market_state: dict, position: dict | None,
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
         f"ORB: {orb_str}\n"
         f"VWAP: {vwap:,.0f}  |  {now} IST\n"
-        f"Engine: {engine_state}  |  /help for commands"
+        + _section_banknifty_chart(ms)
+        + f"Engine: {engine_state}  |  /help for commands"
     )
 
 

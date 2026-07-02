@@ -42,6 +42,7 @@ def save_state(
     position=None,
     scalp_position=None,
     scalp_trades_today=0,
+    scalp_pnl_today=0.0,
     daily_profit_locked=False,
 ):
     """Persist pnl, trades_today, closed-pnl list, and open positions."""
@@ -52,6 +53,7 @@ def save_state(
             "pnl":               float(getattr(ctx, "pnl", 0.0)),
             "trades_today":      int(getattr(ctx, "trades_today", 0)),
             "scalp_trades_today": int(scalp_trades_today),
+            "scalp_pnl_today":   float(scalp_pnl_today),
             "daily_profit_locked": bool(daily_profit_locked),
             "positions":         list(getattr(ctx, "positions", [])),
             "open_position":     _serialize_position(position),

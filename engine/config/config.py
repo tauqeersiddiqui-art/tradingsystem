@@ -59,6 +59,7 @@ class Config:
         self.SCALP_BANK_MFE_RS        = float(os.getenv("SCALP_BANK_MFE_RS", "90.0"))
         self.SCALP_BANK_LOCK_PCT      = float(os.getenv("SCALP_BANK_LOCK_PCT", "0.70"))
         self.SCALP_BANK_MIN_LOCK_RS   = float(os.getenv("SCALP_BANK_MIN_LOCK_RS", "30.0"))
+        self.SCALP_DAILY_PROFIT_TARGET = float(os.getenv("SCALP_DAILY_PROFIT_TARGET", "500.0"))
         self.SCALP_MIN_OPT_PTS        = float(os.getenv("SCALP_MIN_OPT_PTS", "30.0"))  # skip options cheaper than this
         # Max scalp trades per session — reserves remaining slots for ML engine
         self.SCALP_MAX_TRADES         = int(os.getenv("SCALP_MAX_TRADES", "10"))

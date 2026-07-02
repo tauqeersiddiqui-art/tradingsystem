@@ -892,6 +892,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
     _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of BANKNIFTY spot
     _scalp_trades_today   = 0                                # scalp-only exit counter (capped at SCALP_MAX_TRADES)
+    _scalp_pnl_today      = 0.0                              # scalp-only realized PnL (caps scalp entries only)
 
     # ══════════════════════════════════════════════════════════════════
     # RESTART RECOVERY + BROKER RECONCILIATION  (Tasks 3, 4, 8)
@@ -906,6 +907,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             ctx.trades_today    = int(_snap.get("trades_today", ctx.trades_today))
             ctx.positions       = list(_snap.get("positions", ctx.positions))
             _scalp_trades_today = int(_snap.get("scalp_trades_today", 0))
+            _scalp_pnl_today    = float(_snap.get("scalp_pnl_today", 0.0))
             _daily_profit_locked = (
                 bool(_snap.get("daily_profit_locked", False))
                 and bool(getattr(ctx.config, "DAILY_PROFIT_LOCK_ENABLED", True))
@@ -1032,6 +1034,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     ctx.ml_learner.reset_day()
                     _scalp_trades_today = 0   # reset scalp-only counter
+                    _scalp_pnl_today = 0.0
                     _daily_profit_locked = False
 
                     ctx._last_daily_reset = today
@@ -1359,6 +1362,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         None,
                         scalp_position,
                         _scalp_trades_today,
+                        scalp_pnl_today=_scalp_pnl_today,
                         daily_profit_locked=_daily_profit_locked,
                     )
 
@@ -1779,6 +1783,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         position,
                         scalp_position,
                         _scalp_trades_today,
+                        scalp_pnl_today=_scalp_pnl_today,
                         daily_profit_locked=_daily_profit_locked,
                     )
                     _signal_first_ts = None   # reset for next trade
@@ -1962,6 +1967,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
                         ctx.pnl          += _s_pnl
                         ctx.trades_today += 1
+                        _scalp_pnl_today += _s_pnl
                         _scalp_exit_pos = scalp_position
                         scalp_position = None
                         _scalp_trades_today += 1
@@ -1970,6 +1976,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             position,
                             None,
                             _scalp_trades_today,
+                            scalp_pnl_today=_scalp_pnl_today,
                             daily_profit_locked=_daily_profit_locked,
                         )
                         try:
@@ -2002,8 +2009,20 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 # ── Scalp entry ───────────────────────────────────────
                 _scalp_max = getattr(ctx.config, "SCALP_MAX_TRADES", 10)
+                _scalp_profit_target = float(getattr(ctx.config, "SCALP_DAILY_PROFIT_TARGET", 0.0) or 0.0)
+                _scalp_profit_locked = (
+                    _scalp_profit_target > 0.0
+                    and _scalp_pnl_today >= _scalp_profit_target
+                )
+                if _scalp_profit_locked:
+                    logger.info(
+                        f"[SCALP GATE] Daily scalp profit target reached: "
+                        f"{_scalp_pnl_today:.0f}/{_scalp_profit_target:.0f}; "
+                        "scalp entries disabled, ML engine still active"
+                    )
                 if (scalp_position is None
                         and not _daily_profit_locked
+                        and not _scalp_profit_locked
                         and ctx.trades_today < max_trades
                         and _scalp_trades_today < _scalp_max
                         and ctx.pnl > ctx.config.DAILY_LOSS_LIMIT):
@@ -2136,6 +2155,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                             position,
                                             scalp_position,
                                             _scalp_trades_today,
+                                            scalp_pnl_today=_scalp_pnl_today,
                                             daily_profit_locked=_daily_profit_locked,
                                         )
                                         logger.info(
@@ -2283,6 +2303,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         position,
                         scalp_position,
                         _scalp_trades_today,
+                        scalp_pnl_today=_scalp_pnl_today,
                         daily_profit_locked=_daily_profit_locked,
                     )
                 except Exception as _state_e:
@@ -2308,6 +2329,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     position,
                     scalp_position,
                     _scalp_trades_today,
+                    scalp_pnl_today=_scalp_pnl_today,
                     daily_profit_locked=_daily_profit_locked,
                 )
             except Exception:

@@ -42,11 +42,16 @@ class CalibratedLGBM:
         return self
 
     def predict_proba(self, X):
+        # FIX 2026-07-03: Platt calibrator was fitted on OLD saturated model
+        # outputs (0.80-0.96 range). After trainer_v3 de-saturation, base model
+        # outputs are 0.40-0.75 — the stale Platt logit mapping squashes these
+        # to near-zero (0.001-0.003), killing all signals. Bypass Platt and
+        # return base model probabilities directly. Thresholds in live_engine
+        # (0.72 CE / 0.64 PE) are calibrated for these raw outputs.
         raw = self.base_model.predict_proba(X)[:, 1]
         raw = np.clip(raw, 1e-6, 1 - 1e-6)
-
-        logit = np.log(raw / (1 - raw)).reshape(-1, 1)
-        return self.calibrator.predict_proba(logit)
+        # Return in sklearn-compatible (N, 2) format: [prob_class0, prob_class1]
+        return np.column_stack([1 - raw, raw])
 
     def predict(self, X):
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)

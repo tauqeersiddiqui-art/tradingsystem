@@ -8,5 +8,6 @@ __all__ = [
     "config",
     "models",
     "phase4",
+    "phase5",
     "validation",
 ]

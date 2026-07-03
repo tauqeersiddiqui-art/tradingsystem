@@ -3,6 +3,8 @@
   "phase": 4,
   "comparison_rows": 40,
   "ranked_rows": 40,
+  "artifact_available_rows": 8,
+  "production_viable_rows": 8,
   "champions": 8,
   "challengers": 16,
   "ensembles": 8,

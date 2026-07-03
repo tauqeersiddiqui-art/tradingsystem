@@ -117,7 +117,11 @@ def normalize_metric(values: pd.Series, higher_is_better: bool) -> pd.Series:
     return score if higher_is_better else 1.0 - score
 
 
-def score_candidates(comparison: pd.DataFrame) -> pd.DataFrame:
+def candidate_artifact_path(config: PipelineConfig, target: str, model: str) -> Path:
+    return config.paths.output_dir / "models" / f"v2_{target}_{model}.joblib"
+
+
+def score_candidates(comparison: pd.DataFrame, config: PipelineConfig) -> pd.DataFrame:
     ok = comparison[comparison.get("status") == "ok"].copy()
     if ok.empty:
         return ok
@@ -149,27 +153,48 @@ def score_candidates(comparison: pd.DataFrame) -> pd.DataFrame:
 
     ok["selection_score"] = score
     ok["side"] = ok["target"].map(BINARY_TARGET_SIDES).fillna("unknown")
+    ok["model_artifact_path"] = [
+        str(candidate_artifact_path(config, str(row.target), str(row.model)))
+        for row in ok.itertuples(index=False)
+    ]
+    ok["artifact_available"] = [
+        candidate_artifact_path(config, str(row.target), str(row.model)).exists()
+        for row in ok.itertuples(index=False)
+    ]
     ok["meets_expectancy_floor"] = ok["expectancy"].fillna(float("-inf")) >= 0.0
     ok["meets_profit_factor_floor"] = ok["profit_factor"].fillna(0.0) >= 1.05
     ok["meets_calibration_floor"] = ok["ece"].fillna(1.0) <= 0.05
     ok["meets_trade_count_floor"] = ok["trade_count"].fillna(0.0) >= 100
-    ok["production_viable"] = (
+    ok["metric_viable"] = (
         ok["meets_expectancy_floor"]
         & ok["meets_profit_factor_floor"]
         & ok["meets_calibration_floor"]
         & ok["meets_trade_count_floor"]
     )
+    ok["production_viable"] = ok["metric_viable"] & ok["artifact_available"]
     ok = ok.sort_values(["target", "selection_score"], ascending=[True, False])
     ok["rank_for_target"] = ok.groupby("target").cumcount() + 1
+    ok["production_rank_for_target"] = (
+        ok.sort_values(["target", "production_viable", "selection_score"], ascending=[True, False, False])
+        .groupby("target")
+        .cumcount()
+        + 1
+    )
     ok = ok.sort_values("selection_score", ascending=False).reset_index(drop=True)
     ok["global_rank"] = np.arange(1, len(ok) + 1)
     return ok
 
 
 def champion_challenger_report(scored: pd.DataFrame, paths: Phase4Paths) -> tuple[pd.DataFrame, pd.DataFrame]:
-    champions = scored.sort_values(["target", "selection_score"], ascending=[True, False])
+    candidate_pool = scored[scored["artifact_available"]].copy()
+    if candidate_pool.empty:
+        candidate_pool = scored.copy()
+    champions = candidate_pool.sort_values(["target", "selection_score"], ascending=[True, False])
     champions = champions.groupby("target", as_index=False).head(1).copy()
-    challengers = scored[~scored.index.isin(champions.index)].copy()
+    champion_keys = set(zip(champions["target"], champions["model"]))
+    challengers = scored[
+        ~scored.apply(lambda row: (row["target"], row["model"]) in champion_keys, axis=1)
+    ].copy()
     challengers = challengers.sort_values(["target", "selection_score"], ascending=[True, False])
     challengers = challengers.groupby("target", as_index=False).head(2).copy()
 
@@ -184,7 +209,10 @@ def build_ensemble_report(scored: pd.DataFrame, paths: Phase4Paths) -> pd.DataFr
     rows: list[dict[str, object]] = []
     for target, group in scored.groupby("target"):
         viable = group[group["production_viable"]].copy()
-        pool = viable if len(viable) >= 2 else group.copy()
+        pool_type = "promotable" if len(viable) >= 2 else "research_only"
+        pool = viable if len(viable) >= 2 else group[group["metric_viable"]].copy()
+        if pool.empty:
+            pool = group.copy()
         pool = pool.sort_values("selection_score", ascending=False).head(3)
         if pool.empty:
             continue
@@ -199,16 +227,22 @@ def build_ensemble_report(scored: pd.DataFrame, paths: Phase4Paths) -> pd.DataFr
             {
                 "target": target,
                 "side": BINARY_TARGET_SIDES.get(target, "unknown"),
+                "ensemble_type": pool_type,
                 "ensemble_size": int(len(pool)),
                 "members": [
                     {
                         "model": row.model,
                         "weight": float(weight),
                         "selection_score": float(row.selection_score),
+                        "artifact_available": bool(row.artifact_available),
                     }
                     for row, weight in zip(pool.itertuples(index=False), weights)
                 ],
-                "recommended": bool(len(pool) >= 2 and weighted_metrics.get("weighted_expectancy", 0.0) > 0.0),
+                "recommended": bool(
+                    pool_type == "promotable"
+                    and len(pool) >= 2
+                    and weighted_metrics.get("weighted_expectancy", 0.0) > 0.0
+                ),
                 **weighted_metrics,
             }
         )
@@ -401,7 +435,10 @@ def target_quality_rows(
                 "side": champion.side,
                 "champion_model": champion.model,
                 "selection_score": float(champion.selection_score),
+                "metric_viable": bool(champion.metric_viable),
                 "production_viable": bool(champion.production_viable),
+                "artifact_available": bool(champion.artifact_available),
+                "model_artifact_path": champion.model_artifact_path,
                 "recommended_threshold": threshold_record.get("recommended_threshold"),
                 "auc": getattr(champion, "auc", None),
                 "average_precision": getattr(champion, "average_precision", None),
@@ -418,6 +455,7 @@ def target_quality_rows(
 
 
 def promotion_decision(
+    scored: pd.DataFrame,
     champions: pd.DataFrame,
     ensemble: pd.DataFrame,
     thresholds: pd.DataFrame,
@@ -444,16 +482,43 @@ def promotion_decision(
 
     blockers = []
     warnings = []
+    research_winners = (
+        scored.sort_values(["target", "selection_score"], ascending=[True, False])
+        .groupby("target", as_index=False)
+        .head(1)
+    )
+    research_only_winners = [
+        {
+            "target": row.target,
+            "model": row.model,
+            "selection_score": float(row.selection_score),
+            "reason": "model artifact is not available for promotion",
+            "model_artifact_path": row.model_artifact_path,
+        }
+        for row in research_winners.itertuples(index=False)
+        if not bool(row.artifact_available)
+    ]
     if not leakage_passed:
         blockers.append("walkforward leakage checks did not pass")
     if not ce_rows:
         blockers.append("no CE champion passed production and risk gates")
     if not pe_rows:
         blockers.append("no PE champion passed production and risk gates")
+    if research_only_winners:
+        warnings.append(
+            f"{len(research_only_winners)} research-best targets use models without promotion artifacts"
+        )
     if feature_drift_over_limit > 0:
         warnings.append(f"{feature_drift_over_limit} features exceed PSI 0.25")
     if probability_drift_max > 0.50:
         warnings.append(f"probability drift PSI is high: {probability_drift_max}")
+    promotable_ensembles = []
+    if not ensemble.empty and "ensemble_type" in ensemble:
+        promotable_ensembles = ensemble[
+            (ensemble["ensemble_type"] == "promotable") & (ensemble["recommended"].astype(bool))
+        ].to_dict("records")
+    if not promotable_ensembles:
+        warnings.append("no promotable ensembles available; only one persisted model family per target")
 
     promotion_ready = not blockers and feature_drift_over_limit <= 3 and probability_drift_max <= 1.0
     decision = "promote_candidate" if promotion_ready else "research_candidate_only"
@@ -468,9 +533,6 @@ def promotion_decision(
         ),
         reverse=True,
     )
-    recommended_ensembles = []
-    if not ensemble.empty and "recommended" in ensemble:
-        recommended_ensembles = ensemble[ensemble["recommended"].astype(bool)].to_dict("records")
     return {
         "schema_version": "phase4.production_candidate.v1",
         "decision": decision,
@@ -483,8 +545,9 @@ def promotion_decision(
             "min_expected_net_pnl_rs": config.risk.min_expected_net_pnl_rs,
         },
         "champions": champion_rows,
+        "research_only_winners": research_only_winners,
         "preferred_targets": preferred_targets[:4],
-        "recommended_ensembles": recommended_ensembles,
+        "recommended_ensembles": promotable_ensembles,
         "controls": {
             "requires_manual_review_before_production_write": True,
             "uses_experimental_artifacts_only": True,
@@ -505,7 +568,7 @@ def run_phase4_recommendation(
     if comparison.empty:
         raise FileNotFoundError("missing Phase 3 comparison report")
 
-    scored = score_candidates(comparison)
+    scored = score_candidates(comparison, config)
     if scored.empty:
         raise RuntimeError("Phase 3 comparison report has no usable ok rows")
     scored.to_csv(paths.recommendations / "trading_model_rankings.csv", index=False)
@@ -531,6 +594,7 @@ def run_phase4_recommendation(
         drift_summary = {}
 
     candidate = promotion_decision(
+        scored=scored,
         champions=champions,
         ensemble=ensemble,
         thresholds=thresholds,
@@ -546,6 +610,8 @@ def run_phase4_recommendation(
         "phase": 4,
         "comparison_rows": int(len(comparison)),
         "ranked_rows": int(len(scored)),
+        "artifact_available_rows": int(scored["artifact_available"].sum()),
+        "production_viable_rows": int(scored["production_viable"].sum()),
         "champions": int(len(champions)),
         "challengers": int(len(challengers)),
         "ensembles": int(len(ensemble)),

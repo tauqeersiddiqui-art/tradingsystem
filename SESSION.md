@@ -169,7 +169,39 @@
     - `conditional_candidate`
     - `research_candidate_only`
   - Implemented `production_candidate.json` generation with manual-review controls.
+  - Added artifact-aware production rules:
+    - comparison-only winners are allowed as research winners.
+    - production champions must have persisted model artifacts under `experimental/ml_pipeline_v2/artifacts/models/`.
+    - production ensembles require all members to have persisted artifacts.
+    - research-only ensembles are reported but are not recommended for promotion.
   - The Phase 4 layer is report-only and does not modify production trading files or production model artifacts.
+- Ran Phase 4 recommendation engine:
+  - comparison rows: `40`
+  - ranked rows: `40`
+  - artifact-available rows: `8`
+  - production-viable rows: `8`
+  - champions: `8`
+  - challengers: `16`
+  - ensembles: `8`
+  - risk rows: `40`
+  - promotion decision: `conditional_candidate`
+  - promotion ready: `false`
+  - production candidate:
+    - `experimental/ml_pipeline_v2/artifacts/reports/phase4/promotion/production_candidate.json`
+- Current Phase 4 production champions are all persisted LGBM artifacts:
+  - `directional_ce`: threshold `0.5292393084241221`, expectancy `340.8729395604397`
+  - `directional_pe`: threshold `0.5210714285714285`, expectancy `87.96238938053354`
+  - `quality_profitable_ce`: threshold `0.499681884719928`, expectancy `231.91746031746172`
+  - `quality_profitable_pe`: threshold `0.5181740775780512`, expectancy `67.3702166572891`
+  - `stop_hit_ce`: threshold `0.4538976088717141`, expectancy `231.15962837837836`
+  - `stop_hit_pe`: threshold `0.4814814814814814`, expectancy `428.097457627119`
+  - `target_hit_ce`: threshold `0.6296296296296297`, expectancy `592.3327338129467`
+  - `target_hit_pe`: threshold `0.6197250361794501`, expectancy `100.76173020527916`
+- Current Phase 4 warnings:
+  - `5 research-best targets use models without promotion artifacts`
+  - `11 features exceed PSI 0.25`
+  - `probability drift PSI is high: 6.123866166843266`
+  - `no promotable ensembles available; only one persisted model family per target`
 - No production model or live trading files were modified.
 
 ## Files Modified
@@ -233,7 +265,7 @@
 - `experimental/ml_pipeline_v2/artifacts/reports/drift/probability_drift.csv`
 - `experimental/ml_pipeline_v2/artifacts/reports/drift/probability_drift.json`
 - `experimental/ml_pipeline_v2/artifacts/reports/drift/drift_summary.json`
-- Phase 4 generated artifact paths, once `run_phase4_recommendation.py` is executed:
+- Phase 4 generated artifact paths:
   - `experimental/ml_pipeline_v2/artifacts/reports/phase4/phase4_summary.json`
   - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/trading_model_rankings.csv`
   - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/trading_model_rankings.json`
@@ -320,9 +352,25 @@
   - Left comparison unchanged.
   - SHAP status: `ok`.
   - SHAP source: existing artifact, no retraining.
-- Phase 4 validation is pending user-run commands:
-  - `python -m py_compile experimental\ml_pipeline_v2\src\ml_pipeline_v2\phase4.py experimental\ml_pipeline_v2\scripts\run_phase4_recommendation.py`
-  - `python experimental\ml_pipeline_v2\scripts\run_phase4_recommendation.py`
+- `python -m py_compile experimental\ml_pipeline_v2\src\ml_pipeline_v2\phase4.py experimental\ml_pipeline_v2\scripts\run_phase4_recommendation.py`
+  - Passed.
+  - First run by user after initial Phase 4 implementation.
+  - Rerun by Codex after artifact-aware Phase 4 changes.
+- `python experimental\ml_pipeline_v2\scripts\run_phase4_recommendation.py`
+  - Passed.
+  - First run by user after initial Phase 4 implementation.
+  - Rerun by Codex after artifact-aware Phase 4 changes.
+  - Latest output:
+    - `comparison_rows=40`
+    - `ranked_rows=40`
+    - `artifact_available_rows=8`
+    - `production_viable_rows=8`
+    - `champions=8`
+    - `challengers=16`
+    - `ensembles=8`
+    - `risk_rows=40`
+    - `promotion_decision=conditional_candidate`
+    - `promotion_ready=false`
 
 ## Current Git State Notes
 
@@ -344,7 +392,7 @@
   - `experimental/ml_pipeline_v2/artifacts/reports/walkforward/`
   - `experimental/ml_pipeline_v2/artifacts/reports/comparison/`
   - `experimental/ml_pipeline_v2/artifacts/reports/drift/`
-  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/` after Phase 4 runner execution.
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/`
 - Full Phase 3 validation updated CatBoost training log files under `catboost_info/`; these are generated artifacts from candidate comparison.
 - Unrelated untracked `.claude/` remains untouched.
 - `git status` emits permission warnings for `C:\Users\PC/.config/git/ignore`; this did not block work.
@@ -352,9 +400,10 @@
 ## Remaining Tasks
 
 - Phase 4:
-  - Run the pending Phase 4 compile and runner commands.
   - Inspect `production_candidate.json`.
   - Add deeper probability calibration curves if Phase 4 decision requires them.
+  - Add stability-adjusted scoring using walk-forward variance/drift penalties.
+  - Decide whether to train/persist top CatBoost/XGBoost research winners as experimental artifacts so ensembles can become promotable.
   - Add live promotion packaging only after explicit manual approval.
 - Regime model caveat:
   - `regime_proxy` is still a heuristic proxy and should be replaced or validated with researched regime labeling before any promotion decision.
@@ -366,4 +415,4 @@
 
 ## Exact Next Action
 
-Run the pending Phase 4 commands locally, paste the output, then inspect `experimental/ml_pipeline_v2/artifacts/reports/phase4/promotion/production_candidate.json` and continue improving the recommendation engine from the generated decision. Do not promote anything to production until Phase 4 produces an explicit promotion artifact and the regime proxy caveat is resolved.
+Continue Phase 4 by improving the conditional candidate into a stronger promotion package: add calibration curve reports, add stability-adjusted scoring, and decide whether to train/persist top CatBoost/XGBoost research winners as experimental artifacts so ensembles can become promotable. Do not promote anything to production until the regime proxy caveat is resolved and manual approval is explicit.

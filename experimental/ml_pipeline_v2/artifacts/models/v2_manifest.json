@@ -1,0 +1,1178 @@
+{
+  "dataset": "D:\\All Bots\\trading_system\\ml\\models\\training_dataset_v3.csv",
+  "rows": 505202,
+  "classifier": "lgbm",
+  "regime_classifier": "lgbm",
+  "regressor": "lgbm",
+  "metadata": {
+    "created_by": "experimental.ml_pipeline_v2.train_pipeline_v2",
+    "python": "3.12.10",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "pandas_version": "2.3.3",
+    "numpy_version": "2.4.3",
+    "sklearn_version": "1.8.0",
+    "joblib_version": "1.5.3",
+    "created_at_utc": "2026-07-03T11:43:38.679366+00:00",
+    "git": {
+      "commit": "c3a4c621812c33611d9d4d1262cdacce7e63df6b",
+      "branch": "fix/cost-aware-labels",
+      "status_experimental": "M experimental/ml_pipeline_v2/scripts/train_pipeline_v2.py\n M experimental/ml_pipeline_v2/src/ml_pipeline_v2/models.py\n M experimental/ml_pipeline_v2/src/ml_pipeline_v2/validation.py",
+      "status_session": "?? SESSION.md"
+    },
+    "source_file_hashes": {
+      "experimental\\ml_pipeline_v2\\scripts\\train_pipeline_v2.py": "6e95a9e07e9babd9bb7536c92f38c69ba74176d26461ec11b94c2e9dcb6d2733",
+      "experimental\\ml_pipeline_v2\\src\\ml_pipeline_v2\\config.py": "3fc3b5e96def429d69482640dfb78e723943b6109110603f1396e825d0ec69b7",
+      "experimental\\ml_pipeline_v2\\src\\ml_pipeline_v2\\models.py": "f2e21f4be75c70f7b50616ea6b6e9db7576e86389f54ea8c1650eaf2b070be97",
+      "experimental\\ml_pipeline_v2\\src\\ml_pipeline_v2\\validation.py": "ca4de76e089b207949ad841e0e8af3a0ba929f5ea1b1c9b1c070026d60a492c2"
+    },
+    "dataset": {
+      "path": "D:\\All Bots\\trading_system\\ml\\models\\training_dataset_v3.csv",
+      "sha256": "ceb73b650f15c962837e5a145a165a2d0ec9572296154052e33853df591cef48",
+      "rows_after_labeling": 505202,
+      "date_min": "2021-01-01T09:29:00",
+      "date_max": "2026-06-19T14:14:00"
+    },
+    "split": {
+      "method": "chronological_70_15_15_train_calibration_test",
+      "train_rows": 353641,
+      "calibration_rows": 75780,
+      "test_rows": 75781,
+      "train_date_min": "2021-01-01T09:29:00",
+      "train_date_max": "2024-10-28T15:13:00",
+      "calibration_date_min": "2024-10-28T15:14:00",
+      "calibration_date_max": "2025-08-21T14:43:00",
+      "test_date_min": "2025-08-21T14:44:00",
+      "test_date_max": "2026-06-19T14:14:00"
+    },
+    "feature_columns": [
+      "supertrend_dir",
+      "supertrend_dist",
+      "price_vs_vwap",
+      "adx",
+      "di_spread",
+      "ema_alignment",
+      "volume_ratio",
+      "ema20",
+      "ema50",
+      "macd",
+      "returns",
+      "volatility",
+      "rsi",
+      "atr",
+      "trend_strength",
+      "hour",
+      "weekday",
+      "return_1",
+      "return_3",
+      "candle_body_pct",
+      "range_break_strength",
+      "mins_since_open",
+      "mins_to_close",
+      "session_open",
+      "session_close",
+      "time_to_expiry_min",
+      "moneyness",
+      "momentum_velocity",
+      "range_compression",
+      "wick_ratio",
+      "body_efficiency",
+      "mom3_strength",
+      "upper_wick",
+      "lower_wick",
+      "close_position"
+    ],
+    "config": {
+      "labels": {
+        "directional_lookahead_bars": 12,
+        "directional_target_points": 15.0,
+        "directional_max_adverse_multiple": 2.0,
+        "quality_lookahead_bars": 12,
+        "spread_points_round_trip": 1.0,
+        "lot_units": 30,
+        "brokerage_round_trip_rs": 132.0
+      },
+      "validation": {
+        "min_train_rows": 50000,
+        "calibration_fraction": 0.2,
+        "test_fraction": 0.2,
+        "walkforward_folds": 6,
+        "purge_bars": 12,
+        "embargo_bars": 12,
+        "random_seed": 42
+      },
+      "risk": {
+        "max_risk_per_trade_pct": 0.5,
+        "max_daily_loss_pct": 2.0,
+        "max_open_exposure_pct": 5.0,
+        "min_expected_net_pnl_rs": 150.0,
+        "max_risk_of_ruin_pct": 1.0
+      }
+    }
+  },
+  "targets": {
+    "regime_proxy": {
+      "mixed": 0.35598038012517763,
+      "range": 0.2735321712898999,
+      "trend": 0.14423339575061064,
+      "volatile_trend": 0.22625405283431183
+    },
+    "directional_ce": {
+      "0": 0.6925111143661348,
+      "1": 0.3074888856338653
+    },
+    "quality_ce_profitable": {
+      "0": 0.6536652665666407,
+      "1": 0.34633473343335935
+    },
+    "ce_target_hit": {
+      "0": 0.681816382357948,
+      "1": 0.3181836176420521
+    },
+    "ce_stop_hit": {
+      "0": 0.8760198890740734,
+      "1": 0.12398011092592666
+    },
+    "quality_net_ce_rs": {
+      "count": 505202,
+      "mean": -58.205188221741025,
+      "std": 386.6087864686692,
+      "p05": -477.0,
+      "p50": -97.50000000006548,
+      "p95": 485.62500000000205
+    },
+    "ce_reward_risk": {
+      "count": 505202,
+      "mean": 4.556441203295209,
+      "std": 6.850857347544533,
+      "p05": 0.0,
+      "p50": 0.9190327696030208,
+      "p95": 20.0
+    },
+    "ce_drawdown_rs": {
+      "count": 505202,
+      "mean": 428.7390627907252,
+      "std": 666.9415389091932,
+      "p05": 0.0,
+      "p50": 255.0,
+      "p95": 1395.0
+    },
+    "ce_bars_to_target": {
+      "count": 505202,
+      "mean": 10.778912197497238,
+      "std": 3.7297423268486622,
+      "p05": 2.0,
+      "p50": 13.0,
+      "p95": 13.0
+    },
+    "ce_bars_to_mfe": {
+      "count": 505202,
+      "mean": 6.488925221990412,
+      "std": 4.029972340973089,
+      "p05": 1.0,
+      "p50": 6.0,
+      "p95": 12.0
+    },
+    "directional_pe": {
+      "0": 0.6885047961013614,
+      "1": 0.31149520389863855
+    },
+    "quality_pe_profitable": {
+      "0": 0.6565690555460983,
+      "1": 0.3434309444539016
+    },
+    "pe_target_hit": {
+      "0": 0.6778160023119465,
+      "1": 0.3221839976880535
+    },
+    "pe_stop_hit": {
+      "0": 0.8868056737700959,
+      "1": 0.11319432622990408
+    },
+    "quality_net_pe_rs": {
+      "count": 505202,
+      "mean": -53.12025734260754,
+      "std": 397.757552188992,
+      "p05": -462.7499999999891,
+      "p50": -104.24999999996726,
+      "p95": 509.9999999999884
+    },
+    "pe_reward_risk": {
+      "count": 505202,
+      "mean": 4.448251992280379,
+      "std": 6.827984139685191,
+      "p05": 0.0,
+      "p50": 0.8607594936712941,
+      "p95": 20.0
+    },
+    "pe_drawdown_rs": {
+      "count": 505202,
+      "mean": 421.9591549518806,
+      "std": 631.0091346908964,
+      "p05": 0.0,
+      "p50": 262.5,
+      "p95": 1348.5000000000218
+    },
+    "pe_bars_to_target": {
+      "count": 505202,
+      "mean": 10.721424301566502,
+      "std": 3.777939608388183,
+      "p05": 2.0,
+      "p50": 13.0,
+      "p95": 13.0
+    },
+    "pe_bars_to_mfe": {
+      "count": 505202,
+      "mean": 6.287110898214971,
+      "std": 4.0233024425636135,
+      "p05": 1.0,
+      "p50": 6.0,
+      "p95": 12.0
+    }
+  },
+  "threshold_reports": {
+    "directional_ce": {
+      "base_rate": 0.34955133280548956,
+      "positives": 26489,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.5063924402445801,
+        "samples": 3624,
+        "coverage": 0.04782264449722882,
+        "precision": 0.5077262693156733,
+        "recall": 0.06946279587753407,
+        "f1": 0.122206356058845,
+        "lift": 1.4525084634656547,
+        "mean_value": 185.86434188741802,
+        "total_value": 673572.3750000029
+      },
+      "candidates": [
+        {
+          "threshold": 0.5063924402445801,
+          "samples": 3624,
+          "coverage": 0.04782264449722882,
+          "precision": 0.5077262693156733,
+          "recall": 0.06946279587753407,
+          "f1": 0.122206356058845,
+          "lift": 1.4525084634656547,
+          "mean_value": 185.86434188741802,
+          "total_value": 673572.3750000029
+        },
+        {
+          "threshold": 0.48661417322834655,
+          "samples": 4259,
+          "coverage": 0.05620216415940882,
+          "precision": 0.5045785395632778,
+          "recall": 0.08112801540261995,
+          "f1": 0.13978144919994798,
+          "lift": 1.4435034062480725,
+          "mean_value": 168.38089927213048,
+          "total_value": 717134.2500000037
+        },
+        {
+          "threshold": 0.48541764983482777,
+          "samples": 14854,
+          "coverage": 0.19601477962523092,
+          "precision": 0.4909115389793995,
+          "recall": 0.2752840801842274,
+          "f1": 0.3527562102411532,
+          "lift": 1.404404712290343,
+          "mean_value": 53.72479635115103,
+          "total_value": 798028.1249999973
+        },
+        {
+          "threshold": 0.4829581993569132,
+          "samples": 16409,
+          "coverage": 0.2165347057271048,
+          "precision": 0.49015784020964104,
+          "recall": 0.30363547132772095,
+          "f1": 0.3749825166674437,
+          "lift": 1.402248523201578,
+          "mean_value": 49.04921841672245,
+          "total_value": 804848.6249999986
+        },
+        {
+          "threshold": 0.44348061805367306,
+          "samples": 28581,
+          "coverage": 0.3771575613618369,
+          "precision": 0.4740212028970295,
+          "recall": 0.5114575861678432,
+          "f1": 0.4920283275830761,
+          "lift": 1.3560846674293818,
+          "mean_value": 22.53873202477162,
+          "total_value": 644179.4999999977
+        },
+        {
+          "threshold": 0.3631815907953977,
+          "samples": 39283,
+          "coverage": 0.5183821588809713,
+          "precision": 0.4535040602805285,
+          "recall": 0.6725433198686247,
+          "f1": 0.5417198808003405,
+          "lift": 1.297389017632166,
+          "mean_value": 4.866112567777423,
+          "total_value": 191155.5000000005
+        }
+      ]
+    },
+    "quality_profitable_ce": {
+      "base_rate": 0.37409606756400104,
+      "positives": 28349,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.526915769474351,
+        "samples": 1579,
+        "coverage": 0.02083663235682238,
+        "precision": 0.5269157694743508,
+        "recall": 0.02934847790045504,
+        "f1": 0.055600106923282544,
+        "lift": 1.4085038982244984,
+        "mean_value": 331.29243191893704,
+        "total_value": 523110.75000000163
+      },
+      "candidates": [
+        {
+          "threshold": 0.526915769474351,
+          "samples": 1579,
+          "coverage": 0.02083663235682238,
+          "precision": 0.5269157694743508,
+          "recall": 0.02934847790045504,
+          "f1": 0.055600106923282544,
+          "lift": 1.4085038982244984,
+          "mean_value": 331.29243191893704,
+          "total_value": 523110.75000000163
+        },
+        {
+          "threshold": 0.5101369863013694,
+          "samples": 3404,
+          "coverage": 0.04491950382686725,
+          "precision": 0.5179200940070505,
+          "recall": 0.062189142474161345,
+          "f1": 0.11104462570465784,
+          "lift": 1.384457466713263,
+          "mean_value": 206.4755067567573,
+          "total_value": 702842.6250000019
+        },
+        {
+          "threshold": 0.4975206611570248,
+          "samples": 4614,
+          "coverage": 0.0608867775138559,
+          "precision": 0.512570437798006,
+          "recall": 0.0834244594165579,
+          "f1": 0.14349422079301036,
+          "lift": 1.3701572463343645,
+          "mean_value": 175.0277958387521,
+          "total_value": 807578.2500000022
+        },
+        {
+          "threshold": 0.4696296296296296,
+          "samples": 7943,
+          "coverage": 0.10481657429400898,
+          "precision": 0.49905577237819465,
+          "recall": 0.13982856538149493,
+          "f1": 0.21845034718395237,
+          "lift": 1.334031056856312,
+          "mean_value": 115.87679403248151,
+          "total_value": 920409.3750000007
+        },
+        {
+          "threshold": 0.45944039501528333,
+          "samples": 15238,
+          "coverage": 0.2010820797044075,
+          "precision": 0.4805092531828324,
+          "recall": 0.2582807153691488,
+          "f1": 0.33597173469153646,
+          "lift": 1.284454167914037,
+          "mean_value": 56.31277890799305,
+          "total_value": 858094.1249999981
+        },
+        {
+          "threshold": 0.4478391434913174,
+          "samples": 23929,
+          "coverage": 0.3157693322776458,
+          "precision": 0.4691378661874713,
+          "recall": 0.39599280397897635,
+          "f1": 0.42947320096407665,
+          "lift": 1.2540571977736983,
+          "mean_value": 29.23479877972311,
+          "total_value": 699559.4999999943
+        },
+        {
+          "threshold": 0.38411819021237303,
+          "samples": 39169,
+          "coverage": 0.5168778041699656,
+          "precision": 0.4496157675712936,
+          "recall": 0.6212212070972521,
+          "f1": 0.5216682958618443,
+          "lift": 1.2018724775672027,
+          "mean_value": 3.962578825091125,
+          "total_value": 155210.24999999427
+        }
+      ]
+    },
+    "target_hit_ce": {
+      "base_rate": 0.3671285299551333,
+      "positives": 27821,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.6497134670487107,
+        "samples": 1396,
+        "coverage": 0.0184217471628398,
+        "precision": 0.6497134670487106,
+        "recall": 0.032601272420114305,
+        "f1": 0.06208714104801999,
+        "lift": 1.769716636100474,
+        "mean_value": 346.00304441260676,
+        "total_value": 483020.249999999
+      },
+      "candidates": [
+        {
+          "threshold": 0.6497134670487107,
+          "samples": 1396,
+          "coverage": 0.0184217471628398,
+          "precision": 0.6497134670487106,
+          "recall": 0.032601272420114305,
+          "f1": 0.06208714104801999,
+          "lift": 1.769716636100474,
+          "mean_value": 346.00304441260676,
+          "total_value": 483020.249999999
+        },
+        {
+          "threshold": 0.6127527216174184,
+          "samples": 2780,
+          "coverage": 0.03668514119820533,
+          "precision": 0.6320143884892087,
+          "recall": 0.063153732791776,
+          "f1": 0.11483284859971897,
+          "lift": 1.7215071478276205,
+          "mean_value": 240.34424460431669,
+          "total_value": 668157.0000000003
+        },
+        {
+          "threshold": 0.5890295358649789,
+          "samples": 5150,
+          "coverage": 0.06795988387437318,
+          "precision": 0.6122330097087378,
+          "recall": 0.11333165594335215,
+          "f1": 0.1912589851687847,
+          "lift": 1.6676258033761602,
+          "mean_value": 172.91927184466053,
+          "total_value": 890534.2500000017
+        },
+        {
+          "threshold": 0.5559226050023596,
+          "samples": 8635,
+          "coverage": 0.11394827131169175,
+          "precision": 0.5927041111754487,
+          "recall": 0.1839617555084289,
+          "f1": 0.2807768268597762,
+          "lift": 1.6144321751509834,
+          "mean_value": 121.24768384481796,
+          "total_value": 1046973.750000003
+        },
+        {
+          "threshold": 0.49871200412158684,
+          "samples": 16201,
+          "coverage": 0.21378991818421747,
+          "precision": 0.5576816245910746,
+          "recall": 0.32475468171525107,
+          "f1": 0.4104765798918723,
+          "lift": 1.5190364656738304,
+          "mean_value": 60.774026294673,
+          "total_value": 984599.9999999973
+        },
+        {
+          "threshold": 0.46555054732775275,
+          "samples": 23417,
+          "coverage": 0.3090129321720771,
+          "precision": 0.5313661015501558,
+          "recall": 0.44725207577010173,
+          "f1": 0.4856942113275303,
+          "lift": 1.4473571465968444,
+          "mean_value": 33.50778814536436,
+          "total_value": 784651.8749999972
+        },
+        {
+          "threshold": 0.37371171838425904,
+          "samples": 37890,
+          "coverage": 0.5,
+          "precision": 0.4907891264185801,
+          "recall": 0.668415944789907,
+          "f1": 0.5659935170671576,
+          "lift": 1.3368318895798137,
+          "mean_value": 7.245447347585069,
+          "total_value": 274529.99999999825
+        }
+      ]
+    },
+    "stop_hit_ce": {
+      "base_rate": 0.157191871206123,
+      "positives": 11912,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.4016110471806674,
+        "samples": 2053,
+        "coverage": 0.02709158089205595,
+        "precision": 0.4378957622990745,
+        "recall": 0.07547011417058429,
+        "f1": 0.12875044754744003,
+        "lift": 2.7857405026044213,
+        "mean_value": 117.0584510472482,
+        "total_value": 240321.00000000055
+      },
+      "candidates": [
+        {
+          "threshold": 0.4288990825688073,
+          "samples": 1184,
+          "coverage": 0.015624175244127738,
+          "precision": 0.46452702702702703,
+          "recall": 0.046171927468099394,
+          "f1": 0.0839951130116066,
+          "lift": 2.9551593441998074,
+          "mean_value": 109.87436655405448,
+          "total_value": 130091.2500000005
+        },
+        {
+          "threshold": 0.4016110471806674,
+          "samples": 2053,
+          "coverage": 0.02709158089205595,
+          "precision": 0.4378957622990745,
+          "recall": 0.07547011417058429,
+          "f1": 0.12875044754744003,
+          "lift": 2.7857405026044213,
+          "mean_value": 117.0584510472482,
+          "total_value": 240321.00000000055
+        },
+        {
+          "threshold": 0.39886960032297125,
+          "samples": 4585,
+          "coverage": 0.06050409078912642,
+          "precision": 0.4163576881134133,
+          "recall": 0.16025856279382136,
+          "f1": 0.23143601867006122,
+          "lift": 2.648722767397117,
+          "mean_value": 78.41515812431842,
+          "total_value": 359533.5
+        },
+        {
+          "threshold": 0.33199310740953475,
+          "samples": 8987,
+          "coverage": 0.11859329638427026,
+          "precision": 0.3828863914543229,
+          "recall": 0.2888683680322364,
+          "f1": 0.32929805253839894,
+          "lift": 2.4357900221968256,
+          "mean_value": 74.02580115722718,
+          "total_value": 665269.8750000007
+        },
+        {
+          "threshold": 0.24853310980720866,
+          "samples": 15872,
+          "coverage": 0.2094484032726313,
+          "precision": 0.3385206653225806,
+          "recall": 0.45105775688381466,
+          "f1": 0.38676936366253956,
+          "lift": 2.153550706694523,
+          "mean_value": 49.992730909778636,
+          "total_value": 793484.6250000065
+        },
+        {
+          "threshold": 0.1828825191764231,
+          "samples": 27298,
+          "coverage": 0.36022697281604643,
+          "precision": 0.28060663784892664,
+          "recall": 0.6430490261920753,
+          "f1": 0.3907166539148177,
+          "lift": 1.7851218112988299,
+          "mean_value": 24.96564766649601,
+          "total_value": 681512.2500000081
+        },
+        {
+          "threshold": 0.12021036814425247,
+          "samples": 39020,
+          "coverage": 0.5149115861704935,
+          "precision": 0.23962070732957458,
+          "recall": 0.7849227669576897,
+          "f1": 0.3671562082777036,
+          "lift": 1.5243835797040934,
+          "mean_value": 3.802444259354277,
+          "total_value": 148371.3750000039
+        }
+      ]
+    },
+    "directional_pe": {
+      "base_rate": 0.3510952757983637,
+      "positives": 26606,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.5518945634266886,
+        "samples": 791,
+        "coverage": 0.010438110319345474,
+        "precision": 0.5663716814159292,
+        "recall": 0.016838307148763436,
+        "f1": 0.03270431069095156,
+        "lift": 1.613156657058525,
+        "mean_value": 70.54693426042729,
+        "total_value": 55802.62499999799
+      },
+      "candidates": [
+        {
+          "threshold": 0.5518945634266886,
+          "samples": 791,
+          "coverage": 0.010438110319345474,
+          "precision": 0.5663716814159292,
+          "recall": 0.016838307148763436,
+          "f1": 0.03270431069095156,
+          "lift": 1.613156657058525,
+          "mean_value": 70.54693426042729,
+          "total_value": 55802.62499999799
+        },
+        {
+          "threshold": 0.48535233570863023,
+          "samples": 2430,
+          "coverage": 0.032066508313539195,
+          "precision": 0.51440329218107,
+          "recall": 0.046981883785612265,
+          "f1": 0.0861000137760022,
+          "lift": 1.4651387462031678,
+          "mean_value": 42.37870370370224,
+          "total_value": 102980.24999999645
+        },
+        {
+          "threshold": 0.48324022346368717,
+          "samples": 3862,
+          "coverage": 0.050963314858801796,
+          "precision": 0.502848265147592,
+          "recall": 0.07299105464932722,
+          "f1": 0.12747800971511095,
+          "lift": 1.4322273747607501,
+          "mean_value": 32.542853443810195,
+          "total_value": 125680.49999999497
+        },
+        {
+          "threshold": 0.48063952035973023,
+          "samples": 11868,
+          "coverage": 0.15661124307205068,
+          "precision": 0.4878665318503539,
+          "recall": 0.21762008569495603,
+          "f1": 0.300982481675937,
+          "lift": 1.3895559566872064,
+          "mean_value": 15.187057633973017,
+          "total_value": 180239.99999999176
+        },
+        {
+          "threshold": 0.4630593132154006,
+          "samples": 15611,
+          "coverage": 0.20600422275006597,
+          "precision": 0.48401767984113764,
+          "recall": 0.28399609110726903,
+          "f1": 0.3579600634815358,
+          "lift": 1.3785935419965951,
+          "mean_value": 14.933027993081332,
+          "total_value": 233119.49999999267
+        },
+        {
+          "threshold": 0.4152173913043478,
+          "samples": 24878,
+          "coverage": 0.32829242544206916,
+          "precision": 0.4642656162070906,
+          "recall": 0.43411260617905734,
+          "f1": 0.4486830860073032,
+          "lift": 1.3223351272710413,
+          "mean_value": 14.371613473751678,
+          "total_value": 357536.99999999424
+        },
+        {
+          "threshold": 0.35071846726982436,
+          "samples": 38915,
+          "coverage": 0.5135259963050937,
+          "precision": 0.43101631761531545,
+          "recall": 0.6304217093888597,
+          "f1": 0.511988522763694,
+          "lift": 1.2276334867657146,
+          "mean_value": -5.256841834768223,
+          "total_value": -204570.0000000054
+        }
+      ]
+    },
+    "quality_profitable_pe": {
+      "base_rate": 0.3728556347321193,
+      "positives": 28255,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.5021199273167779,
+        "samples": 1697,
+        "coverage": 0.02239377144365268,
+        "precision": 0.5050088391278728,
+        "recall": 0.030330914882321713,
+        "f1": 0.05722489316239315,
+        "lift": 1.3544353151339656,
+        "mean_value": 69.0685032410125,
+        "total_value": 117209.2499999982
+      },
+      "candidates": [
+        {
+          "threshold": 0.5021199273167779,
+          "samples": 1697,
+          "coverage": 0.02239377144365268,
+          "precision": 0.5050088391278728,
+          "recall": 0.030330914882321713,
+          "f1": 0.05722489316239315,
+          "lift": 1.3544353151339656,
+          "mean_value": 69.0685032410125,
+          "total_value": 117209.2499999982
+        },
+        {
+          "threshold": 0.47676419965576594,
+          "samples": 2859,
+          "coverage": 0.03772763262074426,
+          "precision": 0.4935292060160895,
+          "recall": 0.049938064059458505,
+          "f1": 0.0906987208330655,
+          "lift": 1.3236469025623523,
+          "mean_value": 49.82791185729169,
+          "total_value": 142457.99999999694
+        },
+        {
+          "threshold": 0.4576888080072793,
+          "samples": 5057,
+          "coverage": 0.06673264713644761,
+          "precision": 0.4779513545580384,
+          "recall": 0.0855423818793134,
+          "f1": 0.14511287223823247,
+          "lift": 1.2818670553320881,
+          "mean_value": 30.642253312239088,
+          "total_value": 154957.87499999307
+        },
+        {
+          "threshold": 0.4489377562430116,
+          "samples": 15789,
+          "coverage": 0.20835312747426762,
+          "precision": 0.458230413579074,
+          "recall": 0.25606087418156076,
+          "f1": 0.32853510126237395,
+          "lift": 1.2289754288098471,
+          "mean_value": 21.439269428082234,
+          "total_value": 338504.6249999904
+        },
+        {
+          "threshold": 0.4242135367016206,
+          "samples": 25231,
+          "coverage": 0.33295064660860385,
+          "precision": 0.4481788276326741,
+          "recall": 0.4002123517961423,
+          "f1": 0.42283962158321803,
+          "lift": 1.2020170432845174,
+          "mean_value": 14.122493163171997,
+          "total_value": 356324.62499999267
+        },
+        {
+          "threshold": 0.37084068195179304,
+          "samples": 40015,
+          "coverage": 0.5280416996569015,
+          "precision": 0.4231413220042484,
+          "recall": 0.5992567687135021,
+          "f1": 0.4960304672623407,
+          "lift": 1.1348663734376905,
+          "mean_value": -8.22822066724993,
+          "total_value": -329252.25000000594
+        }
+      ]
+    },
+    "target_hit_pe": {
+      "base_rate": 0.36838215888097126,
+      "positives": 27916,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.6156330749354008,
+        "samples": 1904,
+        "coverage": 0.025125362892583797,
+        "precision": 0.6234243697478992,
+        "recall": 0.0425204183980513,
+        "f1": 0.07961099932930918,
+        "lift": 1.6923305179644574,
+        "mean_value": 72.50341386554463,
+        "total_value": 138046.49999999697
+      },
+      "candidates": [
+        {
+          "threshold": 0.6156330749354008,
+          "samples": 1904,
+          "coverage": 0.025125362892583797,
+          "precision": 0.6234243697478992,
+          "recall": 0.0425204183980513,
+          "f1": 0.07961099932930918,
+          "lift": 1.6923305179644574,
+          "mean_value": 72.50341386554463,
+          "total_value": 138046.49999999697
+        },
+        {
+          "threshold": 0.5660485021398002,
+          "samples": 6307,
+          "coverage": 0.08322776458168382,
+          "precision": 0.5874425241794831,
+          "recall": 0.13271958733342887,
+          "f1": 0.21652105309294917,
+          "lift": 1.5946551971027807,
+          "mean_value": 50.950471698112786,
+          "total_value": 321344.6249999973
+        },
+        {
+          "threshold": 0.5376344086021506,
+          "samples": 8454,
+          "coverage": 0.11155977830562154,
+          "precision": 0.5765318192571564,
+          "recall": 0.1745952142140708,
+          "f1": 0.26802309595820734,
+          "lift": 1.5650372998748856,
+          "mean_value": 44.99370120652914,
+          "total_value": 380376.7499999973
+        },
+        {
+          "threshold": 0.501185770750988,
+          "samples": 15261,
+          "coverage": 0.20138558986539984,
+          "precision": 0.5489155363344472,
+          "recall": 0.3000788078521278,
+          "f1": 0.3880306644741413,
+          "lift": 1.4900709035472277,
+          "mean_value": 42.37829270689942,
+          "total_value": 646735.1249999921
+        },
+        {
+          "threshold": 0.41743518357403864,
+          "samples": 27893,
+          "coverage": 0.36807864871997886,
+          "precision": 0.5005556949772344,
+          "recall": 0.5001432870038688,
+          "f1": 0.5003494060097833,
+          "lift": 1.3587946183326702,
+          "mean_value": 15.627039042053307,
+          "total_value": 435884.9999999929
+        },
+        {
+          "threshold": 0.35730706075533664,
+          "samples": 39155,
+          "coverage": 0.5166930588545791,
+          "precision": 0.46374664793768355,
+          "recall": 0.6504513540621866,
+          "f1": 0.5414560689418676,
+          "lift": 1.2588737992806154,
+          "mean_value": -4.345058102413602,
+          "total_value": -170130.75000000457
+        }
+      ]
+    },
+    "stop_hit_pe": {
+      "base_rate": 0.15147796252309317,
+      "positives": 11479,
+      "min_samples": 378,
+      "recommended": {
+        "threshold": 0.43991416309012876,
+        "samples": 3193,
+        "coverage": 0.042135128002111374,
+        "precision": 0.4625743814594425,
+        "recall": 0.12866974475128495,
+        "f1": 0.2013358778625954,
+        "lift": 3.0537404501260172,
+        "mean_value": 110.6500156592543,
+        "total_value": 353305.49999999895
+      },
+      "candidates": [
+        {
+          "threshold": 0.48064702484113214,
+          "samples": 1735,
+          "coverage": 0.02289522301398786,
+          "precision": 0.4812680115273775,
+          "recall": 0.07274152800766617,
+          "f1": 0.1263811109429393,
+          "lift": 3.177148698801696,
+          "mean_value": 78.08818443803948,
+          "total_value": 135482.9999999985
+        },
+        {
+          "threshold": 0.43991416309012876,
+          "samples": 3193,
+          "coverage": 0.042135128002111374,
+          "precision": 0.4625743814594425,
+          "recall": 0.12866974475128495,
+          "f1": 0.2013358778625954,
+          "lift": 3.0537404501260172,
+          "mean_value": 110.6500156592543,
+          "total_value": 353305.49999999895
+        },
+        {
+          "threshold": 0.41410256410256413,
+          "samples": 5111,
+          "coverage": 0.06744523621008182,
+          "precision": 0.4459009978477793,
+          "recall": 0.19853645787960625,
+          "f1": 0.27474382157926464,
+          "lift": 2.9436691015684917,
+          "mean_value": 106.4845186851884,
+          "total_value": 544242.3749999979
+        },
+        {
+          "threshold": 0.33524590163934426,
+          "samples": 8478,
+          "coverage": 0.11187648456057007,
+          "precision": 0.41153573956121725,
+          "recall": 0.3039463367889189,
+          "f1": 0.34965175126522025,
+          "lift": 2.716802713123882,
+          "mean_value": 75.04838995045976,
+          "total_value": 636260.2499999979
+        },
+        {
+          "threshold": 0.22708476912474157,
+          "samples": 20048,
+          "coverage": 0.2645552916336764,
+          "precision": 0.3170391061452514,
+          "recall": 0.5537067688823069,
+          "f1": 0.4032099470295302,
+          "lift": 2.0929718149392063,
+          "mean_value": 31.710769154030036,
+          "total_value": 635737.4999999942
+        },
+        {
+          "threshold": 0.18616927679042755,
+          "samples": 27407,
+          "coverage": 0.36166534705727105,
+          "precision": 0.28335826613638854,
+          "recall": 0.6765397682724976,
+          "f1": 0.3994239572082498,
+          "lift": 1.8706236961247078,
+          "mean_value": 12.112512314372033,
+          "total_value": 331967.6249999943
+        },
+        {
+          "threshold": 0.10520437793165065,
+          "samples": 41635,
+          "coverage": 0.5494193718659277,
+          "precision": 0.23319322685240784,
+          "recall": 0.8458053837442286,
+          "f1": 0.365590992958542,
+          "lift": 1.5394531519187618,
+          "mean_value": -9.169634922541166,
+          "total_value": -381777.7500000014
+        }
+      ]
+    }
+  },
+  "stages": {
+    "regime_proxy": {
+      "accuracy": 0.9956717382985181,
+      "balanced_accuracy": 0.9955508542769543,
+      "macro_f1": 0.9954354131160166,
+      "log_loss": 0.009167694371979283,
+      "multiclass_brier": 0.005148061757415167,
+      "mean_max_probability": 0.995793902181755,
+      "expected_calibration_error": 0.000283425949333186,
+      "target_distribution": {
+        "mixed": 0.3659360525725446,
+        "range": 0.2748314221242792,
+        "trend": 0.14730605296842217,
+        "volatile_trend": 0.2119264723347541
+      },
+      "prediction_distribution": {
+        "mixed": 0.3669257465591639,
+        "range": 0.2739209036565894,
+        "trend": 0.14822976735593354,
+        "volatile_trend": 0.21092358242831316
+      },
+      "target": "current_bar_heuristic_proxy",
+      "volatility_threshold_source": "train_split_p90",
+      "volatility_threshold": 0.000545304417118,
+      "classes": [
+        "mixed",
+        "range",
+        "trend",
+        "volatile_trend"
+      ],
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_regime_proxy_lgbm.joblib"
+    },
+    "directional_ce": {
+      "auc": 0.6323315360160873,
+      "average_precision": 0.45334697265450985,
+      "brier": 0.21875621237439316,
+      "prediction_mean": 0.32750609083501087,
+      "target_mean": 0.35346590834114094,
+      "expected_calibration_error": 0.02626867231394888,
+      "target": "v2_label_ce_direction",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_directional_ce_lgbm.joblib"
+    },
+    "quality_profitable_ce": {
+      "auc": 0.5868641175706395,
+      "average_precision": 0.44332912242478395,
+      "brier": 0.2303642703506087,
+      "prediction_mean": 0.35779764884051724,
+      "target_mean": 0.37467175149443793,
+      "expected_calibration_error": 0.023402762928001846,
+      "target": "v2_quality_ce_profitable",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_quality_profitable_ce_lgbm.joblib"
+    },
+    "target_hit_ce": {
+      "auc": 0.6539593451240504,
+      "average_precision": 0.5072607084219161,
+      "brier": 0.217891140538849,
+      "prediction_mean": 0.3415512396393686,
+      "target_mean": 0.36778348134756733,
+      "expected_calibration_error": 0.028606395070494887,
+      "target": "v2_ce_target_hit",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_target_hit_ce_lgbm.joblib"
+    },
+    "stop_hit_ce": {
+      "auc": 0.715098875529361,
+      "average_precision": 0.30530513016187144,
+      "brier": 0.12338275228522796,
+      "prediction_mean": 0.15038349902051787,
+      "target_mean": 0.15930114408624854,
+      "expected_calibration_error": 0.011955369847064695,
+      "target": "v2_ce_stop_hit",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_stop_hit_ce_lgbm.joblib"
+    },
+    "quality_net_rs_ce": {
+      "mae": 272.07551985724075,
+      "rmse": 479.3140976930905,
+      "r2": -0.007582918800073113,
+      "prediction_mean": -53.24695582168585,
+      "target_mean": -45.92597253929095,
+      "residual_mean": -7.320983282394908,
+      "residual_p95_abs": 729.6797862914689,
+      "target": "v2_quality_net_ce_rs",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_quality_net_rs_ce_lgbm.joblib"
+    },
+    "reward_risk_ce": {
+      "mae": 5.5234307861458625,
+      "rmse": 7.091699191839645,
+      "r2": -0.001053583837829386,
+      "prediction_mean": 4.451713370874486,
+      "target_mean": 4.686583340286037,
+      "residual_mean": -0.23486996941155217,
+      "residual_p95_abs": 15.700479728279433,
+      "target": "v2_ce_reward_risk",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_reward_risk_ce_lgbm.joblib"
+    },
+    "drawdown_rs_ce": {
+      "mae": 406.75951634036807,
+      "rmse": 776.3112685711391,
+      "r2": 0.09679070075604757,
+      "prediction_mean": 472.47621314583824,
+      "target_mean": 502.08413058682277,
+      "residual_mean": -29.6079174409844,
+      "residual_p95_abs": 1112.4216006503596,
+      "target": "v2_ce_drawdown_rs",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_drawdown_rs_ce_lgbm.joblib"
+    },
+    "bars_to_target_ce": {
+      "mae": 3.0446937461414265,
+      "rmse": 3.82658356404506,
+      "r2": 0.09435752781651707,
+      "prediction_mean": 10.642834663406672,
+      "target_mean": 10.323537562185772,
+      "residual_mean": 0.3192971012208998,
+      "residual_p95_abs": 7.902746415800106,
+      "target": "v2_ce_bars_to_target",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_bars_to_target_ce_lgbm.joblib"
+    },
+    "directional_pe": {
+      "auc": 0.6204468824960003,
+      "average_precision": 0.45030024965949533,
+      "brier": 0.2231761731347385,
+      "prediction_mean": 0.3507274565748429,
+      "target_mean": 0.36621316688879796,
+      "expected_calibration_error": 0.023444096468872803,
+      "target": "v2_label_pe_direction",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_directional_pe_lgbm.joblib"
+    },
+    "quality_profitable_pe": {
+      "auc": 0.5767267544789038,
+      "average_precision": 0.4379785173639955,
+      "brier": 0.23271106774642955,
+      "prediction_mean": 0.37725673400458754,
+      "target_mean": 0.3845159076813449,
+      "expected_calibration_error": 0.010254470177237532,
+      "target": "v2_quality_pe_profitable",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_quality_profitable_pe_lgbm.joblib"
+    },
+    "target_hit_pe": {
+      "auc": 0.6411862548882312,
+      "average_precision": 0.49661687831531487,
+      "brier": 0.22284018733777353,
+      "prediction_mean": 0.36594114796253224,
+      "target_mean": 0.3807946582916562,
+      "expected_calibration_error": 0.022710646525310053,
+      "target": "v2_pe_target_hit",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_target_hit_pe_lgbm.joblib"
+    },
+    "stop_hit_pe": {
+      "auc": 0.7562274416082709,
+      "average_precision": 0.33401815118324063,
+      "brier": 0.10978193352860724,
+      "prediction_mean": 0.13716107319143203,
+      "target_mean": 0.14482522004196302,
+      "expected_calibration_error": 0.007680112697544131,
+      "target": "v2_pe_stop_hit",
+      "calibration": "isotonic_time_split",
+      "threshold_source": "calibration_split",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_stop_hit_pe_lgbm.joblib"
+    },
+    "quality_net_rs_pe": {
+      "mae": 278.434238804283,
+      "rmse": 488.55954873978925,
+      "r2": -0.010148348141273189,
+      "prediction_mean": -39.98866485575054,
+      "target_mean": -31.755464760296007,
+      "residual_mean": -8.233200095454531,
+      "residual_p95_abs": 754.0468297241935,
+      "target": "v2_quality_net_pe_rs",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_quality_net_rs_pe_lgbm.joblib"
+    },
+    "reward_risk_pe": {
+      "mae": 5.603827124727218,
+      "rmse": 7.099925185074652,
+      "r2": -0.004941722442570962,
+      "prediction_mean": 4.628380797922678,
+      "target_mean": 4.724013646305336,
+      "residual_mean": -0.09563284838265872,
+      "residual_p95_abs": 15.594758589756104,
+      "target": "v2_pe_reward_risk",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_reward_risk_pe_lgbm.joblib"
+    },
+    "drawdown_rs_pe": {
+      "mae": 380.33660858519397,
+      "rmse": 733.2928745817843,
+      "r2": 0.13700616853362457,
+      "prediction_mean": 456.1357667963484,
+      "target_mean": 483.19012021482945,
+      "residual_mean": -27.054353418481007,
+      "residual_p95_abs": 1079.4995729914474,
+      "target": "v2_pe_drawdown_rs",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_drawdown_rs_pe_lgbm.joblib"
+    },
+    "bars_to_target_pe": {
+      "mae": 3.2039658044221433,
+      "rmse": 3.9065796925313,
+      "r2": 0.08133556645764684,
+      "prediction_mean": 10.462812886317913,
+      "target_mean": 10.206384186009686,
+      "residual_mean": 0.25642870030822623,
+      "residual_p95_abs": 7.8573435207041396,
+      "target": "v2_pe_bars_to_target",
+      "artifact": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_bars_to_target_pe_lgbm.joblib"
+    }
+  }
+}

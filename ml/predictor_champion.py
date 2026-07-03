@@ -186,10 +186,20 @@ class ChampionPredictor:
             lgbm_prob = max(0.0, min(1.0, lgbm_prob))
 
             # ── Ensemble: average LGBM + CatBoost when both loaded ────
+            # FIX 2026-07-03: cat_model is also a CalibratedLGBM wrapper.
+            # Its predict_proba() now returns raw base_model outputs (Platt
+            # bypass applied above). But cat_model.base_model is a CatBoost
+            # which may output near-zero on current features — bypass its
+            # Platt layer too by calling base_model.predict_proba() directly.
             if self._ensemble:
                 cat_model = self.ce_cat_model if direction == "CE" else self.pe_cat_model
                 try:
-                    cat_prob = float(cat_model.predict_proba(X)[0][1])
+                    # Try raw base_model first (bypasses stale Platt on CatBoost)
+                    _cat_base = getattr(cat_model, "base_model", None)
+                    if _cat_base is not None:
+                        cat_prob = float(_cat_base.predict_proba(X)[0][1])
+                    else:
+                        cat_prob = float(cat_model.predict_proba(X)[0][1])
                     cat_prob = max(0.0, min(1.0, cat_prob))
                     prob = (lgbm_prob + cat_prob) / 2.0
                 except Exception as e:

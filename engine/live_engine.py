@@ -41,12 +41,14 @@ _LUNCH_END      = dtime(12, 30)   # was 14:00 — 12:30-14:00 window recovered
 _MIN_EXPECTED_PNL = 150.0
 
 # ── ML floors — per-side thresholds ──────────────────────────────────
-# PE: 0.65 (backtest WR=58%, avg+174 at this level)
-# CE: 0.78 — raised from 0.70. Model is CE-biased (outputs 0.80-0.96 all day
-#     even on bear days). Higher floor forces only truly exceptional signals.
-#     On RANGE regime days, CE_ML_FLOOR rises further to 0.85 (see STEP 5).
-_MIN_ML_FLOOR    = 0.65   # PE floor
-_CE_ML_FLOOR     = 0.78   # CE needs high confidence — model is CE-biased
+# FIX 2026-07-03: Old thresholds (0.78 CE / 0.65 PE) were tuned for the
+# SATURATED model (outputs 0.80–0.96 all day).  trainer_v3 de-saturation
+# produces honest probabilities in the 0.40–0.75 range.  The Platt
+# calibrator squash bug (now fixed in predictor_champion.py) was hiding
+# this mismatch.  Use the model's own saved thresholds (0.72 CE / 0.64 PE)
+# as the floors so signals can actually fire on de-saturated outputs.
+_MIN_ML_FLOOR    = 0.55   # PE floor (model threshold=0.64; learner adaptive adds ~0.02)
+_CE_ML_FLOOR     = 0.65   # CE floor (model threshold=0.72; learner adaptive adds ~0.02)
 # Re-entry cooldown is config-driven (Config.REENTRY_COOLDOWN, default 300s);
 # see LiveEngine.__init__ self._reentry_cooldown.
 _CE_ORB_ENABLED  = True   # CE allowed but gated by _CE_ML_FLOOR
@@ -673,10 +675,11 @@ class LiveEngine:
                     _ema60 = float(np.mean(_closes[-60:]))
                     _htf_bullish = _ema30 > _ema60
                 self._last_htf_bullish = _htf_bullish   # expose for journal / market_state
-                # High-conviction override: CE ≥ 0.93 with sustained BULL can bypass HTF gate.
-                # Rationale: EMA30/EMA60 lag by definition — a very high ML prob with OI
-                # confirmation often signals a real trend reversal, not a dead-cat bounce.
-                _htf_override = ce_adj >= 0.93
+                # High-conviction override: CE ≥ 0.73 with sustained BULL can bypass HTF gate.
+                # FIX 2026-07-03: Old threshold was 0.93 — unreachable with de-saturated
+                # model outputs (max ~0.75). Lowered to 0.73 so genuine high-prob signals
+                # can bypass EMA gate when model strongly disagrees with slow EMA slope.
+                _htf_override = ce_adj >= 0.73
                 if not _htf_bullish and not _htf_override:
                     self._count_block("HTF_FAIL")
                     self._last_block_reason = "CE_HTF_FAIL (30m EMA bearish vs 60m)"
@@ -685,13 +688,15 @@ class LiveEngine:
                     logger.info(f"[BLOCK] CE_HTF_FAIL — ema30={_ema30_v:.1f} ema60={_ema60_v:.1f} (bearish slope, CE skipped)")
                     ce_adj = 0.0
                 elif not _htf_bullish and _htf_override:
-                    logger.info(f"[HTF OVERRIDE] CE={ce_adj:.3f}≥0.93 — bypassing HTF gate (EMA bearish but high-conviction signal)")
+                    logger.info(f"[HTF OVERRIDE] CE={ce_adj:.3f}≥0.73 — bypassing HTF gate (EMA bearish but high-conviction signal)")
                 else:
                     _pure_ml_ce = not ce_breakout
-                    # On RANGE days, require extra-high CE confidence — model is noisy in chop
+                    # On RANGE days, use a slightly higher CE floor — but not
+                    # the old 0.85 which was tuned for saturated model outputs
+                    # (0.80-0.96). De-saturated model tops out at ~0.75.
                     _regime_str = str(self.learner.get_day_type()).upper()
                     _is_range   = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
-                    _ce_floor   = 0.85 if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
+                    _ce_floor   = 0.72 if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
                     ce_thr = max(threshold - 0.03 if (ce_breakout and orb_ok) else threshold, _ce_floor)
                     # ── CE relative-strength gate (model is CE-saturated) ──
                     # The CE model outputs 0.80-0.96 nearly all day, so the

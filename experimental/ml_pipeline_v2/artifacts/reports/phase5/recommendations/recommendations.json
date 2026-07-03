@@ -132,7 +132,7 @@
   {
     "source": "strategy_optimizer",
     "recommendation_type": "research_strategy",
-    "action": "Research none with threshold 0.4311, reward 22.50, stop 30.00, risk x1.25, trailing=True, partial=0.00",
+    "action": "Research none without confidence threshold, reward 22.50, stop 30.00, risk x1.25, trailing=True, partial=0.00",
     "evidence": "66692 trades, net PnL 10209802.88, PF 3.67, expectancy 153.09",
     "expected_effect": "Ranks strategy settings by profitability, not ML score.",
     "confidence": "medium",
@@ -142,17 +142,7 @@
   {
     "source": "strategy_optimizer",
     "recommendation_type": "research_strategy",
-    "action": "Research none with threshold 0.4358, reward 22.50, stop 30.00, risk x1.25, trailing=True, partial=0.00",
-    "evidence": "66692 trades, net PnL 10209802.88, PF 3.67, expectancy 153.09",
-    "expected_effect": "Ranks strategy settings by profitability, not ML score.",
-    "confidence": "medium",
-    "schema_version": "phase5.profitability_intelligence.v1",
-    "research_only": true
-  },
-  {
-    "source": "strategy_optimizer",
-    "recommendation_type": "research_strategy",
-    "action": "Research none with threshold 0.4311, reward 22.50, stop 22.50, risk x1.25, trailing=True, partial=0.00",
+    "action": "Research none without confidence threshold, reward 22.50, stop 22.50, risk x1.25, trailing=True, partial=0.00",
     "evidence": "66692 trades, net PnL 10063439.81, PF 3.63, expectancy 150.89",
     "expected_effect": "Ranks strategy settings by profitability, not ML score.",
     "confidence": "medium",
@@ -162,18 +152,28 @@
   {
     "source": "strategy_optimizer",
     "recommendation_type": "research_strategy",
-    "action": "Research none with threshold 0.4358, reward 22.50, stop 22.50, risk x1.25, trailing=True, partial=0.00",
-    "evidence": "66692 trades, net PnL 10063439.81, PF 3.63, expectancy 150.89",
-    "expected_effect": "Ranks strategy settings by profitability, not ML score.",
-    "confidence": "medium",
-    "schema_version": "phase5.profitability_intelligence.v1",
-    "research_only": true
-  },
-  {
-    "source": "strategy_optimizer",
-    "recommendation_type": "research_strategy",
-    "action": "Research none with threshold 0.4311, reward 18.75, stop 30.00, risk x1.25, trailing=True, partial=0.00",
+    "action": "Research none without confidence threshold, reward 18.75, stop 30.00, risk x1.25, trailing=True, partial=0.00",
     "evidence": "66692 trades, net PnL 9983054.25, PF 3.61, expectancy 149.69",
+    "expected_effect": "Ranks strategy settings by profitability, not ML score.",
+    "confidence": "medium",
+    "schema_version": "phase5.profitability_intelligence.v1",
+    "research_only": true
+  },
+  {
+    "source": "strategy_optimizer",
+    "recommendation_type": "research_strategy",
+    "action": "Research none without confidence threshold, reward 18.75, stop 22.50, risk x1.25, trailing=True, partial=0.00",
+    "evidence": "66692 trades, net PnL 9808758.75, PF 3.56, expectancy 147.08",
+    "expected_effect": "Ranks strategy settings by profitability, not ML score.",
+    "confidence": "medium",
+    "schema_version": "phase5.profitability_intelligence.v1",
+    "research_only": true
+  },
+  {
+    "source": "strategy_optimizer",
+    "recommendation_type": "research_strategy",
+    "action": "Research none without confidence threshold, reward 22.50, stop 15.00, risk x1.25, trailing=True, partial=0.00",
+    "evidence": "66692 trades, net PnL 9774360.38, PF 3.55, expectancy 146.56",
     "expected_effect": "Ranks strategy settings by profitability, not ML score.",
     "confidence": "medium",
     "schema_version": "phase5.profitability_intelligence.v1",

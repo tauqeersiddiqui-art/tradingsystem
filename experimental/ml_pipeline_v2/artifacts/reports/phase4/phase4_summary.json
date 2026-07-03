@@ -3,8 +3,8 @@
   "phase": 4,
   "comparison_rows": 40,
   "ranked_rows": 40,
-  "artifact_available_rows": 8,
-  "production_viable_rows": 8,
+  "artifact_available_rows": 13,
+  "production_viable_rows": 13,
   "champions": 8,
   "challengers": 16,
   "ensembles": 8,
@@ -12,6 +12,14 @@
   "promotion_decision": "conditional_candidate",
   "promotion_ready": false,
   "production_candidate": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\promotion\\production_candidate.json",
+  "production_registry": {
+    "registry": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\registry\\production_artifact_registry.json",
+    "deployment_manifest": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\registry\\deployment_manifest.json",
+    "research_only": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\registry\\research_only_models.json",
+    "artifact_count": 13,
+    "champion_count": 8,
+    "research_only_count": 27
+  },
   "reports": {
     "recommendations": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\recommendations",
     "risk": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\risk",

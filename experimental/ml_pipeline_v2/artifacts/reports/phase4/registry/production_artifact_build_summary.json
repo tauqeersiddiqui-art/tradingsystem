@@ -1,0 +1,74 @@
+{
+  "schema_version": "ml_pipeline_v2.production_artifact_build.v1",
+  "status": "ok",
+  "dataset": "D:\\All Bots\\trading_system\\ml\\models\\training_dataset_v3.csv",
+  "comparison_max_rows": 150000,
+  "production_capable_models": [
+    "catboost",
+    "lgbm",
+    "random_forest",
+    "xgboost"
+  ],
+  "research_only_models": [
+    {
+      "model": "mlp",
+      "reason": "explicit research-only model family; not persisted as production artifact"
+    }
+  ],
+  "candidate_rows": 5,
+  "created": 5,
+  "already_registered": 0,
+  "skipped": 0,
+  "results": [
+    {
+      "target": "directional_pe",
+      "model": "xgboost",
+      "status": "created",
+      "artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_directional_pe_xgboost_20260703T172552Z_ceb73b650f15.joblib",
+      "metadata_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_directional_pe_xgboost_20260703T172552Z_ceb73b650f15.metadata.json",
+      "checksum": "51e2e871b5fad847cacb396590d7ceb95202248aee02ee38799b313ce687d3c2",
+      "version": "20260703T172552Z_ceb73b650f15",
+      "fit_seconds": 1.9890109000043594
+    },
+    {
+      "target": "quality_profitable_ce",
+      "model": "catboost",
+      "status": "created",
+      "artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_quality_profitable_ce_catboost_20260703T172559Z_ceb73b650f15.joblib",
+      "metadata_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_quality_profitable_ce_catboost_20260703T172559Z_ceb73b650f15.metadata.json",
+      "checksum": "3c77ebcecea61d3ac95ec069cf181ed7fdd0a097e688385853fa4d63ab78468d",
+      "version": "20260703T172559Z_ceb73b650f15",
+      "fit_seconds": 6.440524899997399
+    },
+    {
+      "target": "quality_profitable_pe",
+      "model": "catboost",
+      "status": "created",
+      "artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_quality_profitable_pe_catboost_20260703T172606Z_ceb73b650f15.joblib",
+      "metadata_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_quality_profitable_pe_catboost_20260703T172606Z_ceb73b650f15.metadata.json",
+      "checksum": "d5fd484856107e8a748821a90fca87a2ff987935bc94b11d569d8cd2a8925368",
+      "version": "20260703T172606Z_ceb73b650f15",
+      "fit_seconds": 6.1947122999990825
+    },
+    {
+      "target": "target_hit_ce",
+      "model": "catboost",
+      "status": "created",
+      "artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_target_hit_ce_catboost_20260703T172612Z_ceb73b650f15.joblib",
+      "metadata_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_target_hit_ce_catboost_20260703T172612Z_ceb73b650f15.metadata.json",
+      "checksum": "87f9fa1db69aad55569b903d7bb8b8e0518ec09acc60ee1390955b7d16e52d31",
+      "version": "20260703T172612Z_ceb73b650f15",
+      "fit_seconds": 6.303368699998828
+    },
+    {
+      "target": "target_hit_pe",
+      "model": "xgboost",
+      "status": "created",
+      "artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_target_hit_pe_xgboost_20260703T172615Z_ceb73b650f15.joblib",
+      "metadata_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_target_hit_pe_xgboost_20260703T172615Z_ceb73b650f15.metadata.json",
+      "checksum": "28084537fe353c0e401d371e355a113d36c46187588c8c2a34b8d019c65fd5c9",
+      "version": "20260703T172615Z_ceb73b650f15",
+      "fit_seconds": 2.4472307999967597
+    }
+  ]
+}

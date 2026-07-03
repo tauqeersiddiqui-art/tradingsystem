@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from ml_pipeline_v2.config import PipelineConfig
+from ml_pipeline_v2.artifact_registry import deployable_model_path, write_production_registry
 from ml_pipeline_v2.validation import trade_metrics
 
 
@@ -118,7 +119,7 @@ def normalize_metric(values: pd.Series, higher_is_better: bool) -> pd.Series:
 
 
 def candidate_artifact_path(config: PipelineConfig, target: str, model: str) -> Path:
-    return config.paths.output_dir / "models" / f"v2_{target}_{model}.joblib"
+    return deployable_model_path(config, target, model)
 
 
 def score_candidates(comparison: pd.DataFrame, config: PipelineConfig) -> pd.DataFrame:
@@ -604,6 +605,18 @@ def run_phase4_recommendation(
         config=config,
     )
     write_json(paths.promotion / "production_candidate.json", candidate)
+    registry_summary = write_production_registry(
+        config=config,
+        scored=scored,
+        champions=champions,
+        thresholds=thresholds,
+        risk=risk,
+        extra_metadata={
+            "source_phase": "phase4_recommendation",
+            "promotion_decision": candidate["decision"],
+            "promotion_ready": candidate["promotion_ready"],
+        },
+    )
 
     summary = {
         "status": "ok",
@@ -619,6 +632,7 @@ def run_phase4_recommendation(
         "promotion_decision": candidate["decision"],
         "promotion_ready": candidate["promotion_ready"],
         "production_candidate": str(paths.promotion / "production_candidate.json"),
+        "production_registry": registry_summary,
         "reports": {
             "recommendations": str(paths.recommendations),
             "risk": str(paths.risk),

@@ -24,16 +24,16 @@
     "net_pnl": 332976.37500000093,
     "selection_score": 0.776932066846923,
     "side": "ce",
-    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_target_hit_ce_catboost.joblib",
-    "artifact_available": false,
+    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_target_hit_ce_catboost_20260703T172612Z_ceb73b650f15.joblib",
+    "artifact_available": true,
     "meets_expectancy_floor": true,
     "meets_profit_factor_floor": true,
     "meets_calibration_floor": true,
     "meets_trade_count_floor": true,
     "metric_viable": true,
-    "production_viable": false,
+    "production_viable": true,
     "rank_for_target": 1,
-    "production_rank_for_target": 2,
+    "production_rank_for_target": 1,
     "global_rank": 1
   },
   {
@@ -70,7 +70,7 @@
     "metric_viable": true,
     "production_viable": true,
     "rank_for_target": 2,
-    "production_rank_for_target": 1,
+    "production_rank_for_target": 2,
     "global_rank": 2
   },
   {
@@ -209,16 +209,16 @@
     "net_pnl": 208274.2500000002,
     "selection_score": 0.49443207251812815,
     "side": "ce",
-    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_quality_profitable_ce_catboost.joblib",
-    "artifact_available": false,
+    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_quality_profitable_ce_catboost_20260703T172559Z_ceb73b650f15.joblib",
+    "artifact_available": true,
     "meets_expectancy_floor": true,
     "meets_profit_factor_floor": true,
     "meets_calibration_floor": true,
     "meets_trade_count_floor": true,
     "metric_viable": true,
-    "production_viable": false,
+    "production_viable": true,
     "rank_for_target": 1,
-    "production_rank_for_target": 2,
+    "production_rank_for_target": 1,
     "global_rank": 6
   },
   {
@@ -283,16 +283,16 @@
     "net_pnl": 94018.8750000004,
     "selection_score": 0.46145372400252993,
     "side": "pe",
-    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_target_hit_pe_xgboost.joblib",
-    "artifact_available": false,
+    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_target_hit_pe_xgboost_20260703T172615Z_ceb73b650f15.joblib",
+    "artifact_available": true,
     "meets_expectancy_floor": true,
     "meets_profit_factor_floor": true,
     "meets_calibration_floor": true,
     "meets_trade_count_floor": true,
     "metric_viable": true,
-    "production_viable": false,
+    "production_viable": true,
     "rank_for_target": 1,
-    "production_rank_for_target": 2,
+    "production_rank_for_target": 1,
     "global_rank": 8
   },
   {
@@ -477,7 +477,7 @@
     "metric_viable": true,
     "production_viable": true,
     "rank_for_target": 2,
-    "production_rank_for_target": 1,
+    "production_rank_for_target": 2,
     "global_rank": 13
   },
   {
@@ -690,16 +690,16 @@
     "net_pnl": 27510.75000000073,
     "selection_score": 0.38399854258605154,
     "side": "pe",
-    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_directional_pe_xgboost.joblib",
-    "artifact_available": false,
+    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_directional_pe_xgboost_20260703T172552Z_ceb73b650f15.joblib",
+    "artifact_available": true,
     "meets_expectancy_floor": true,
     "meets_profit_factor_floor": true,
     "meets_calibration_floor": true,
     "meets_trade_count_floor": true,
     "metric_viable": true,
-    "production_viable": false,
+    "production_viable": true,
     "rank_for_target": 1,
-    "production_rank_for_target": 2,
+    "production_rank_for_target": 1,
     "global_rank": 19
   },
   {
@@ -847,7 +847,7 @@
     "metric_viable": true,
     "production_viable": true,
     "rank_for_target": 3,
-    "production_rank_for_target": 1,
+    "production_rank_for_target": 2,
     "global_rank": 23
   },
   {
@@ -958,7 +958,7 @@
     "metric_viable": true,
     "production_viable": true,
     "rank_for_target": 3,
-    "production_rank_for_target": 1,
+    "production_rank_for_target": 2,
     "global_rank": 26
   },
   {
@@ -1060,16 +1060,16 @@
     "net_pnl": 215379.75000000212,
     "selection_score": 0.3259216132869465,
     "side": "pe",
-    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_quality_profitable_pe_catboost.joblib",
-    "artifact_available": false,
+    "model_artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\production_candidates\\v2_quality_profitable_pe_catboost_20260703T172606Z_ceb73b650f15.joblib",
+    "artifact_available": true,
     "meets_expectancy_floor": true,
     "meets_profit_factor_floor": true,
     "meets_calibration_floor": true,
     "meets_trade_count_floor": true,
     "metric_viable": true,
-    "production_viable": false,
+    "production_viable": true,
     "rank_for_target": 1,
-    "production_rank_for_target": 2,
+    "production_rank_for_target": 1,
     "global_rank": 29
   },
   {
@@ -1254,7 +1254,7 @@
     "metric_viable": true,
     "production_viable": true,
     "rank_for_target": 3,
-    "production_rank_for_target": 1,
+    "production_rank_for_target": 2,
     "global_rank": 34
   },
   {

@@ -1,0 +1,312 @@
+{
+  "label_audit": {
+    "rows": 505214,
+    "start": "2021-01-01 09:29:00",
+    "end": "2026-06-19 14:26:00",
+    "ce_positive_rate": 0.01802800397455336,
+    "pe_positive_rate": 0.02323371878055636,
+    "both_positive_rate": 0.0,
+    "neither_positive_rate": 0.9587382772448902,
+    "ce_eligible_rate": 0.43976413955274396,
+    "pe_eligible_rate": 0.43976413955274396
+  },
+  "bucket_rates": {
+    "by_year": {
+      "2021": {
+        "label_ce_count": 92349,
+        "label_ce_mean": 0.010525289932755092,
+        "label_pe_count": 92349,
+        "label_pe_mean": 0.019556248578761006
+      },
+      "2022": {
+        "label_ce_count": 92682,
+        "label_ce_mean": 0.01521331002783712,
+        "label_pe_count": 92682,
+        "label_pe_mean": 0.020769944541550678
+      },
+      "2023": {
+        "label_ce_count": 91922,
+        "label_ce_mean": 0.0058310306564261,
+        "label_pe_count": 91922,
+        "label_pe_mean": 0.006810121624855856
+      },
+      "2024": {
+        "label_ce_count": 92514,
+        "label_ce_mean": 0.027822816006226086,
+        "label_pe_count": 92514,
+        "label_pe_mean": 0.035594612707265924
+      },
+      "2025": {
+        "label_ce_count": 93060,
+        "label_ce_mean": 0.020943477326456048,
+        "label_pe_count": 93060,
+        "label_pe_mean": 0.023619170427681066
+      },
+      "2026": {
+        "label_ce_count": 42687,
+        "label_ce_mean": 0.03905170192330218,
+        "label_pe_count": 42687,
+        "label_pe_mean": 0.044275774826059454
+      }
+    },
+    "by_hour": {
+      "9": {
+        "label_ce_count": 60691,
+        "label_ce_mean": 0.043960389514096,
+        "label_pe_count": 60691,
+        "label_pe_mean": 0.05531297886012753
+      },
+      "10": {
+        "label_ce_count": 80760,
+        "label_ce_mean": 0.0337667161961367,
+        "label_pe_count": 80760,
+        "label_pe_mean": 0.04441555225359089
+      },
+      "11": {
+        "label_ce_count": 80820,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 80820,
+        "label_pe_mean": 0.0
+      },
+      "12": {
+        "label_ce_count": 80810,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 80810,
+        "label_pe_mean": 0.0
+      },
+      "13": {
+        "label_ce_count": 80774,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 80774,
+        "label_pe_mean": 0.0
+      },
+      "14": {
+        "label_ce_count": 80770,
+        "label_ce_mean": 0.0399034294911477,
+        "label_pe_count": 80770,
+        "label_pe_mean": 0.05150427138789154
+      },
+      "15": {
+        "label_ce_count": 40349,
+        "label_ce_mean": 0.012144043222880369,
+        "label_pe_count": 40349,
+        "label_pe_mean": 0.015712904904706438
+      },
+      "18": {
+        "label_ce_count": 195,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 195,
+        "label_pe_mean": 0.0
+      },
+      "19": {
+        "label_ce_count": 45,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 45,
+        "label_pe_mean": 0.0
+      }
+    },
+    "by_time_bucket": {
+      "open_0_30": {
+        "label_ce_count": 40456,
+        "label_ce_mean": 0.03811548348823413,
+        "label_pe_count": 40456,
+        "label_pe_mean": 0.04736009491793553
+      },
+      "morning_30_60": {
+        "label_ce_count": 40434,
+        "label_ce_mean": 0.0495869812534006,
+        "label_pe_count": 40434,
+        "label_pe_mean": 0.06484641638225255
+      },
+      "morn_60_90": {
+        "label_ce_count": 40377,
+        "label_ce_mean": 0.03033905441216534,
+        "label_pe_count": 40377,
+        "label_pe_mean": 0.04386160437873046
+      },
+      "morn_90_120": {
+        "label_ce_count": 40374,
+        "label_ce_mean": 0.015430722742358944,
+        "label_pe_count": 40374,
+        "label_pe_mean": 0.0157279437261604
+      },
+      "mid_120_180": {
+        "label_ce_count": 80850,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 80850,
+        "label_pe_mean": 0.0
+      },
+      "mid_180_240": {
+        "label_ce_count": 80780,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 80780,
+        "label_pe_mean": 0.0
+      },
+      "aft_240_300": {
+        "label_ce_count": 80789,
+        "label_ce_mean": 0.007117305573778609,
+        "label_pe_count": 80789,
+        "label_pe_mean": 0.011288665536149723
+      },
+      "close_300_360": {
+        "label_ce_count": 80740,
+        "label_ce_mean": 0.038865494178845675,
+        "label_pe_count": 80740,
+        "label_pe_mean": 0.048080257617042356
+      },
+      "last_360_375": {
+        "label_ce_count": 20414,
+        "label_ce_mean": 0.0,
+        "label_pe_count": 20414,
+        "label_pe_mean": 0.0
+      }
+    },
+    "by_regime_proxy": {
+      "mixed": {
+        "label_ce_count": 178631,
+        "label_ce_mean": 0.011571339801042373,
+        "label_pe_count": 178631,
+        "label_pe_mean": 0.01747736954951828
+      },
+      "range": {
+        "label_ce_count": 137582,
+        "label_ce_mean": 0.011498597200215144,
+        "label_pe_count": 137582,
+        "label_pe_mean": 0.013897166780538152
+      },
+      "trend": {
+        "label_ce_count": 72218,
+        "label_ce_mean": 0.01318230911961007,
+        "label_pe_count": 72218,
+        "label_pe_mean": 0.020105790800077544
+      },
+      "volatile_trend": {
+        "label_ce_count": 116783,
+        "label_ce_mean": 0.038592945891097165,
+        "label_pe_count": 116783,
+        "label_pe_mean": 0.04497229905037548
+      }
+    }
+  },
+  "feature_ranges": {
+    "momentum_velocity": {
+      "min": -0.0385277754777813,
+      "p01": -0.001346619507966296,
+      "p50": -2.243241836730192e-06,
+      "p99": 0.001385160428058797,
+      "max": 0.0406227584088446
+    },
+    "range_compression": {
+      "min": 0.0,
+      "p01": 0.19512194632326899,
+      "p50": 0.5571964457803711,
+      "p99": 0.9999999729729736,
+      "max": 0.9999999992136508
+    },
+    "price_vs_vwap": {
+      "min": -0.0499164348601515,
+      "p01": -0.0075577603964147476,
+      "p50": 6.26789800446567e-05,
+      "p99": 0.006973644899498252,
+      "max": 0.0266243876388804
+    },
+    "adx": {
+      "min": 2.8815169792543776,
+      "p01": 9.840131474934129,
+      "p50": 22.849794511038546,
+      "p99": 57.03235554220246,
+      "max": 82.91181503944526
+    },
+    "di_spread": {
+      "min": -60.0,
+      "p01": -37.9982309686689,
+      "p50": 0.22596390855317589,
+      "p99": 38.45179131174792,
+      "max": 60.0
+    },
+    "returns": {
+      "min": -0.038645603514308,
+      "p01": -0.000956674612090378,
+      "p50": 0.0,
+      "p99": 0.0009585037450235287,
+      "max": 0.0309014935181441
+    },
+    "return_3": {
+      "min": -0.0410635451650986,
+      "p01": -0.001768088448228606,
+      "p50": 5.819169332732521e-06,
+      "p99": 0.0017966702732652863,
+      "max": 0.0332880097017072
+    },
+    "volatility": {
+      "min": 0.0,
+      "p01": 9.047318237591516e-05,
+      "p50": 0.0002584416081537,
+      "p99": 0.0014981021884703876,
+      "max": 0.0090952255303824
+    },
+    "atr": {
+      "min": 2.4288890043652804,
+      "p01": 3.3635180883771523,
+      "p50": 7.338746792290302,
+      "p99": 22.60911298189329,
+      "max": 99.80070825863208
+    },
+    "time_to_expiry_min": {
+      "min": 0.0,
+      "p01": 4.0,
+      "p50": 188.0,
+      "p99": 372.0,
+      "max": 375.0
+    },
+    "moneyness": {
+      "min": -0.02,
+      "p01": -0.002482219351689849,
+      "p50": 2.8331032007027552e-05,
+      "p99": 0.002493453114837777,
+      "max": 0.02
+    }
+  },
+  "feature_parity_warnings": [
+    "momentum_velocity currently differs between training and live: training uses diff(returns), live uses point acceleration.",
+    "time_to_expiry_min currently equals minutes to market close, not true contract time to expiry.",
+    "volume_ratio is always 1.0 for zero-volume index history; live option liquidity needs separate features."
+  ],
+  "feature_columns": [
+    "supertrend_dir",
+    "supertrend_dist",
+    "price_vs_vwap",
+    "adx",
+    "di_spread",
+    "ema_alignment",
+    "volume_ratio",
+    "ema20",
+    "ema50",
+    "macd",
+    "returns",
+    "volatility",
+    "rsi",
+    "atr",
+    "trend_strength",
+    "hour",
+    "weekday",
+    "return_1",
+    "return_3",
+    "candle_body_pct",
+    "range_break_strength",
+    "mins_since_open",
+    "mins_to_close",
+    "session_open",
+    "session_close",
+    "time_to_expiry_min",
+    "moneyness",
+    "momentum_velocity",
+    "range_compression",
+    "wick_ratio",
+    "body_efficiency",
+    "mom3_strength",
+    "upper_wick",
+    "lower_wick",
+    "close_position"
+  ]
+}

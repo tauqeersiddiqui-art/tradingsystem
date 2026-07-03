@@ -1,0 +1,44 @@
+paths:
+  historical_1m: data/historical/banknifty_1m_full.csv
+  dataset_v2: ml/models/training_dataset_v2.csv
+  dataset_v3: ml/models/training_dataset_v3.csv
+  output_dir: experimental/ml_pipeline_v2/artifacts
+
+labels:
+  directional_lookahead_bars: 12
+  directional_target_points: 15.0
+  directional_max_adverse_multiple: 2.0
+  quality_lookahead_bars: 12
+  spread_points_round_trip: 1.0
+  lot_units: 30
+  brokerage_round_trip_rs: 132.0
+
+validation:
+  min_train_rows: 50000
+  calibration_fraction: 0.20
+  test_fraction: 0.20
+  walkforward_folds: 6
+  purge_bars: 12
+  embargo_bars: 12
+  random_seed: 42
+
+models:
+  candidates:
+    - lgbm
+    - catboost
+    - xgboost
+    - random_forest
+    - mlp
+  primary_initial:
+    regime: lgbm
+    directional: lgbm
+    trade_quality: lgbm
+    exit: lgbm
+
+risk:
+  max_risk_per_trade_pct: 0.50
+  max_daily_loss_pct: 2.00
+  max_open_exposure_pct: 5.00
+  min_expected_net_pnl_rs: 150.0
+  max_risk_of_ruin_pct: 1.00
+

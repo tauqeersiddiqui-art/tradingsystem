@@ -1,0 +1,17 @@
+{
+  "feature_drift": {
+    "rows": 140,
+    "max_psi": 10.98609473605406,
+    "features_over_0_25": 11
+  },
+  "target_drift": {
+    "rows": 32,
+    "max_psi": 0.029382264826724718,
+    "targets_over_0_10": 0
+  },
+  "probability_drift": {
+    "rows": 88,
+    "max_psi_vs_fold_1": 6.123866166843266,
+    "max_psi_vs_previous_fold": 6.123866166843266
+  }
+}

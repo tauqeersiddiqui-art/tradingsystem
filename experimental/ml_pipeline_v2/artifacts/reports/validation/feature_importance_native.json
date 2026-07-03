@@ -1,0 +1,982 @@
+[
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "supertrend_dir",
+    "importance": 11.0,
+    "importance_fraction": 0.0007336757153338225
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "supertrend_dist",
+    "importance": 522.0,
+    "importance_fraction": 0.03481624758220503
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "price_vs_vwap",
+    "importance": 1394.0,
+    "importance_fraction": 0.09297672247048623
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "adx",
+    "importance": 776.0,
+    "importance_fraction": 0.05175748682718602
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "di_spread",
+    "importance": 326.0,
+    "importance_fraction": 0.021743480290802374
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "ema_alignment",
+    "importance": 5.0,
+    "importance_fraction": 0.00033348896151537383
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "volume_ratio",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "ema20",
+    "importance": 1606.0,
+    "importance_fraction": 0.10711665443873808
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "ema50",
+    "importance": 1364.0,
+    "importance_fraction": 0.09097578870139399
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "macd",
+    "importance": 754.0,
+    "importance_fraction": 0.05029013539651837
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "returns",
+    "importance": 58.0,
+    "importance_fraction": 0.0038684719535783366
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "volatility",
+    "importance": 871.0,
+    "importance_fraction": 0.05809377709597812
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "rsi",
+    "importance": 456.0,
+    "importance_fraction": 0.030414193290202094
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "atr",
+    "importance": 1292.0,
+    "importance_fraction": 0.0861735476555726
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "trend_strength",
+    "importance": 653.0,
+    "importance_fraction": 0.04355365837390782
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "hour",
+    "importance": 151.0,
+    "importance_fraction": 0.01007136663776429
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "weekday",
+    "importance": 612.0,
+    "importance_fraction": 0.040819048889481756
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "return_1",
+    "importance": 9.0,
+    "importance_fraction": 0.000600280130727673
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "return_3",
+    "importance": 187.0,
+    "importance_fraction": 0.012472487160674981
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "candle_body_pct",
+    "importance": 50.0,
+    "importance_fraction": 0.0033348896151537384
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "range_break_strength",
+    "importance": 437.0,
+    "importance_fraction": 0.029146935236443672
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "mins_since_open",
+    "importance": 1667.0,
+    "importance_fraction": 0.11118521976922564
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "mins_to_close",
+    "importance": 518.0,
+    "importance_fraction": 0.03454945641299273
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "session_open",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "session_close",
+    "importance": 4.0,
+    "importance_fraction": 0.00026679116921229907
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "time_to_expiry_min",
+    "importance": 135.0,
+    "importance_fraction": 0.009004201960915094
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "moneyness",
+    "importance": 325.0,
+    "importance_fraction": 0.0216767824984993
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "momentum_velocity",
+    "importance": 81.0,
+    "importance_fraction": 0.005402521176549056
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "range_compression",
+    "importance": 300.0,
+    "importance_fraction": 0.02000933769092243
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "wick_ratio",
+    "importance": 13.0,
+    "importance_fraction": 0.000867071299939972
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "body_efficiency",
+    "importance": 9.0,
+    "importance_fraction": 0.000600280130727673
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "mom3_strength",
+    "importance": 98.0,
+    "importance_fraction": 0.006536383645701327
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "upper_wick",
+    "importance": 105.0,
+    "importance_fraction": 0.007003268191822851
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "lower_wick",
+    "importance": 95.0,
+    "importance_fraction": 0.006336290268792103
+  },
+  {
+    "target": "directional_ce",
+    "model": "lgbm",
+    "feature": "close_position",
+    "importance": 109.0,
+    "importance_fraction": 0.007270059361035149
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "supertrend_dir",
+    "importance": 15.0,
+    "importance_fraction": 0.0010002667377967459
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "supertrend_dist",
+    "importance": 355.0,
+    "importance_fraction": 0.02367297946118965
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "price_vs_vwap",
+    "importance": 1441.0,
+    "importance_fraction": 0.09609229127767405
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "adx",
+    "importance": 986.0,
+    "importance_fraction": 0.06575086689783942
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "di_spread",
+    "importance": 423.0,
+    "importance_fraction": 0.028207522005868232
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "ema_alignment",
+    "importance": 2.0,
+    "importance_fraction": 0.00013336889837289943
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "volume_ratio",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "ema20",
+    "importance": 1601.0,
+    "importance_fraction": 0.106761803147506
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "ema50",
+    "importance": 1296.0,
+    "importance_fraction": 0.08642304614563884
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "macd",
+    "importance": 783.0,
+    "importance_fraction": 0.05221392371299013
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "returns",
+    "importance": 78.0,
+    "importance_fraction": 0.0052013870365430785
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "volatility",
+    "importance": 945.0,
+    "importance_fraction": 0.06301680448119498
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "rsi",
+    "importance": 437.0,
+    "importance_fraction": 0.029141104294478526
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "atr",
+    "importance": 1313.0,
+    "importance_fraction": 0.08755668178180848
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "trend_strength",
+    "importance": 664.0,
+    "importance_fraction": 0.044278474259802615
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "hour",
+    "importance": 102.0,
+    "importance_fraction": 0.006801813817017871
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "weekday",
+    "importance": 584.0,
+    "importance_fraction": 0.038943718324886634
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "return_1",
+    "importance": 16.0,
+    "importance_fraction": 0.0010669511869831954
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "return_3",
+    "importance": 101.0,
+    "importance_fraction": 0.006735129367831422
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "candle_body_pct",
+    "importance": 38.0,
+    "importance_fraction": 0.0025340090690850895
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "range_break_strength",
+    "importance": 348.0,
+    "importance_fraction": 0.023206188316884504
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "mins_since_open",
+    "importance": 1585.0,
+    "importance_fraction": 0.1056948519605228
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "mins_to_close",
+    "importance": 577.0,
+    "importance_fraction": 0.03847692718058149
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "session_open",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "session_close",
+    "importance": 1.0,
+    "importance_fraction": 6.668444918644971e-05
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "time_to_expiry_min",
+    "importance": 134.0,
+    "importance_fraction": 0.008935716190984263
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "moneyness",
+    "importance": 290.0,
+    "importance_fraction": 0.019338490264070418
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "momentum_velocity",
+    "importance": 52.0,
+    "importance_fraction": 0.0034675913576953854
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "range_compression",
+    "importance": 339.0,
+    "importance_fraction": 0.022606028274206456
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "wick_ratio",
+    "importance": 31.0,
+    "importance_fraction": 0.0020672179247799415
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "body_efficiency",
+    "importance": 12.0,
+    "importance_fraction": 0.0008002133902373967
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "mom3_strength",
+    "importance": 107.0,
+    "importance_fraction": 0.00713523606295012
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "upper_wick",
+    "importance": 99.0,
+    "importance_fraction": 0.006601760469458522
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "lower_wick",
+    "importance": 105.0,
+    "importance_fraction": 0.007001867164577221
+  },
+  {
+    "target": "directional_pe",
+    "model": "lgbm",
+    "feature": "close_position",
+    "importance": 136.0,
+    "importance_fraction": 0.009069085089357162
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "supertrend_dir",
+    "importance": 10.0,
+    "importance_fraction": 0.000668985817500669
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "supertrend_dist",
+    "importance": 472.0,
+    "importance_fraction": 0.03157613058603158
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "price_vs_vwap",
+    "importance": 1359.0,
+    "importance_fraction": 0.09091517259834092
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "adx",
+    "importance": 747.0,
+    "importance_fraction": 0.04997324056729997
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "di_spread",
+    "importance": 385.0,
+    "importance_fraction": 0.025755953973775756
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "ema_alignment",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "volume_ratio",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "ema20",
+    "importance": 1474.0,
+    "importance_fraction": 0.09860850949959861
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "ema50",
+    "importance": 1404.0,
+    "importance_fraction": 0.09392560877709392
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "macd",
+    "importance": 747.0,
+    "importance_fraction": 0.04997324056729997
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "returns",
+    "importance": 82.0,
+    "importance_fraction": 0.0054856837035054855
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "volatility",
+    "importance": 848.0,
+    "importance_fraction": 0.05672999732405673
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "rsi",
+    "importance": 476.0,
+    "importance_fraction": 0.03184372491303184
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "atr",
+    "importance": 1226.0,
+    "importance_fraction": 0.08201766122558202
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "trend_strength",
+    "importance": 726.0,
+    "importance_fraction": 0.04856837035054857
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "hour",
+    "importance": 169.0,
+    "importance_fraction": 0.011305860315761305
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "weekday",
+    "importance": 667.0,
+    "importance_fraction": 0.04462135402729462
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "return_1",
+    "importance": 17.0,
+    "importance_fraction": 0.0011372758897511372
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "return_3",
+    "importance": 183.0,
+    "importance_fraction": 0.012242440460262242
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "candle_body_pct",
+    "importance": 39.0,
+    "importance_fraction": 0.002609044688252609
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "range_break_strength",
+    "importance": 441.0,
+    "importance_fraction": 0.029502274551779503
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "mins_since_open",
+    "importance": 1597.0,
+    "importance_fraction": 0.10683703505485684
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "mins_to_close",
+    "importance": 510.0,
+    "importance_fraction": 0.034118276692534116
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "session_open",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "session_close",
+    "importance": 1.0,
+    "importance_fraction": 6.68985817500669e-05
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "time_to_expiry_min",
+    "importance": 104.0,
+    "importance_fraction": 0.006957452502006957
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "moneyness",
+    "importance": 301.0,
+    "importance_fraction": 0.020136473106770136
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "momentum_velocity",
+    "importance": 79.0,
+    "importance_fraction": 0.005284987958255285
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "range_compression",
+    "importance": 346.0,
+    "importance_fraction": 0.023146909285523147
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "wick_ratio",
+    "importance": 43.0,
+    "importance_fraction": 0.0028766390152528765
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "body_efficiency",
+    "importance": 3.0,
+    "importance_fraction": 0.0002006957452502007
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "mom3_strength",
+    "importance": 126.0,
+    "importance_fraction": 0.00842922130050843
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "upper_wick",
+    "importance": 129.0,
+    "importance_fraction": 0.00862991704575863
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "lower_wick",
+    "importance": 92.0,
+    "importance_fraction": 0.006154669521006155
+  },
+  {
+    "target": "quality_profitable_ce",
+    "model": "lgbm",
+    "feature": "close_position",
+    "importance": 145.0,
+    "importance_fraction": 0.0097002943537597
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "supertrend_dir",
+    "importance": 9.0,
+    "importance_fraction": 0.0006
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "supertrend_dist",
+    "importance": 389.0,
+    "importance_fraction": 0.025933333333333333
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "price_vs_vwap",
+    "importance": 1349.0,
+    "importance_fraction": 0.08993333333333334
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "adx",
+    "importance": 1045.0,
+    "importance_fraction": 0.06966666666666667
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "di_spread",
+    "importance": 423.0,
+    "importance_fraction": 0.0282
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "ema_alignment",
+    "importance": 1.0,
+    "importance_fraction": 6.666666666666667e-05
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "volume_ratio",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "ema20",
+    "importance": 1417.0,
+    "importance_fraction": 0.09446666666666667
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "ema50",
+    "importance": 1412.0,
+    "importance_fraction": 0.09413333333333333
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "macd",
+    "importance": 796.0,
+    "importance_fraction": 0.053066666666666665
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "returns",
+    "importance": 87.0,
+    "importance_fraction": 0.0058
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "volatility",
+    "importance": 897.0,
+    "importance_fraction": 0.0598
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "rsi",
+    "importance": 446.0,
+    "importance_fraction": 0.029733333333333334
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "atr",
+    "importance": 1192.0,
+    "importance_fraction": 0.07946666666666667
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "trend_strength",
+    "importance": 679.0,
+    "importance_fraction": 0.04526666666666666
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "hour",
+    "importance": 94.0,
+    "importance_fraction": 0.006266666666666667
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "weekday",
+    "importance": 599.0,
+    "importance_fraction": 0.039933333333333335
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "return_1",
+    "importance": 18.0,
+    "importance_fraction": 0.0012
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "return_3",
+    "importance": 157.0,
+    "importance_fraction": 0.010466666666666668
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "candle_body_pct",
+    "importance": 71.0,
+    "importance_fraction": 0.004733333333333333
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "range_break_strength",
+    "importance": 468.0,
+    "importance_fraction": 0.0312
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "mins_since_open",
+    "importance": 1514.0,
+    "importance_fraction": 0.10093333333333333
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "mins_to_close",
+    "importance": 468.0,
+    "importance_fraction": 0.0312
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "session_open",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "session_close",
+    "importance": 0.0,
+    "importance_fraction": 0.0
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "time_to_expiry_min",
+    "importance": 120.0,
+    "importance_fraction": 0.008
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "moneyness",
+    "importance": 253.0,
+    "importance_fraction": 0.016866666666666665
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "momentum_velocity",
+    "importance": 75.0,
+    "importance_fraction": 0.005
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "range_compression",
+    "importance": 416.0,
+    "importance_fraction": 0.027733333333333332
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "wick_ratio",
+    "importance": 47.0,
+    "importance_fraction": 0.0031333333333333335
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "body_efficiency",
+    "importance": 12.0,
+    "importance_fraction": 0.0008
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "mom3_strength",
+    "importance": 94.0,
+    "importance_fraction": 0.006266666666666667
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "upper_wick",
+    "importance": 181.0,
+    "importance_fraction": 0.012066666666666667
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "lower_wick",
+    "importance": 87.0,
+    "importance_fraction": 0.0058
+  },
+  {
+    "target": "quality_profitable_pe",
+    "model": "lgbm",
+    "feature": "close_position",
+    "importance": 184.0,
+    "importance_fraction": 0.012266666666666667
+  }
+]

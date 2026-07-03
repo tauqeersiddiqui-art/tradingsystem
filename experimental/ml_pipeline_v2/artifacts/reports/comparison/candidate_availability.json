@@ -1,0 +1,27 @@
+[
+  {
+    "model": "lgbm",
+    "available": true,
+    "reason": ""
+  },
+  {
+    "model": "catboost",
+    "available": true,
+    "reason": ""
+  },
+  {
+    "model": "xgboost",
+    "available": true,
+    "reason": ""
+  },
+  {
+    "model": "random_forest",
+    "available": true,
+    "reason": ""
+  },
+  {
+    "model": "mlp",
+    "available": true,
+    "reason": ""
+  }
+]

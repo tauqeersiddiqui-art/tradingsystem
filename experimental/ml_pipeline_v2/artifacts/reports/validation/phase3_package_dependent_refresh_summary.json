@@ -1,0 +1,23 @@
+{
+  "status": "ok",
+  "mode": "package_dependent_report_refresh",
+  "dataset": "D:\\All Bots\\trading_system\\ml\\models\\training_dataset_v3.csv",
+  "rows": 505202,
+  "comparison": {
+    "rows": 40,
+    "comparison_max_rows": 150000,
+    "models": [
+      "catboost",
+      "lgbm",
+      "mlp",
+      "random_forest",
+      "xgboost"
+    ]
+  },
+  "refreshed_models": [],
+  "shap_status": "ok",
+  "reports": {
+    "validation": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\validation",
+    "comparison": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\comparison"
+  }
+}

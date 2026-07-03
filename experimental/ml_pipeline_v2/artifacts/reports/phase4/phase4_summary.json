@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "phase": 4,
+  "comparison_rows": 40,
+  "ranked_rows": 40,
+  "champions": 8,
+  "challengers": 16,
+  "ensembles": 8,
+  "risk_rows": 40,
+  "promotion_decision": "conditional_candidate",
+  "promotion_ready": false,
+  "production_candidate": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\promotion\\production_candidate.json",
+  "reports": {
+    "recommendations": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\recommendations",
+    "risk": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\risk",
+    "ensembles": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\ensembles",
+    "thresholds": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\thresholds",
+    "promotion": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase4\\promotion"
+  }
+}

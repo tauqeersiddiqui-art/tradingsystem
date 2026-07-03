@@ -72,12 +72,115 @@
   - `experimental/ml_pipeline_v2/artifacts/reports/phase2_threshold_recommendations.json`
 - Wrote V2 candidate model artifacts under:
   - `experimental/ml_pipeline_v2/artifacts/models/`
+- Completed Phase 3 validation/reporting in the V2 experimental pipeline:
+  - Added `experimental/ml_pipeline_v2/scripts/run_phase3_validation.py`.
+  - Added report directory creation for:
+    - `reports/validation`
+    - `reports/walkforward`
+    - `reports/comparison`
+    - `reports/drift`
+  - Implemented purged walk-forward validation across the 8 binary V2 targets.
+  - Implemented fold-level threshold-gated PnL metrics and leakage checks.
+  - Implemented walk-forward stability reports.
+  - Implemented all-candidate classifier comparison over the latest bounded comparison window.
+  - Implemented native and permutation feature-importance reports.
+  - Implemented SHAP summary support when `shap` is installed.
+  - Implemented feature, target, and probability drift reports.
+  - Full Phase 3 validation ran on the complete labeled dataset:
+    - rows: `505202`
+    - walk-forward metric rows: `48`
+    - all leakage checks passed: `true`
+    - comparison rows: `40`
+    - comparison max rows: `150000`
+    - compared model names in report: `catboost`, `lgbm`, `mlp`, `random_forest`, `xgboost`
+    - `xgboost` was initially unavailable because package was not installed.
+    - SHAP was initially skipped because package was not installed.
+- Completed package-dependent Phase 3 report refresh after `xgboost` and `shap` were installed:
+  - Added partial refresh mode to `run_phase3_validation.py`:
+    - `--refresh-package-dependent-reports`
+    - `--skip-comparison-refresh`
+    - `--package-dependent-model`
+    - `--shap-target`
+    - `--shap-model`
+    - `--shap-sample`
+  - Refreshed only package-dependent reports; did not rerun full walk-forward, stability, drift, or already-passed validations.
+  - XGBoost comparison rows were regenerated because no fitted XGBoost comparison metrics existed from the first Phase 3 run.
+  - SHAP was regenerated from the existing Phase 2 LGBM artifact:
+    - artifact: `experimental/ml_pipeline_v2/artifacts/models/v2_directional_ce_lgbm.joblib`
+    - explained estimator: `lightgbm.sklearn.LGBMClassifier`
+    - sample rows: `1000`
+  - Current `candidate_availability.json` shows all model families available:
+    - `lgbm`
+    - `catboost`
+    - `xgboost`
+    - `random_forest`
+    - `mlp`
+- Key Phase 3 walk-forward stability observations:
+  - `directional_ce`: AUC mean `0.6407008012810388`, expectancy mean `174.31178855639098`.
+  - `directional_pe`: AUC mean `0.6225529649123399`, expectancy mean `8.636504396245583`.
+  - `quality_profitable_ce`: AUC mean `0.5903563674479256`, expectancy mean `219.69139416005052`.
+  - `quality_profitable_pe`: AUC mean `0.5685939490326005`, expectancy mean `-1.3488004612722264`.
+  - `stop_hit_ce`: AUC mean `0.7040855663135662`, expectancy mean `98.43945596855112`.
+  - `stop_hit_pe`: AUC mean `0.7687207853388328`, expectancy mean `46.52355708138481`.
+  - `target_hit_ce`: AUC mean `0.6583294849430433`, expectancy mean `218.35797756496925`.
+  - `target_hit_pe`: AUC mean `0.6384291410273836`, expectancy mean `17.970712119048297`.
+- Key Phase 3 drift observations:
+  - Feature drift max PSI: `10.98609473605406`.
+  - Features over PSI `0.25`: `11`.
+  - Highest feature drift is in absolute price/volatility scale features, especially `ema50`, `ema20`, and `atr`.
+  - Target drift max PSI: `0.029382264826724718`.
+  - Targets over PSI `0.10`: `0`.
+  - Probability drift max PSI vs previous fold: `6.123866166843266`.
+- Key Phase 3 SHAP observations:
+  - SHAP status: `ok`.
+  - Target/model: `directional_ce` / `lgbm`.
+  - Top SHAP features by mean absolute value:
+    - `atr`: `0.4235997150010453`
+    - `ema50`: `0.131316671576216`
+    - `mins_since_open`: `0.09327172538867222`
+    - `ema20`: `0.06678776331044069`
+    - `price_vs_vwap`: `0.06308587150925929`
+- Implemented Phase 4 production recommendation layer inside `experimental/ml_pipeline_v2`:
+  - Added `ml_pipeline_v2.phase4`.
+  - Added `scripts/run_phase4_recommendation.py`.
+  - Added Phase 4 output directories under `experimental/ml_pipeline_v2/artifacts/reports/phase4/`.
+  - Implemented champion/challenger framework using Phase 3 comparison artifacts.
+  - Implemented trading model ranking with weighted metrics:
+    - AUC
+    - average precision
+    - expectancy
+    - profit factor
+    - net PnL
+    - calibration error
+    - Brier score
+    - precision
+    - trade count
+  - Implemented production viability gates:
+    - positive expectancy
+    - profit factor floor
+    - calibration floor
+    - minimum trade count
+  - Implemented ensemble recommendation engine using top viable model families per target.
+  - Implemented dynamic threshold policy with drift/calibration and risk buffers.
+  - Implemented Monte Carlo risk engine from Phase 3 gated-trade metrics.
+  - Implemented risk-of-ruin and drawdown gates.
+  - Implemented production recommendation decision:
+    - `promote_candidate`
+    - `conditional_candidate`
+    - `research_candidate_only`
+  - Implemented `production_candidate.json` generation with manual-review controls.
+  - The Phase 4 layer is report-only and does not modify production trading files or production model artifacts.
 - No production model or live trading files were modified.
 
 ## Files Modified
 
 - `SESSION.md`
+- `experimental/ml_pipeline_v2/scripts/run_phase4_recommendation.py`
+- `experimental/ml_pipeline_v2/scripts/run_phase3_validation.py`
 - `experimental/ml_pipeline_v2/scripts/train_pipeline_v2.py`
+- `experimental/ml_pipeline_v2/src/ml_pipeline_v2/config.py`
+- `experimental/ml_pipeline_v2/src/ml_pipeline_v2/__init__.py`
+- `experimental/ml_pipeline_v2/src/ml_pipeline_v2/phase4.py`
 - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/validation.py`
 
 ## Files Already Modified Before This Session
@@ -106,6 +209,45 @@
 - `experimental/ml_pipeline_v2/artifacts/models/v2_bars_to_target_ce_lgbm.joblib`
 - `experimental/ml_pipeline_v2/artifacts/models/v2_bars_to_target_pe_lgbm.joblib`
 - `experimental/ml_pipeline_v2/artifacts/reports/phase2_threshold_recommendations.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/phase3_validation_summary.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/phase3_stability_summary.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/phase3_package_dependent_refresh_summary.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/feature_importance_native.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/feature_importance_native.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/feature_importance_permutation.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/feature_importance_permutation.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/validation/shap_summary.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/walkforward/fold_metrics.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/walkforward/fold_metrics.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/walkforward/stability_by_target.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/walkforward/stability_report.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/walkforward/fold_feature_stability.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/walkforward/fold_feature_stability.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/comparison/model_comparison.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/comparison/model_comparison.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/comparison/candidate_availability.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/drift/feature_drift.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/drift/feature_drift.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/drift/target_drift.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/drift/target_drift.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/drift/probability_drift.csv`
+- `experimental/ml_pipeline_v2/artifacts/reports/drift/probability_drift.json`
+- `experimental/ml_pipeline_v2/artifacts/reports/drift/drift_summary.json`
+- Phase 4 generated artifact paths, once `run_phase4_recommendation.py` is executed:
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/phase4_summary.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/trading_model_rankings.csv`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/trading_model_rankings.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/champions.csv`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/champions.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/challengers.csv`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/recommendations/challengers.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/ensembles/ensemble_recommendations.csv`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/ensembles/ensemble_recommendations.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/thresholds/dynamic_thresholds.csv`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/thresholds/dynamic_thresholds.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/risk/monte_carlo_risk.csv`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/risk/monte_carlo_risk.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/promotion/production_candidate.json`
 
 ## Validation Performed
 
@@ -144,43 +286,84 @@
 - `git diff --check -- experimental\ml_pipeline_v2`
   - Passed.
   - Only warnings were LF-to-CRLF notices for touched files.
+- `python experimental\ml_pipeline_v2\scripts\run_phase3_validation.py`
+  - Passed.
+  - Run by user to avoid extra API/tool polling.
+  - Full rows after labeling/filtering: `505202`.
+  - Regime volatility threshold: `0.000545304417118`.
+  - Walk-forward metric rows: `48`.
+  - All leakage checks passed: `true`.
+  - Stability rows: `8`.
+  - Model comparison rows: `40`.
+  - Comparison max rows: `150000`.
+  - Feature drift rows: `140`.
+  - Target drift rows: `32`.
+  - Probability drift rows: `88`.
+  - Native feature-importance rows: `140`.
+  - Permutation feature-importance rows: `140`.
+  - SHAP status: `skipped`.
+- `python -m py_compile experimental\ml_pipeline_v2\scripts\run_phase3_validation.py`
+  - Passed after adding package-dependent refresh mode.
+  - Run by user.
+- `python experimental\ml_pipeline_v2\scripts\run_phase3_validation.py --refresh-package-dependent-reports --comparison-max-rows 150000 --package-dependent-model xgboost --shap-model lgbm --shap-target directional_ce --shap-sample 1000`
+  - Passed.
+  - Run by user.
+  - Refreshed XGBoost comparison rows.
+  - SHAP was still skipped before artifact unwrapping fix:
+    - reason: `Model type not yet supported by TreeExplainer: <class 'sklearn.frozen._frozen.FrozenEstimator'>`
+- `python -m py_compile experimental\ml_pipeline_v2\scripts\run_phase3_validation.py`
+  - Passed after fixing SHAP artifact unwrapping and adding `--skip-comparison-refresh`.
+  - Run by user.
+- `python experimental\ml_pipeline_v2\scripts\run_phase3_validation.py --refresh-package-dependent-reports --skip-comparison-refresh --comparison-max-rows 150000 --shap-model lgbm --shap-target directional_ce --shap-sample 1000`
+  - Passed.
+  - Run by user.
+  - Left comparison unchanged.
+  - SHAP status: `ok`.
+  - SHAP source: existing artifact, no retraining.
+- Phase 4 validation is pending user-run commands:
+  - `python -m py_compile experimental\ml_pipeline_v2\src\ml_pipeline_v2\phase4.py experimental\ml_pipeline_v2\scripts\run_phase4_recommendation.py`
+  - `python experimental\ml_pipeline_v2\scripts\run_phase4_recommendation.py`
 
 ## Current Git State Notes
 
 - Expected modified V2 source files:
+  - `experimental/ml_pipeline_v2/scripts/run_phase4_recommendation.py`
+  - `experimental/ml_pipeline_v2/scripts/run_phase3_validation.py`
   - `experimental/ml_pipeline_v2/scripts/train_pipeline_v2.py`
+  - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/__init__.py`
+  - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/config.py`
   - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/models.py`
+  - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/phase4.py`
   - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/validation.py`
 - Expected untracked handoff:
   - `SESSION.md`
 - Expected untracked V2 generated artifacts:
   - `experimental/ml_pipeline_v2/artifacts/models/`
   - `experimental/ml_pipeline_v2/artifacts/reports/phase2_threshold_recommendations.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/validation/`
+  - `experimental/ml_pipeline_v2/artifacts/reports/walkforward/`
+  - `experimental/ml_pipeline_v2/artifacts/reports/comparison/`
+  - `experimental/ml_pipeline_v2/artifacts/reports/drift/`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/` after Phase 4 runner execution.
+- Full Phase 3 validation updated CatBoost training log files under `catboost_info/`; these are generated artifacts from candidate comparison.
 - Unrelated untracked `.claude/` remains untouched.
 - `git status` emits permission warnings for `C:\Users\PC/.config/git/ignore`; this did not block work.
 
 ## Remaining Tasks
 
-- Phase 3:
-  - Walk-forward training.
-  - Purged cross validation.
-  - Feature importance.
-  - SHAP analysis if available.
-  - Drift detection.
-  - Model comparison reports.
 - Phase 4:
-  - Champion/Challenger evaluation.
-  - Ensemble evaluation.
-  - Probability calibration report.
-  - Trading expectancy report.
-  - Risk metrics.
-  - Monte Carlo validation.
-  - Automatic best-model selection.
+  - Run the pending Phase 4 compile and runner commands.
+  - Inspect `production_candidate.json`.
+  - Add deeper probability calibration curves if Phase 4 decision requires them.
+  - Add live promotion packaging only after explicit manual approval.
 - Regime model caveat:
   - `regime_proxy` is still a heuristic proxy and should be replaced or validated with researched regime labeling before any promotion decision.
 - Validation caveat:
   - The newly persisted candidate artifacts are experimental only; no production promotion step exists yet.
+- Phase 3 caveats:
+  - Feature drift is high in absolute price/volatility scale features; Phase 4 selection should account for this before promotion.
+  - Probability drift is high fold-to-fold for several heads; probability calibration and threshold stability need explicit Phase 4 treatment.
 
 ## Exact Next Action
 
-Start Phase 3 inside `experimental/ml_pipeline_v2`: add purged walk-forward evaluation for the already-trained V2 targets, write a walk-forward stability/model-comparison report under `experimental/ml_pipeline_v2/artifacts/reports/`, then run compile, trainer dry-run, validation dry-run, and `git diff --check`.
+Run the pending Phase 4 commands locally, paste the output, then inspect `experimental/ml_pipeline_v2/artifacts/reports/phase4/promotion/production_candidate.json` and continue improving the recommendation engine from the generated decision. Do not promote anything to production until Phase 4 produces an explicit promotion artifact and the regime proxy caveat is resolved.

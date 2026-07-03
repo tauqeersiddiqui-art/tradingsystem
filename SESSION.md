@@ -202,16 +202,57 @@
   - `11 features exceed PSI 0.25`
   - `probability drift PSI is high: 6.123866166843266`
   - `no promotable ensembles available; only one persisted model family per target`
+- Completed Phase 4 production artifact registry milestone:
+  - Root cause for missing artifacts:
+    - `train_pipeline_v2.py` selected the first available model spec once via `first_available(...)`, which resolved to LGBM, then persisted only those primary LGBM artifacts.
+    - Phase 3 compared all classifier families and Phase 4 ranked them, but non-primary fitted candidates were not persisted for deployment.
+  - Added `experimental/ml_pipeline_v2/src/ml_pipeline_v2/artifact_registry.py` registry generation and consumer helpers:
+    - `deployment_manifest.json`
+    - `production_artifact_registry.json`
+    - `research_only_models.json`
+    - `load_registered_model(...)`
+    - `production_registry_records(...)`
+  - Added `experimental/ml_pipeline_v2/scripts/build_production_artifacts.py`.
+  - Persisted deployable artifacts only for missing, metric-eligible, production-capable Phase 4 research champions.
+  - Kept `mlp` explicitly research-only and did not persist it as a production artifact.
+  - Did not promote any model automatically; registry controls preserve:
+    - `manual_review_required_before_promotion=true`
+    - `auto_promotion_enabled=false`
+    - `production_files_modified=false`
+    - `deployment_status=candidate_not_promoted`
+  - Reran Phase 4 after artifact build so champion/challenger rankings and registry paths point to the new deployable artifacts.
+  - Latest Phase 4 summary:
+    - comparison rows: `40`
+    - ranked rows: `40`
+    - artifact-available rows: `13`
+    - production-viable rows: `13`
+    - champions: `8`
+    - registry artifact count: `13`
+    - registry champion count: `8`
+    - research-only count: `27`
+    - promotion decision: `conditional_candidate`
+    - promotion ready: `false`
+  - Current Phase 4 champions now all have persisted deployable artifacts:
+    - `directional_ce`: `lgbm`, legacy Phase 2 artifact
+    - `directional_pe`: `xgboost`, production-candidate artifact
+    - `quality_profitable_ce`: `catboost`, production-candidate artifact
+    - `quality_profitable_pe`: `catboost`, production-candidate artifact
+    - `stop_hit_ce`: `lgbm`, legacy Phase 2 artifact
+    - `stop_hit_pe`: `lgbm`, legacy Phase 2 artifact
+    - `target_hit_ce`: `catboost`, production-candidate artifact
+    - `target_hit_pe`: `xgboost`, production-candidate artifact
 - No production model or live trading files were modified.
 
 ## Files Modified
 
 - `SESSION.md`
 - `experimental/ml_pipeline_v2/scripts/run_phase4_recommendation.py`
+- `experimental/ml_pipeline_v2/scripts/build_production_artifacts.py`
 - `experimental/ml_pipeline_v2/scripts/run_phase3_validation.py`
 - `experimental/ml_pipeline_v2/scripts/train_pipeline_v2.py`
 - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/config.py`
 - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/__init__.py`
+- `experimental/ml_pipeline_v2/src/ml_pipeline_v2/artifact_registry.py`
 - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/phase4.py`
 - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/validation.py`
 
@@ -280,6 +321,24 @@
   - `experimental/ml_pipeline_v2/artifacts/reports/phase4/risk/monte_carlo_risk.csv`
   - `experimental/ml_pipeline_v2/artifacts/reports/phase4/risk/monte_carlo_risk.json`
   - `experimental/ml_pipeline_v2/artifacts/reports/phase4/promotion/production_candidate.json`
+- Phase 4 production artifact registry generated paths:
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_directional_pe_xgboost_20260703T172552Z_ceb73b650f15.joblib`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_directional_pe_xgboost_20260703T172552Z_ceb73b650f15.metadata.json`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_quality_profitable_ce_catboost_20260703T172559Z_ceb73b650f15.joblib`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_quality_profitable_ce_catboost_20260703T172559Z_ceb73b650f15.metadata.json`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_quality_profitable_pe_catboost_20260703T172606Z_ceb73b650f15.joblib`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_quality_profitable_pe_catboost_20260703T172606Z_ceb73b650f15.metadata.json`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_target_hit_ce_catboost_20260703T172612Z_ceb73b650f15.joblib`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_target_hit_ce_catboost_20260703T172612Z_ceb73b650f15.metadata.json`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_target_hit_pe_xgboost_20260703T172615Z_ceb73b650f15.joblib`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/v2_target_hit_pe_xgboost_20260703T172615Z_ceb73b650f15.metadata.json`
+  - `experimental/ml_pipeline_v2/artifacts/registry/deployment_manifest.json`
+  - `experimental/ml_pipeline_v2/artifacts/registry/production_artifact_registry.json`
+  - `experimental/ml_pipeline_v2/artifacts/registry/research_only_models.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/registry/deployment_manifest.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/registry/production_artifact_registry.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/registry/research_only_models.json`
+  - `experimental/ml_pipeline_v2/artifacts/reports/phase4/registry/production_artifact_build_summary.json`
 
 ## Validation Performed
 
@@ -371,14 +430,65 @@
     - `risk_rows=40`
     - `promotion_decision=conditional_candidate`
     - `promotion_ready=false`
+- `python -m py_compile experimental\ml_pipeline_v2\src\ml_pipeline_v2\artifact_registry.py experimental\ml_pipeline_v2\src\ml_pipeline_v2\phase4.py experimental\ml_pipeline_v2\scripts\build_production_artifacts.py`
+  - Passed.
+- `python experimental\ml_pipeline_v2\scripts\build_production_artifacts.py`
+  - Passed.
+  - Created `5` missing production-capable champion artifacts.
+  - Created artifacts:
+    - `directional_pe` / `xgboost`
+    - `quality_profitable_ce` / `catboost`
+    - `quality_profitable_pe` / `catboost`
+    - `target_hit_ce` / `catboost`
+    - `target_hit_pe` / `xgboost`
+  - Skipped no production-capable champion rows.
+  - `mlp` remains explicitly research-only.
+- `python experimental\ml_pipeline_v2\scripts\run_phase4_recommendation.py`
+  - Passed after registry artifact build.
+  - Latest output:
+    - `comparison_rows=40`
+    - `ranked_rows=40`
+    - `artifact_available_rows=13`
+    - `production_viable_rows=13`
+    - `champions=8`
+    - `challengers=16`
+    - `ensembles=8`
+    - `risk_rows=40`
+    - `promotion_decision=conditional_candidate`
+    - `promotion_ready=false`
+    - registry artifact count: `13`
+    - registry champion count: `8`
+    - research-only count: `27`
+- Registry independent load check:
+  - Passed.
+  - Loaded all `8` registered champions through `load_registered_model(...)` without retraining.
+- Deployment manifest shape check:
+  - Passed.
+  - Confirmed manifest schema `ml_pipeline_v2.deployment_manifest.v1`.
+  - Confirmed champion records include:
+    - model
+    - target
+    - artifact path
+    - version
+    - checksum
+    - training metadata
+    - calibration metadata
+    - production eligibility
+- `python -m compileall -q experimental\ml_pipeline_v2`
+  - Passed after production artifact registry changes.
+- `git diff --check -- experimental\ml_pipeline_v2`
+  - Passed.
+  - Only warnings were LF-to-CRLF notices for touched files.
 
 ## Current Git State Notes
 
 - Expected modified V2 source files:
   - `experimental/ml_pipeline_v2/scripts/run_phase4_recommendation.py`
+  - `experimental/ml_pipeline_v2/scripts/build_production_artifacts.py`
   - `experimental/ml_pipeline_v2/scripts/run_phase3_validation.py`
   - `experimental/ml_pipeline_v2/scripts/train_pipeline_v2.py`
   - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/__init__.py`
+  - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/artifact_registry.py`
   - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/config.py`
   - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/models.py`
   - `experimental/ml_pipeline_v2/src/ml_pipeline_v2/phase4.py`
@@ -393,6 +503,8 @@
   - `experimental/ml_pipeline_v2/artifacts/reports/comparison/`
   - `experimental/ml_pipeline_v2/artifacts/reports/drift/`
   - `experimental/ml_pipeline_v2/artifacts/reports/phase4/`
+  - `experimental/ml_pipeline_v2/artifacts/models/production_candidates/`
+  - `experimental/ml_pipeline_v2/artifacts/registry/`
 - Full Phase 3 validation updated CatBoost training log files under `catboost_info/`; these are generated artifacts from candidate comparison.
 - Unrelated untracked `.claude/` remains untouched.
 - `git status` emits permission warnings for `C:\Users\PC/.config/git/ignore`; this did not block work.
@@ -400,10 +512,9 @@
 ## Remaining Tasks
 
 - Phase 4:
-  - Inspect `production_candidate.json`.
+  - Inspect the latest `production_candidate.json` and registry together before any manual promotion discussion.
   - Add deeper probability calibration curves if Phase 4 decision requires them.
   - Add stability-adjusted scoring using walk-forward variance/drift penalties.
-  - Decide whether to train/persist top CatBoost/XGBoost research winners as experimental artifacts so ensembles can become promotable.
   - Add live promotion packaging only after explicit manual approval.
 - Regime model caveat:
   - `regime_proxy` is still a heuristic proxy and should be replaced or validated with researched regime labeling before any promotion decision.
@@ -415,4 +526,4 @@
 
 ## Exact Next Action
 
-Continue Phase 4 by improving the conditional candidate into a stronger promotion package: add calibration curve reports, add stability-adjusted scoring, and decide whether to train/persist top CatBoost/XGBoost research winners as experimental artifacts so ensembles can become promotable. Do not promote anything to production until the regime proxy caveat is resolved and manual approval is explicit.
+Continue Phase 4 by reviewing the generated deployment manifest and `production_candidate.json` together, then add calibration curve reports and stability-adjusted scoring. Do not promote anything to production until the regime proxy caveat is resolved and manual approval is explicit.

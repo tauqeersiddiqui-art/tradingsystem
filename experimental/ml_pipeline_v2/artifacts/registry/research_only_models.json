@@ -1,0 +1,338 @@
+{
+  "schema_version": "ml_pipeline_v2.research_only_models.v1",
+  "generated_at_utc": "2026-07-03T17:26:38.826440+00:00",
+  "models": [
+    {
+      "model": "random_forest",
+      "target": "target_hit_ce",
+      "side": "ce",
+      "selection_score": 0.531172213325925,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "xgboost",
+      "target": "target_hit_ce",
+      "side": "ce",
+      "selection_score": 0.49748404456389334,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "catboost",
+      "target": "stop_hit_pe",
+      "side": "pe",
+      "selection_score": 0.46896052749166184,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "xgboost",
+      "target": "stop_hit_pe",
+      "side": "pe",
+      "selection_score": 0.4531898406964038,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "catboost",
+      "target": "directional_ce",
+      "side": "ce",
+      "selection_score": 0.4404654897109106,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "target_hit_ce",
+      "side": "ce",
+      "selection_score": 0.42886608751508704,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "random_forest",
+      "target": "directional_ce",
+      "side": "ce",
+      "selection_score": 0.4153911274637674,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "catboost",
+      "target": "target_hit_pe",
+      "side": "pe",
+      "selection_score": 0.40991089677483183,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "random_forest",
+      "target": "stop_hit_pe",
+      "side": "pe",
+      "selection_score": 0.40571816059589144,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "random_forest",
+      "target": "quality_profitable_ce",
+      "side": "ce",
+      "selection_score": 0.40471906297185917,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "xgboost",
+      "target": "directional_ce",
+      "side": "ce",
+      "selection_score": 0.3956184164925493,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "directional_ce",
+      "side": "ce",
+      "selection_score": 0.38230017685373097,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "catboost",
+      "target": "stop_hit_ce",
+      "side": "ce",
+      "selection_score": 0.37733336539251133,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "xgboost",
+      "target": "stop_hit_ce",
+      "side": "ce",
+      "selection_score": 0.3647150198455863,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "catboost",
+      "target": "directional_pe",
+      "side": "pe",
+      "selection_score": 0.3629874532323793,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "random_forest",
+      "target": "target_hit_pe",
+      "side": "pe",
+      "selection_score": 0.3491544912283316,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "random_forest",
+      "target": "stop_hit_ce",
+      "side": "ce",
+      "selection_score": 0.3398509098025786,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "xgboost",
+      "target": "quality_profitable_pe",
+      "side": "pe",
+      "selection_score": 0.3199986068097087,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "xgboost",
+      "target": "quality_profitable_ce",
+      "side": "ce",
+      "selection_score": 0.31582739895020967,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "stop_hit_ce",
+      "side": "ce",
+      "selection_score": 0.3093783645476205,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "random_forest",
+      "target": "directional_pe",
+      "side": "pe",
+      "selection_score": 0.30836501652143783,
+      "metric_viable": false,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "profit-factor floor failed",
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "stop_hit_pe",
+      "side": "pe",
+      "selection_score": 0.29403451328794333,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "random_forest",
+      "target": "quality_profitable_pe",
+      "side": "pe",
+      "selection_score": 0.2921123111398595,
+      "metric_viable": true,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "target_hit_pe",
+      "side": "pe",
+      "selection_score": 0.2686208615331005,
+      "metric_viable": false,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "expectancy floor failed",
+        "profit-factor floor failed",
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "directional_pe",
+      "side": "pe",
+      "selection_score": 0.2433763837027411,
+      "metric_viable": false,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "profit-factor floor failed",
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "quality_profitable_pe",
+      "side": "pe",
+      "selection_score": 0.23555497869580733,
+      "metric_viable": false,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "expectancy floor failed",
+        "profit-factor floor failed",
+        "deployable artifact is unavailable"
+      ]
+    },
+    {
+      "model": "mlp",
+      "target": "quality_profitable_ce",
+      "side": "ce",
+      "selection_score": 0.14319464628994413,
+      "metric_viable": false,
+      "artifact_available": false,
+      "production_viable": false,
+      "research_only_reasons": [
+        "expectancy floor failed",
+        "profit-factor floor failed",
+        "deployable artifact is unavailable"
+      ]
+    }
+  ]
+}

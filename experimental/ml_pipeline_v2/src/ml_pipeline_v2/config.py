@@ -101,6 +101,20 @@ class PipelineConfig:
 
 
 def ensure_output_dirs(config: PipelineConfig) -> None:
-    for subdir in ("reports", "models", "predictions", "drift"):
+    for subdir in (
+        "reports",
+        "reports/validation",
+        "reports/walkforward",
+        "reports/comparison",
+        "reports/drift",
+        "reports/phase4",
+        "reports/phase4/recommendations",
+        "reports/phase4/risk",
+        "reports/phase4/ensembles",
+        "reports/phase4/thresholds",
+        "reports/phase4/promotion",
+        "models",
+        "predictions",
+        "drift",
+    ):
         (config.paths.output_dir / subdir).mkdir(parents=True, exist_ok=True)
-

@@ -1,0 +1,111 @@
+{
+  "status": "ok",
+  "target": "directional_ce",
+  "model": "lgbm",
+  "source": "existing_artifact",
+  "artifact_path": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\models\\v2_directional_ce_lgbm.joblib",
+  "explained_estimator": "lightgbm.sklearn.LGBMClassifier",
+  "sample_rows": 1000,
+  "top_features": [
+    {
+      "feature": "atr",
+      "mean_abs_shap": 0.4235997150010453
+    },
+    {
+      "feature": "ema50",
+      "mean_abs_shap": 0.131316671576216
+    },
+    {
+      "feature": "mins_since_open",
+      "mean_abs_shap": 0.09327172538867222
+    },
+    {
+      "feature": "ema20",
+      "mean_abs_shap": 0.06678776331044069
+    },
+    {
+      "feature": "price_vs_vwap",
+      "mean_abs_shap": 0.06308587150925929
+    },
+    {
+      "feature": "volatility",
+      "mean_abs_shap": 0.060131299227819596
+    },
+    {
+      "feature": "supertrend_dist",
+      "mean_abs_shap": 0.05071947244710785
+    },
+    {
+      "feature": "range_break_strength",
+      "mean_abs_shap": 0.03184835039176217
+    },
+    {
+      "feature": "macd",
+      "mean_abs_shap": 0.0310350035987343
+    },
+    {
+      "feature": "rsi",
+      "mean_abs_shap": 0.027412552604180653
+    },
+    {
+      "feature": "adx",
+      "mean_abs_shap": 0.021962246321055492
+    },
+    {
+      "feature": "mins_to_close",
+      "mean_abs_shap": 0.020347567106490962
+    },
+    {
+      "feature": "return_3",
+      "mean_abs_shap": 0.019954324865623485
+    },
+    {
+      "feature": "moneyness",
+      "mean_abs_shap": 0.016471360141258603
+    },
+    {
+      "feature": "weekday",
+      "mean_abs_shap": 0.015702797067022226
+    },
+    {
+      "feature": "trend_strength",
+      "mean_abs_shap": 0.014723035820160662
+    },
+    {
+      "feature": "upper_wick",
+      "mean_abs_shap": 0.010367701376012495
+    },
+    {
+      "feature": "close_position",
+      "mean_abs_shap": 0.009355912796070376
+    },
+    {
+      "feature": "hour",
+      "mean_abs_shap": 0.007434402475818554
+    },
+    {
+      "feature": "range_compression",
+      "mean_abs_shap": 0.00738193778631296
+    },
+    {
+      "feature": "di_spread",
+      "mean_abs_shap": 0.006600199165567183
+    },
+    {
+      "feature": "time_to_expiry_min",
+      "mean_abs_shap": 0.006518450065291769
+    },
+    {
+      "feature": "lower_wick",
+      "mean_abs_shap": 0.0061026470056269625
+    },
+    {
+      "feature": "momentum_velocity",
+      "mean_abs_shap": 0.004216017166778794
+    },
+    {
+      "feature": "mom3_strength",
+      "mean_abs_shap": 0.001878985896450096
+    }
+  ]
+}

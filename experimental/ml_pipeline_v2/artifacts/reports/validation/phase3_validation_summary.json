@@ -1,0 +1,51 @@
+{
+  "status": "ok",
+  "dataset": "D:\\All Bots\\trading_system\\ml\\models\\training_dataset_v3.csv",
+  "rows": 505202,
+  "regime_volatility_threshold": 0.000545304417118,
+  "walkforward": {
+    "fold_metric_rows": 48,
+    "targets": [
+      "directional_ce",
+      "directional_pe",
+      "quality_profitable_ce",
+      "quality_profitable_pe",
+      "stop_hit_ce",
+      "stop_hit_pe",
+      "target_hit_ce",
+      "target_hit_pe"
+    ],
+    "all_leakage_checks_passed": true
+  },
+  "stability": {
+    "rows": 8
+  },
+  "comparison": {
+    "rows": 40,
+    "comparison_max_rows": 150000,
+    "models": [
+      "catboost",
+      "lgbm",
+      "mlp",
+      "random_forest",
+      "xgboost"
+    ]
+  },
+  "feature_importance": {
+    "native_rows": 140,
+    "permutation_rows": 140,
+    "shap_status": "ok",
+    "shap_source": "existing_artifact"
+  },
+  "drift": {
+    "feature_rows": 140,
+    "target_rows": 32,
+    "probability_rows": 88
+  },
+  "reports": {
+    "validation": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\validation",
+    "walkforward": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\walkforward",
+    "comparison": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\comparison",
+    "drift": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\drift"
+  }
+}

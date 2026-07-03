@@ -7,6 +7,6 @@ __all__ = [
     "audit",
     "config",
     "models",
+    "phase4",
     "validation",
 ]
-

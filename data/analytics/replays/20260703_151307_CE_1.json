@@ -1,0 +1,91 @@
+{
+  "symbol": "BANKNIFTY26JUL58000CE",
+  "side": "CE",
+  "entry": 959.5,
+  "qty": 30,
+  "summary": {
+    "max_pnl": 153.0,
+    "mae_rs": 0.0,
+    "mae_pts": 0.0,
+    "ladder_stage": "S2_TIGHT_LOCONV",
+    "locked_profit": 122.4,
+    "retained_profit_pct": 0.647,
+    "exit_reason": "STOP",
+    "exit_price": 962.8,
+    "final_stop_loss": 962.87,
+    "pnl": 99.0
+  },
+  "events": [
+    {
+      "t": "15:13:07",
+      "type": "ENTRY",
+      "price": 959.5,
+      "spot": 57950.3,
+      "ml_ce": 0.785,
+      "ml_pe": 0.027,
+      "adx": 10.9,
+      "rsi": 48.1,
+      "vwap": "above",
+      "st_dir": 1,
+      "stop": 950.62,
+      "regime": "RANGE"
+    },
+    {
+      "t": "15:13:22",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.45,
+      "price": 961.5
+    },
+    {
+      "t": "15:13:23",
+      "type": "MFE_PEAK",
+      "mfe_pts": 2.0,
+      "price": 962.15
+    },
+    {
+      "t": "15:13:24",
+      "type": "MFE_PEAK",
+      "mfe_pts": 2.65,
+      "price": 961.7
+    },
+    {
+      "t": "15:13:33",
+      "type": "MFE_PEAK",
+      "mfe_pts": 3.8,
+      "price": 964.6
+    },
+    {
+      "t": "15:13:33",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 962.01,
+      "pts_locked": 2.51,
+      "mfe_pts": 3.8,
+      "locked_rs": 91.2
+    },
+    {
+      "t": "15:13:34",
+      "type": "MFE_PEAK",
+      "mfe_pts": 5.1,
+      "price": 963.85
+    },
+    {
+      "t": "15:13:34",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 962.87,
+      "pts_locked": 3.37,
+      "mfe_pts": 5.1,
+      "locked_rs": 122.4
+    },
+    {
+      "t": "15:13:38",
+      "type": "EXIT",
+      "price": 962.8,
+      "reason": "STOP",
+      "pnl": 99.0,
+      "mfe_pts": 5.1,
+      "mae_pts": 0.0
+    }
+  ]
+}

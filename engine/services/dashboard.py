@@ -136,6 +136,13 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
     ce_lbl = _bias_label(ce_adj, ce_thr)
     pe_lbl = _bias_label(pe_adj, thr)
 
+    # Phase 5.5 optional intelligence filter
+    phase55 = ms.get("phase55") or {}
+    phase55_status = "Enabled" if phase55.get("enabled") else "Disabled"
+    phase55_filter = _html.escape(str(phase55.get("filter_used") or "none"))
+    phase55_blocked = "YES" if phase55.get("trade_blocked") else "NO"
+    phase55_reason = _html.escape(str(phase55.get("reason") or "--"))
+
     # Scoring
     ml_pct  = ms.get("ml_percentile", 0)
     score   = ms.get("ml_score", 0.0)
@@ -180,6 +187,12 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
         f"<b>ML BIAS</b>\n"
         f"CE  {ce_adj:.2f} {_bar(ce_adj)}  {ce_lbl}  (raw {ce_raw:.2f})  thr={ce_thr:.2f}\n"
         f"PE  {pe_adj:.2f} {_bar(pe_adj)}  {pe_lbl}  (raw {pe_raw:.2f})  thr={thr:.2f}\n"
+        f"\n"
+        f"<b>PHASE55</b>\n"
+        f"Enabled/Disabled: {phase55_status}\n"
+        f"Filter Used: {phase55_filter}\n"
+        f"Trade Blocked: {phase55_blocked}\n"
+        f"Reason: {phase55_reason}\n"
         f"\n"
         f"<b>SCORING</b>\n"
         f"Score:  {score:.1f}  {'[PASS]' if score_ok else '[FAIL]'}  (req {score_r:.0f})\n"

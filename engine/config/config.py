@@ -1,6 +1,13 @@
 import os
 
 
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return bool(default)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Config:
 
     def __init__(self):
@@ -43,6 +50,12 @@ class Config:
 
         # ML
         self.CHAMPION_THRESHOLD = float(os.getenv("CHAMPION_THRESHOLD", 0.42))
+        self.ENABLE_PHASE55_FILTERS = _env_bool("ENABLE_PHASE55_FILTERS", False)
+        self.ENABLE_PHASE55_CE_THRESHOLD = _env_bool("ENABLE_PHASE55_CE_THRESHOLD", True)
+        self.ENABLE_PHASE55_PE_THRESHOLD = _env_bool("ENABLE_PHASE55_PE_THRESHOLD", True)
+        self.ENABLE_PHASE55_REGIME_FILTER = _env_bool("ENABLE_PHASE55_REGIME_FILTER", True)
+        self.PHASE55_CE_QUALITY_THRESHOLD = float(os.getenv("PHASE55_CE_QUALITY_THRESHOLD", "0.4358"))
+        self.PHASE55_PE_DIRECTIONAL_THRESHOLD = float(os.getenv("PHASE55_PE_DIRECTIONAL_THRESHOLD", "0.4645"))
 
         # Scalping layer
         self.SCALP_ENABLED            = os.getenv("SCALP_ENABLED", "1") == "1"

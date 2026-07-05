@@ -1,0 +1,64 @@
+{
+  "schema_version": "phase55.autonomous_strategy_improvement.v1",
+  "status": "ok",
+  "phase": 5.5,
+  "controls": {
+    "experimental_only": true,
+    "production_files_modified": false,
+    "live_engine_integrated": false,
+    "retrained_models": false,
+    "reused_phase5_artifacts": true
+  },
+  "phase5_baseline": {
+    "trades": 66692,
+    "net_pnl": -2768119.124999993,
+    "expectancy": -41.5060145894559,
+    "profit_factor": 0.732180664039045,
+    "win_rate": 0.39701913272956274,
+    "max_drawdown": -2768261.249999997,
+    "avg_winner": 285.8090159755271,
+    "avg_loser": -257.0192035112149
+  },
+  "baseline": {
+    "trades": 66692,
+    "net_pnl": -2768119.124999993,
+    "expectancy": -41.5060145894559,
+    "profit_factor": 0.732180664039045,
+    "win_rate": 0.39701913272956274,
+    "max_drawdown": -2768261.249999997,
+    "avg_winner": 285.8090159755271,
+    "avg_loser": -257.0192035112149
+  },
+  "candidate_recommendations": 18,
+  "single_tests": 18,
+  "single_accepted": 7,
+  "combination_tests_ranked": 126,
+  "combination_accepted": 126,
+  "losing_trade_counterfactuals": 40214,
+  "replay_records": 66692,
+  "filter_tests_ranked": 167,
+  "filter_accepted": 5,
+  "recommended_strategy_status": "ok",
+  "recommended_strategy": {
+    "source": "combination_optimizer",
+    "actions": "ce require quality confidence >= 0.4358 | pe require directional confidence >= 0.4645 | Reduce or disable ce trades in mixed",
+    "trade_count": 15160,
+    "net_pnl": 599552.625000008,
+    "net_pnl_delta": 3367671.750000001,
+    "profit_factor": 1.2621566669454198,
+    "profit_factor_delta": 0.5299760029063748,
+    "expectancy": 39.548326187335626,
+    "expectancy_delta": 81.05434077679152,
+    "max_drawdown": -94716.0000000018,
+    "trade_coverage": 0.22731362082408685
+  },
+  "reports": {
+    "single_recommendation_validation": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase55\\single_recommendation_validation",
+    "combination_optimizer": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase55\\combination_optimizer",
+    "counterfactual_trade_simulator": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase55\\counterfactual_trade_simulator",
+    "trade_replay_intelligence": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase55\\trade_replay_intelligence",
+    "filter_ranking": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase55\\filter_ranking",
+    "final_recommendation_engine": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase55\\final_recommendation_engine",
+    "improvement_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase55\\improvement_report.md"
+  }
+}

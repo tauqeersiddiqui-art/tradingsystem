@@ -601,12 +601,24 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
     ce_thr  = ms.get("ce_threshold", 0.70)
     pe_thr  = ms.get("ml_threshold", 0.65)
     candidate = "CE" if ce_adj >= pe_adj else "PE"
+    phase55 = ms.get("phase55") or {}
+    phase55_status = "Enabled" if phase55.get("enabled") else "Disabled"
+    phase55_evaluated = int(phase55.get("trades_evaluated", 0) or 0)
+    phase55_allowed = int(phase55.get("trades_allowed", 0) or 0)
+    phase55_blocked = int(phase55.get("trades_blocked", 0) or 0)
+    phase55_correct = int(phase55.get("correct_blocks", 0) or 0)
+    phase55_false = int(phase55.get("false_positive_blocks", 0) or 0)
+    phase55_saved = float(phase55.get("estimated_pnl_saved", 0.0) or 0.0)
+    phase55_missed = float(phase55.get("estimated_pnl_missed", 0.0) or 0.0)
 
     def _bar(v, thr):
         filled = max(0, min(10, round(v * 10)))
         bar = "█" * filled + "░" * (10 - filled)
         ok = "✅" if v >= thr else ("🟡" if v >= thr - 0.06 else "🔴")
         return f"{bar} {v:.2f} {ok}"
+
+    def _phase55_rs(value: float) -> str:
+        return f"+Rs {value:,.0f}" if value >= 0 else f"-Rs {abs(value):,.0f}"
 
     # Decision
     block_raw = ms.get("block_reason", "WARMING_UP")
@@ -645,6 +657,14 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
         f"Candidate: <b>{candidate}</b> (no entry until threshold + structure pass)\n"
         f"📈 CE  {_bar(ce_adj, ce_thr)}\n"
         f"📉 PE  {_bar(pe_adj, pe_thr)}\n"
+        f"\n"
+        f"<b>PHASE55</b>\n"
+        f"Enabled: <b>{phase55_status}</b>\n"
+        f"Trades Evaluated: {phase55_evaluated}\n"
+        f"Allowed: {phase55_allowed}   Blocked: {phase55_blocked}\n"
+        f"Correct Blocks: {phase55_correct}   False Blocks: {phase55_false}\n"
+        f"Estimated PnL Saved: {_phase55_rs(phase55_saved)}\n"
+        f"Estimated PnL Missed: {_phase55_rs(-phase55_missed)}\n"
         + _section_banknifty_chart(ms)
         + _section_ml_analytics(ms)
         + f"\n\n"

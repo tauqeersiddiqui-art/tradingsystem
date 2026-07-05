@@ -1195,6 +1195,40 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # ── Run decision engine ───────────────────────────────────
             decision = ctx.live_engine.step(market_data, ts)
 
+            # Phase55 telemetry only: attach option-premium shadow data for
+            # blocked candidates so outcomes can be estimated without trading.
+            try:
+                if ctx.live_engine.phase55_telemetry_enabled():
+                    _p55_decision = ctx.live_engine.get_last_phase55_decision()
+                    if (
+                        position is None
+                        and _p55_decision.get("trade_blocked")
+                        and not _p55_decision.get("shadow_attached")
+                    ):
+                        _p55_side = _p55_decision.get("direction") or "CE"
+                        _p55_symbol, _ = ctx.broker.get_atm_option(_p55_side)
+                        if _p55_symbol:
+                            _p55_entry = ctx.broker.ltp(_p55_symbol) or 0.0
+                            if _p55_entry > 0:
+                                _p55_qty = ctx.executor.get_lot_size(_p55_symbol)
+                                ctx.live_engine.attach_phase55_block_shadow(
+                                    symbol=_p55_symbol,
+                                    entry_price=_p55_entry,
+                                    quantity=_p55_qty,
+                                    timestamp=ts,
+                                )
+
+                    for _p55_symbol in ctx.live_engine.open_phase55_shadow_symbols():
+                        _p55_ltp = ctx.broker.ltp(_p55_symbol) or 0.0
+                        if _p55_ltp > 0:
+                            ctx.live_engine.observe_phase55_shadow_price(
+                                symbol=_p55_symbol,
+                                price=_p55_ltp,
+                                timestamp=ts,
+                            )
+            except Exception as _p55_e:
+                logger.debug(f"[PHASE55 TELEMETRY] observation failed: {_p55_e}")
+
             # Track when this signal was first generated (for entry-delay logging)
             if decision is not None and _signal_first_ts is None:
                 _signal_first_ts = ts
@@ -1357,6 +1391,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     ctx.pnl         += pnl
                     ctx.positions.append(pnl)
+                    try:
+                        ctx.live_engine.record_phase55_actual_outcome(
+                            position,
+                            pnl=pnl,
+                            exit_reason=exit_reason,
+                            timestamp=ts,
+                        )
+                    except Exception as _p55_exit_e:
+                        logger.debug(f"[PHASE55 TELEMETRY] actual outcome failed: {_p55_exit_e}")
                     save_state(
                         ctx,
                         None,
@@ -1766,8 +1809,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "regime":   decision.get("regime", "UNKNOWN"),
                         "reason":   decision.get("reason", ""),
                         "entry_ts": ts,   # for held-time display in dashboard
+                        "_phase55_telemetry_id": decision.get("_phase55_telemetry_id", ""),
+                        "_phase55_decision": decision.get("_phase55_decision", {}),
                         "sl_order_id": None,   # broker protective SL-M id (set below)
                     }
+                    ctx.live_engine.update_phase55_actual_entry(position, ts)
                     entry_time      = ts    # FIX-2
                     entry_order_rec = order
                     ctx.trades_today += 1
@@ -2213,6 +2259,20 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 _eod_sent = True
                 summary = today_summary()
                 send_eod_summary(summary)
+                try:
+                    _p55_report = ctx.live_engine.generate_phase55_eod_report(ts)
+                    if _p55_report:
+                        _p55_stats = _p55_report.get("stats", {})
+                        logger.info(
+                            "[PHASE55 EOD] "
+                            f"evaluated={_p55_stats.get('trades_evaluated', 0)} "
+                            f"blocked={_p55_stats.get('trades_blocked', 0)} "
+                            f"saved={_p55_stats.get('estimated_pnl_saved', 0.0):.0f} "
+                            f"missed={_p55_stats.get('estimated_pnl_missed', 0.0):.0f} "
+                            f"report={_p55_report.get('report_path', '')}"
+                        )
+                except Exception as _p55_eod_e:
+                    logger.warning(f"[PHASE55 EOD] report failed: {_p55_eod_e}")
                 logger.info(
                     f"[EOD] Trades={summary['trades']} PnL=₹{summary['pnl']:.0f} "
                     f"WR={summary.get('win_rate',0):.0f}%"

@@ -245,6 +245,67 @@ def _daily_bank_reached(ctx, open_pnl: float = 0.0) -> bool:
     return target > 0 and (float(getattr(ctx, "pnl", 0.0)) + float(open_pnl)) >= target
 
 
+def _is_paper_or_dry_run(ctx) -> bool:
+    return bool(
+        PAPER_MODE
+        or os.getenv("DRY_RUN", "0") == "1"
+        or getattr(ctx.config, "PAPER_MODE", False)
+        or getattr(ctx.config, "DRY_RUN", False)
+        or getattr(ctx.broker, "is_paper", False)
+        or (hasattr(ctx.executor, "_is_dry") and ctx.executor._is_dry())
+    )
+
+
+def _entry_order_from_position(position: dict) -> dict:
+    return {
+        "order_id": (
+            position.get("entry_order_id")
+            or position.get("order_id")
+            or f"restored_{position.get('symbol', 'UNKNOWN')}"
+        ),
+        "symbol": position.get("symbol", ""),
+        "price": position.get("entry", 0.0),
+        "qty": position.get("qty", 0),
+        "side": position.get("side", ""),
+    }
+
+
+def _restore_phase55_paper_decision(ctx, position: dict, entry_time: datetime | None) -> None:
+    if not position:
+        return
+    decision_id = position.get("_phase55_telemetry_id")
+    if not decision_id:
+        return
+    telemetry = getattr(getattr(ctx, "live_engine", None), "_phase55_telemetry", None)
+    decisions = getattr(telemetry, "_decisions", None)
+    if telemetry is None or not isinstance(decisions, dict) or decision_id in decisions:
+        return
+
+    saved_decision = position.get("_phase55_decision") or {}
+    decisions[decision_id] = {
+        "decision_id": decision_id,
+        "timestamp": entry_time.isoformat() if hasattr(entry_time, "isoformat") else "",
+        "symbol": position.get("symbol", "UNKNOWN"),
+        "direction": position.get("side", ""),
+        "regime": position.get("regime", "UNKNOWN"),
+        "confidence": float(position.get("ml_prob", 0.0) or 0.0),
+        "ml_probability": float(position.get("ml_prob", 0.0) or 0.0),
+        "recommendation": saved_decision.get("recommendation", "recovered_paper_trade"),
+        "allow_trade": not bool(saved_decision.get("trade_blocked", False)),
+        "blocking_reason": saved_decision.get("reason", ""),
+        "applied_filters": saved_decision.get("filter_used", ""),
+    }
+    try:
+        telemetry.trades_evaluated += 1
+        if decisions[decision_id]["allow_trade"]:
+            telemetry.trades_allowed += 1
+        else:
+            telemetry.trades_blocked += 1
+        ctx.live_engine.update_phase55_actual_entry(position, entry_time)
+    except Exception as _p55_restore_e:
+        logger.debug(f"[PHASE55 TELEMETRY] paper restore failed: {_p55_restore_e}")
+
+
 def _sl_cancel(ctx, position: dict) -> None:
     """Cancel the protective stop on exit and clear the saved id."""
     oid = position.get("sl_order_id")
@@ -918,9 +979,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         try:
             # In DRY_RUN mode the live broker may hold real positions unrelated
             # to paper trades — skip reconciliation to avoid false PAUSING.
-            _is_dry_run = (os.getenv("DRY_RUN", "0") == "1"
-                           or getattr(ctx.config, "DRY_RUN", False)
-                           or getattr(ctx.executor, "is_dry_run", False))
+            _is_dry_run = _is_paper_or_dry_run(ctx)
             if _is_dry_run:
                 _broker_open = False
                 logger.info("[RECOVERY] DRY_RUN mode — skipping live broker position check")
@@ -930,7 +989,30 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             logger.warning(f"[RECOVERY] broker position check failed: {_bo_e}")
             _broker_open = False
 
-        if _broker_open and _restored_pos and _restored_pos.get("symbol"):
+        if _is_dry_run and _restored_pos and _restored_pos.get("symbol"):
+            position        = _restored_pos
+            entry_time      = position.get("entry_ts")
+            entry_order_rec = _entry_order_from_position(position)
+            ctx.executor._active_order_id = entry_order_rec.get("order_id")
+            _restore_phase55_paper_decision(ctx, position, entry_time)
+            logger.critical(
+                f"[RECOVERY] Restored paper position {position['symbol']} "
+                f"entry={position.get('entry',0):.2f} SL={position.get('stop_loss',0):.2f} "
+                f"max_pnl={position.get('max_pnl',0):.0f} - management resumed"
+            )
+            set_trade_quiet(True)
+
+        elif _is_dry_run and _restored_scalp and _restored_scalp.get("symbol"):
+            scalp_position = _restored_scalp
+            _scalp_entry_order = _entry_order_from_position(scalp_position)
+            ctx.executor._active_order_id = _scalp_entry_order.get("order_id")
+            logger.critical(
+                f"[RECOVERY] Restored paper scalp position {scalp_position['symbol']} "
+                f"SL={scalp_position.get('stop_loss',0):.2f} - management resumed"
+            )
+            set_trade_quiet(True)
+
+        elif _broker_open and _restored_pos and _restored_pos.get("symbol"):
             # Case A (main): broker position + saved state → resume management.
             position        = _restored_pos
             entry_time      = position.get("entry_ts")

@@ -142,6 +142,13 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
     phase55_filter = _html.escape(str(phase55.get("filter_used") or "none"))
     phase55_blocked = "YES" if phase55.get("trade_blocked") else "NO"
     phase55_reason = _html.escape(str(phase55.get("reason") or "--"))
+    phase55_evaluated = int(phase55.get("trades_evaluated", 0) or 0)
+    phase55_allowed = int(phase55.get("trades_allowed", 0) or 0)
+    phase55_blocked_count = int(phase55.get("trades_blocked", 0) or 0)
+    phase55_correct = int(phase55.get("correct_blocks", 0) or 0)
+    phase55_false = int(phase55.get("false_positive_blocks", 0) or 0)
+    phase55_saved = float(phase55.get("estimated_pnl_saved", 0.0) or 0.0)
+    phase55_missed = float(phase55.get("estimated_pnl_missed", 0.0) or 0.0)
 
     # Scoring
     ml_pct  = ms.get("ml_percentile", 0)
@@ -189,7 +196,12 @@ def render_engine(ctx, market_state: dict, ltp: float = 0.0) -> str:
         f"PE  {pe_adj:.2f} {_bar(pe_adj)}  {pe_lbl}  (raw {pe_raw:.2f})  thr={thr:.2f}\n"
         f"\n"
         f"<b>PHASE55</b>\n"
-        f"Enabled/Disabled: {phase55_status}\n"
+        f"Enabled: {phase55_status}\n"
+        f"Trades Evaluated: {phase55_evaluated}\n"
+        f"Allowed: {phase55_allowed}   Blocked: {phase55_blocked_count}\n"
+        f"Correct Blocks: {phase55_correct}   False Blocks: {phase55_false}\n"
+        f"Estimated PnL Saved: {_pnl_color(phase55_saved)}\n"
+        f"Estimated PnL Missed: {_pnl_color(-phase55_missed)}\n"
         f"Filter Used: {phase55_filter}\n"
         f"Trade Blocked: {phase55_blocked}\n"
         f"Reason: {phase55_reason}\n"

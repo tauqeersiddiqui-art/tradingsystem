@@ -26,6 +26,10 @@ from engine.intelligence.phase55_filter import (
     evaluate_phase55_filter,
     infer_regime_from_features,
 )
+from engine.intelligence.phase55_telemetry import (
+    Phase55Telemetry,
+    empty_phase55_telemetry_snapshot,
+)
 
 logger = logging.getLogger("live_engine")
 
@@ -112,6 +116,11 @@ class LiveEngine:
         # stopped option is not re-entered while still reversing.
         self._reentry_cooldown: float = float(getattr(_cfg, "REENTRY_COOLDOWN", 300))
         self._phase55_config = Phase55FilterConfig.from_config(_cfg)
+        self._phase55_telemetry = (
+            Phase55Telemetry.from_config(_cfg)
+            if bool(getattr(_cfg, "ENABLE_PHASE55_TELEMETRY", True))
+            else None
+        )
         # Lunch filter OFF for dry-run; flip LUNCH_FILTER_ENABLED=1 for live.
         self._lunch_enabled: bool = bool(getattr(_cfg, "LUNCH_FILTER_ENABLED", False))
         # Higher-timeframe (5m) SuperTrend direction — anti-noise entry gate.
@@ -142,6 +151,9 @@ class LiveEngine:
             "enabled": self._phase55_config.enabled,
             "filter_used": "none",
             "trade_blocked": False,
+            "direction": "",
+            "telemetry_id": "",
+            "shadow_attached": False,
             "reason": "disabled" if not self._phase55_config.enabled else "",
             "recommendation": "phase55_disabled" if not self._phase55_config.enabled else "",
         }
@@ -803,22 +815,44 @@ class LiveEngine:
             timestamp=datetime.now(),
         )
         applied_filters = phase55_decision.get("applied_filters", [])
+        phase55_allow = bool(phase55_decision.get("allow_trade", True))
+        phase55_confidence = float(signal.get("ml_prob", 0.0) or 0.0)
+        phase55_ml_probability = (
+            float(self._last_ce_prob or 0.0) if side == "CE"
+            else float(self._last_pe_prob or 0.0)
+        )
+        phase55_telemetry_id = ""
+        if self._phase55_telemetry is not None:
+            phase55_telemetry_id = self._phase55_telemetry.record_decision(
+                timestamp=datetime.now(),
+                symbol=signal.get("symbol", "BANKNIFTY"),
+                direction=side,
+                regime=phase55_regime,
+                confidence=phase55_confidence,
+                ml_probability=phase55_ml_probability,
+                recommendation=phase55_decision.get("recommendation", ""),
+                allow_trade=phase55_allow,
+                blocking_reason=phase55_decision.get("blocking_reason", ""),
+                applied_filters=applied_filters,
+            )
         self._last_phase55_decision = {
             "enabled": self._phase55_config.enabled,
             "filter_used": ", ".join(applied_filters) if applied_filters else "none",
-            "trade_blocked": not bool(phase55_decision.get("allow_trade", True)),
+            "trade_blocked": not phase55_allow,
+            "direction": side,
+            "telemetry_id": phase55_telemetry_id,
+            "shadow_attached": False,
             "reason": phase55_decision.get("blocking_reason", ""),
             "recommendation": phase55_decision.get("recommendation", ""),
         }
-        if not phase55_decision.get("allow_trade", True):
-            confidence = float(signal.get("ml_prob", 0.0) or 0.0)
+        if not phase55_allow:
             reason = str(phase55_decision.get("blocking_reason", "PHASE55_BLOCK"))
             logger.info(
                 "[PHASE55 BLOCK] "
                 f"timestamp={datetime.now().isoformat()} "
                 f"symbol={signal.get('symbol', 'UNKNOWN')} "
                 f"direction={side} "
-                f"confidence={confidence:.4f} "
+                f"confidence={phase55_confidence:.4f} "
                 f"regime={phase55_regime} "
                 f"blocking_rule={reason} "
                 "original_decision=ALLOW "
@@ -850,6 +884,10 @@ class LiveEngine:
             self._count_block("PNL_GUARD")
             self._last_block_reason = f"PNL_GUARD (exp=Rs{expected_pnl:.0f})"
             return None
+
+        if phase55_telemetry_id:
+            signal["_phase55_telemetry_id"] = phase55_telemetry_id
+            signal["_phase55_decision"] = dict(self._last_phase55_decision)
 
         logger.info(
             f"[ENTRY SIGNAL] {signal['side']} | reason={signal['reason']} | "
@@ -1005,6 +1043,8 @@ class LiveEngine:
         learn_thr = self.learner.get_ml_threshold()
         ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr, _CE_ML_FLOOR)
         pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr, _MIN_ML_FLOOR)
+        phase55_state = dict(self._last_phase55_decision)
+        phase55_state.update(self.get_phase55_telemetry_snapshot())
 
         return {
             "ts":              ts,
@@ -1047,12 +1087,117 @@ class LiveEngine:
             "block_counts":    dict(self._block_counts),
             # F4 — ML edge
             "ml_edge":         self._last_ml_edge,
-            "phase55":         dict(self._last_phase55_decision),
+            "phase55":         phase55_state,
         }
 
     # ══════════════════════════════════════════════════════════════════
     # EXIT LOGIC  (delegates to profit_manager)
     # ══════════════════════════════════════════════════════════════════
+
+    def phase55_telemetry_enabled(self) -> bool:
+        return self._phase55_telemetry is not None
+
+    def get_phase55_telemetry_snapshot(self) -> dict:
+        if self._phase55_telemetry is None:
+            return empty_phase55_telemetry_snapshot(enabled=False)
+        return self._phase55_telemetry.snapshot()
+
+    def get_last_phase55_decision(self) -> dict:
+        return dict(self._last_phase55_decision)
+
+    def attach_phase55_block_shadow(
+        self,
+        *,
+        symbol: str,
+        entry_price: float,
+        quantity: int,
+        timestamp: datetime | None = None,
+    ) -> bool:
+        if self._phase55_telemetry is None:
+            return False
+        decision = self._last_phase55_decision
+        decision_id = decision.get("telemetry_id")
+        if not decision.get("trade_blocked") or not decision_id or decision.get("shadow_attached"):
+            return False
+
+        atr_val = (self._last_features or {}).get("atr", float(entry_price or 0.0) * 0.01)
+        day_type = self.learner.get_day_type()
+        regime = (
+            "EXPANSION" if "VOLATILE" in day_type else
+            "TREND" if "TREND" in day_type else
+            "RANGE"
+        )
+        stop_loss, target, _stop_pct = compute_entry_stops(float(entry_price), atr_val, regime)
+        max_hold = int(getattr(getattr(self.ctx, "config", None), "MAX_HOLD_SECONDS", 300))
+        attached = self._phase55_telemetry.attach_shadow_entry(
+            decision_id,
+            symbol=symbol,
+            entry_price=entry_price,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            target=target,
+            timestamp=timestamp,
+            max_hold_seconds=max_hold,
+        )
+        if attached:
+            decision["shadow_attached"] = True
+            decision["symbol"] = symbol
+        return attached
+
+    def update_phase55_actual_entry(self, position: dict, timestamp: datetime | None = None) -> None:
+        if self._phase55_telemetry is None or not position:
+            return
+        self._phase55_telemetry.update_actual_entry(
+            position.get("_phase55_telemetry_id"),
+            symbol=position.get("symbol", ""),
+            entry_price=position.get("entry", 0.0),
+            quantity=position.get("qty", 0),
+            timestamp=timestamp,
+        )
+
+    def open_phase55_shadow_symbols(self) -> list[str]:
+        if self._phase55_telemetry is None:
+            return []
+        return self._phase55_telemetry.open_shadow_symbols()
+
+    def observe_phase55_shadow_price(
+        self,
+        *,
+        symbol: str,
+        price: float,
+        timestamp: datetime | None = None,
+    ) -> None:
+        if self._phase55_telemetry is None:
+            return
+        self._phase55_telemetry.observe_shadow_price(
+            symbol=symbol,
+            price=price,
+            timestamp=timestamp,
+        )
+
+    def record_phase55_actual_outcome(
+        self,
+        position: dict,
+        *,
+        pnl: float,
+        exit_reason: str,
+        timestamp: datetime | None = None,
+    ) -> None:
+        if self._phase55_telemetry is None or not position:
+            return
+        self._phase55_telemetry.record_actual_outcome(
+            position.get("_phase55_telemetry_id"),
+            symbol=position.get("symbol", ""),
+            direction=position.get("side", ""),
+            pnl=pnl,
+            exit_reason=exit_reason,
+            timestamp=timestamp,
+        )
+
+    def generate_phase55_eod_report(self, timestamp: datetime | None = None) -> dict | None:
+        if self._phase55_telemetry is None:
+            return None
+        return self._phase55_telemetry.generate_eod_report(timestamp=timestamp)
 
     def check_exit(
         self,

@@ -21,6 +21,11 @@ from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
 from engine.risk.risk_manager import compute_entry_stops
+from engine.intelligence.phase55_filter import (
+    Phase55FilterConfig,
+    evaluate_phase55_filter,
+    infer_regime_from_features,
+)
 
 logger = logging.getLogger("live_engine")
 
@@ -106,6 +111,7 @@ class LiveEngine:
         # Config-driven (defaults match config.py). Raised 180->300 so a
         # stopped option is not re-entered while still reversing.
         self._reentry_cooldown: float = float(getattr(_cfg, "REENTRY_COOLDOWN", 300))
+        self._phase55_config = Phase55FilterConfig.from_config(_cfg)
         # Lunch filter OFF for dry-run; flip LUNCH_FILTER_ENABLED=1 for live.
         self._lunch_enabled: bool = bool(getattr(_cfg, "LUNCH_FILTER_ENABLED", False))
         # Higher-timeframe (5m) SuperTrend direction — anti-noise entry gate.
@@ -132,6 +138,13 @@ class LiveEngine:
         self._last_pe_adj: float     = 0.0
         self._last_predict_error: str = ""
         self._last_features: dict    = {}
+        self._last_phase55_decision: dict = {
+            "enabled": self._phase55_config.enabled,
+            "filter_used": "none",
+            "trade_blocked": False,
+            "reason": "disabled" if not self._phase55_config.enabled else "",
+            "recommendation": "phase55_disabled" if not self._phase55_config.enabled else "",
+        }
         self._ml_history: list       = []   # rolling window for percentile scoring
 
         # F3 — block analytics (reset daily)
@@ -764,6 +777,57 @@ class LiveEngine:
         signal (or None if it fails the guard). Shared by both the legacy
         direction-gate path and the predict-first path.
         """
+        side = str(signal.get("side", "")).upper()
+        phase55_regime = infer_regime_from_features(features)
+        phase55_decision = evaluate_phase55_filter(
+            market_features=features,
+            ml_predictions={
+                "CE": self._last_ce_adj,
+                "PE": self._last_pe_adj,
+                "ce_prob": self._last_ce_prob,
+                "pe_prob": self._last_pe_prob,
+            },
+            current_regime=phase55_regime,
+            confidence_scores={
+                "side_confidence": signal.get("ml_prob", 0.0),
+                "confidence": signal.get("ml_prob", 0.0),
+                "ce_confidence": self._last_ce_adj,
+                "pe_confidence": self._last_pe_adj,
+                "ce_quality_confidence": signal.get("quality_confidence", self._last_ce_adj),
+                "pe_directional_confidence": self._last_pe_adj,
+                "directional_confidence": signal.get("ml_prob", 0.0),
+            },
+            direction=side,
+            config=self._phase55_config,
+            symbol=signal.get("symbol", "UNKNOWN"),
+            timestamp=datetime.now(),
+        )
+        applied_filters = phase55_decision.get("applied_filters", [])
+        self._last_phase55_decision = {
+            "enabled": self._phase55_config.enabled,
+            "filter_used": ", ".join(applied_filters) if applied_filters else "none",
+            "trade_blocked": not bool(phase55_decision.get("allow_trade", True)),
+            "reason": phase55_decision.get("blocking_reason", ""),
+            "recommendation": phase55_decision.get("recommendation", ""),
+        }
+        if not phase55_decision.get("allow_trade", True):
+            confidence = float(signal.get("ml_prob", 0.0) or 0.0)
+            reason = str(phase55_decision.get("blocking_reason", "PHASE55_BLOCK"))
+            logger.info(
+                "[PHASE55 BLOCK] "
+                f"timestamp={datetime.now().isoformat()} "
+                f"symbol={signal.get('symbol', 'UNKNOWN')} "
+                f"direction={side} "
+                f"confidence={confidence:.4f} "
+                f"regime={phase55_regime} "
+                f"blocking_rule={reason} "
+                "original_decision=ALLOW "
+                "final_decision=BLOCK"
+            )
+            self._count_block("PHASE55")
+            self._last_block_reason = f"PHASE55_BLOCK ({reason})"
+            return None
+
         atr_val  = features.get("atr", price * 0.01)
         day_type = self.learner.get_day_type()
         regime   = (
@@ -983,6 +1047,7 @@ class LiveEngine:
             "block_counts":    dict(self._block_counts),
             # F4 — ML edge
             "ml_edge":         self._last_ml_edge,
+            "phase55":         dict(self._last_phase55_decision),
         }
 
     # ══════════════════════════════════════════════════════════════════

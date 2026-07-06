@@ -404,26 +404,6 @@ def send_trade_entry_with_exit_button(message):
         _last_edited.pop(_trade_msg_id, None)
 
 
-def update_trade_live(message: str):
-    if not _trade_msg_id:
-        return
-    _tg_enqueue(_do_update_trade_live, _trade_msg_id, message)
-
-
-def _do_update_trade_live(expected_msg_id, message: str):
-    global _trade_msg_id
-    if _trade_msg_id != expected_msg_id:
-        return
-    result = _edit_with_markup(
-        expected_msg_id,
-        message,
-        {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]},
-    )
-    if result == _EDIT_GONE and _trade_msg_id == expected_msg_id:
-        _trade_msg_id = None
-        _last_edited.pop(expected_msg_id, None)
-
-
 def delete_trade_message():
     global _trade_msg_id
     if not _trade_msg_id:
@@ -530,19 +510,43 @@ def send_scalp_entry(message: str):
 
 
 def update_scalp_live(message: str):
-    if not _scalp_msg_id:
-        return
-    _tg_enqueue(_do_update_scalp_live, _scalp_msg_id, message)
+    global _pending_scalp_live, _scalp_live_queued
+    with _live_update_lock:
+        _pending_scalp_live = message
+        if _scalp_live_queued:
+            return
+        _scalp_live_queued = True
+    if not _tg_enqueue(_do_update_scalp_live):
+        with _live_update_lock:
+            _scalp_live_queued = False
 
 
-def _do_update_scalp_live(expected_msg_id, message: str):
-    global _scalp_msg_id
-    if _scalp_msg_id != expected_msg_id:
+def _do_update_scalp_live():
+    global _scalp_msg_id, _pending_scalp_live, _scalp_live_queued
+    with _live_update_lock:
+        message = _pending_scalp_live
+        _pending_scalp_live = None
+        _scalp_live_queued = False
+    if not message:
         return
-    result = _edit(expected_msg_id, message)
-    if result == _EDIT_GONE and _scalp_msg_id == expected_msg_id:
-        _scalp_msg_id = None
-        _last_edited.pop(expected_msg_id, None)
+
+    if _scalp_msg_id:
+        expected_msg_id = _scalp_msg_id
+        result = _edit(expected_msg_id, message)
+        if result == _EDIT_GONE and _scalp_msg_id == expected_msg_id:
+            _scalp_msg_id = None
+            _last_edited.pop(expected_msg_id, None)
+            _save_state()
+        elif result:
+            return
+        else:
+            return
+
+    result = _send(BOT_CHAT_ID, message)
+    if result:
+        _scalp_msg_id = result["message_id"]
+        _last_edited.pop(_scalp_msg_id, None)
+        _save_state()
 
 
 def delete_scalp_message():

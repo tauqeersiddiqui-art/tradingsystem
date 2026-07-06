@@ -80,7 +80,7 @@ class Config:
         self.SCALP_MIN_NET_PROFIT_RS  = float(os.getenv("SCALP_MIN_NET_PROFIT_RS", "0.0"))
         self.SCALP_MIN_TRAIL_MFE_COST_MULT = float(os.getenv("SCALP_MIN_TRAIL_MFE_COST_MULT", "3.0"))
         self.SCALP_MIN_TRAIL_MFE_RS   = float(os.getenv("SCALP_MIN_TRAIL_MFE_RS", "0.0"))
-        self.SCALP_DAILY_PROFIT_TARGET = float(os.getenv("SCALP_DAILY_PROFIT_TARGET", "500.0"))
+        self.SCALP_DAILY_PROFIT_TARGET = float(os.getenv("SCALP_DAILY_PROFIT_TARGET", "2000.0"))
         self.SCALP_MIN_OPT_PTS        = float(os.getenv("SCALP_MIN_OPT_PTS", "30.0"))  # skip options cheaper than this
         # Max scalp trades per session — reserves remaining slots for ML engine
         self.SCALP_MAX_TRADES         = int(os.getenv("SCALP_MAX_TRADES", "10"))

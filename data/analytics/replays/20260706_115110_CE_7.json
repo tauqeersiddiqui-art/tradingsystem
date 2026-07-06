@@ -1,0 +1,55 @@
+{
+  "symbol": "BANKNIFTY26JUL58200CE",
+  "side": "CE",
+  "entry": 940.7,
+  "qty": 60,
+  "summary": {
+    "max_pnl": 132.0,
+    "mae_rs": -498.0,
+    "mae_pts": -8.3,
+    "ladder_stage": "INITIAL",
+    "locked_profit": 0.0,
+    "retained_profit_pct": -3.773,
+    "exit_reason": "STOP",
+    "exit_price": 932.4,
+    "final_stop_loss": 933.25,
+    "pnl": -498.0
+  },
+  "events": [
+    {
+      "t": "11:51:10",
+      "type": "ENTRY",
+      "price": 940.7,
+      "spot": 58241.25,
+      "ml_ce": 0.798,
+      "ml_pe": 0.022,
+      "adx": 27.0,
+      "rsi": 25.7,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 933.25,
+      "regime": "RANGE"
+    },
+    {
+      "t": "11:51:19",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.3,
+      "price": 942
+    },
+    {
+      "t": "11:51:38",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.85,
+      "price": 942.55
+    },
+    {
+      "t": "11:52:13",
+      "type": "EXIT",
+      "price": 932.4,
+      "reason": "STOP",
+      "pnl": -498.0,
+      "mfe_pts": 1.85,
+      "mae_pts": -8.3
+    }
+  ]
+}

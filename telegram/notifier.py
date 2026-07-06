@@ -781,5 +781,17 @@ def send_eod_summary(summary: dict):
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
         f"<i>DRY RUN — no real money</i>"
     )
-    _tg_enqueue(_send, BOT_CHAT_ID, msg)
-    _tg_enqueue(_send, CHANNEL_ID, msg)
+    # Send synchronously with retries — do NOT use the queue here.
+    # The process shuts down immediately after EOD, killing the daemon
+    # thread before it can process queued items.
+    for attempt in range(3):
+        result = _send(BOT_CHAT_ID, msg)
+        if result:
+            break
+        _log.warning("[TG] EOD summary send failed (attempt %d/3)", attempt + 1)
+        time.sleep(2)
+    for attempt in range(3):
+        result = _send(CHANNEL_ID, msg)
+        if result:
+            break
+        time.sleep(2)

@@ -2200,12 +2200,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 _scalp_profit_target = float(getattr(ctx.config, "SCALP_DAILY_PROFIT_TARGET", 0.0) or 0.0)
                 _scalp_profit_locked = (
                     _scalp_profit_target > 0.0
-                    and _scalp_pnl_today >= _scalp_profit_target
+                    and ctx.pnl >= _scalp_profit_target
                 )
                 if _scalp_profit_locked:
                     logger.info(
-                        f"[SCALP GATE] Daily scalp profit target reached: "
-                        f"{_scalp_pnl_today:.0f}/{_scalp_profit_target:.0f}; "
+                        f"[SCALP GATE] Daily net profit target reached: "
+                        f"{ctx.pnl:.0f}/{_scalp_profit_target:.0f}; "
                         "scalp entries disabled, ML engine still active"
                     )
                 if (scalp_position is None

@@ -58,6 +58,8 @@ _JOURNAL_COLUMNS = [
     "shadow_be3_outcome",        # 'same'|'better'|'worse'
     "shadow_trail10_outcome",    # 'same'|'better'|'worse'
     "shadow_notes",
+    # --- entry indicator snapshot (appended; additive, no trading impact) ---
+    "adx_at_entry", "rsi_at_entry", "supertrend_dir_at_entry",
 ]
 
 _SHADOW_COLUMNS = [
@@ -361,6 +363,11 @@ class TradeJournal:
             "loss_class": "",
             "shadow_htf_would_block": "", "shadow_ml_95_would_block": "",
             "shadow_be3_outcome": "", "shadow_trail10_outcome": "", "shadow_notes": "",
+            # entry indicator snapshot — already computed in market_state, logged
+            # for evidence only (closes the SHAP/RSI/ADX telemetry gap partially).
+            "adx_at_entry":            round(float(market_state.get("adx", 0) or 0), 2),
+            "rsi_at_entry":            round(float(market_state.get("rsi", 0) or 0), 2),
+            "supertrend_dir_at_entry": int(market_state.get("supertrend_dir", 0) or 0),
         }
 
         self._active[jid] = {

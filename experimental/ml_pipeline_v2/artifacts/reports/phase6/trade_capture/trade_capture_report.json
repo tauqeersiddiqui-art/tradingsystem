@@ -1,0 +1,130 @@
+{
+  "schema_version": "phase6.normal_ml_rescue.v1",
+  "module": "trade_capture_engine",
+  "baseline": {
+    "total_pnl": -2768119.124999993,
+    "profit_factor": 0.732180664039045,
+    "avg_capture_pct": -12.320367560482937,
+    "avg_giveback_pct": 122.79696527072163,
+    "avg_mfe_rs": 481.9759416421764,
+    "avg_mae_rs": 481.9759416421764
+  },
+  "time_stats": {
+    "avg_holding_bars": 9.972365501109579,
+    "median_holding_bars": 13.0,
+    "winner_avg_bars": 6.011103557670519,
+    "loser_avg_bars": 12.580568956084946,
+    "winner_avg_mfe_rs": 961.5226603217772,
+    "loser_avg_mfe_rs": 166.22923608693526,
+    "winner_avg_mae_rs": 131.80925674144595,
+    "loser_avg_mae_rs": 712.5352862187303
+  },
+  "capture_by_outcome": [
+    {
+      "outcome": "loss",
+      "count": 20182,
+      "avg_capture_pct": -66.39040468973465,
+      "avg_giveback_pct": 165.8918225026516,
+      "avg_mfe_rs": 166.22923608693526,
+      "avg_mae_rs": 712.5352862187303
+    },
+    {
+      "outcome": "win",
+      "count": 26478,
+      "avg_capture_pct": 28.8927712469254,
+      "avg_giveback_pct": 75.33044905680799,
+      "avg_mfe_rs": 961.5226603217772,
+      "avg_mae_rs": 131.80925674144592
+    }
+  ],
+  "exit_strategy_ranking": [
+    {
+      "strategy": "early_75pct_mfe",
+      "total_pnl": 15304610.62500002,
+      "avg_pnl": 229.4819562316323,
+      "profit_factor": 7.839780817546682,
+      "win_rate": 0.6525520302285132,
+      "trades": 66692
+    },
+    {
+      "strategy": "early_50pct_mfe",
+      "total_pnl": 7268625.750000013,
+      "avg_pnl": 108.98797082108818,
+      "profit_factor": 3.749213021365376,
+      "win_rate": 0.5621963653811551,
+      "trades": 66692
+    },
+    {
+      "strategy": "trailing_80pct",
+      "total_pnl": 11704558.350000018,
+      "avg_pnl": 175.50168460984852,
+      "profit_factor": 2.583089583454346,
+      "win_rate": 0.6632429676722845,
+      "trades": 66692
+    },
+    {
+      "strategy": "trailing_60pct",
+      "total_pnl": 5398179.450000013,
+      "avg_pnl": 80.94193381515043,
+      "profit_factor": 1.71721294707027,
+      "win_rate": 0.6079439812871109,
+      "trades": 66692
+    },
+    {
+      "strategy": "time_exit_6bars",
+      "total_pnl": 2199275.2644418143,
+      "avg_pnl": 32.97659785944062,
+      "profit_factor": 1.4516020013237982,
+      "win_rate": 0.39701913272956274,
+      "trades": 66692
+    },
+    {
+      "strategy": "time_exit_8bars",
+      "total_pnl": 962476.5013986074,
+      "avg_pnl": 14.431663488853346,
+      "profit_factor": 1.149547645472692,
+      "win_rate": 0.39701913272956274,
+      "trades": 66692
+    },
+    {
+      "strategy": "atr_trailing",
+      "total_pnl": -887187.3309636271,
+      "avg_pnl": -13.302754917585723,
+      "profit_factor": 0.9144811356404262,
+      "win_rate": 0.3100521801715348,
+      "trades": 66692
+    },
+    {
+      "strategy": "partial_50pct_at_target",
+      "total_pnl": -1257874.124999996,
+      "avg_pnl": -18.860944716007857,
+      "profit_factor": 0.8756555266211136,
+      "win_rate": 0.4312961074791579,
+      "trades": 66692
+    },
+    {
+      "strategy": "actual",
+      "total_pnl": -2768119.124999993,
+      "avg_pnl": -41.5060145894559,
+      "profit_factor": 0.732180664039045,
+      "win_rate": 0.39701913272956274,
+      "trades": 66692
+    },
+    {
+      "strategy": "breakeven_stop",
+      "total_pnl": -2853181.124999994,
+      "avg_pnl": -42.78145992023022,
+      "profit_factor": 0.7262041018844734,
+      "win_rate": 0.39701913272956274,
+      "trades": 66692
+    }
+  ],
+  "best_exit_strategy": {
+    "strategy": "early_75pct_mfe",
+    "total_pnl": 15304610.62500002,
+    "avg_pnl": 229.4819562316323,
+    "profit_factor": 7.839780817546682,
+    "win_rate": 0.6525520302285132,
+    "trades": 66692
+  }
+}

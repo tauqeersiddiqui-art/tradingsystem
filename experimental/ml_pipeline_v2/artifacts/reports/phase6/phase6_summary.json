@@ -1,0 +1,72 @@
+{
+  "schema_version": "phase6.normal_ml_rescue.v1",
+  "status": "ok",
+  "phase": 6,
+  "controls": {
+    "experimental_only": true,
+    "production_files_modified": false,
+    "live_engine_integrated": false,
+    "retrained_models": false,
+    "reused_phase5_artifacts": true
+  },
+  "input_trades": 66692,
+  "modules_completed": 7,
+  "baseline": {
+    "trades": 66692,
+    "profit_factor": 0.732180664039045,
+    "win_rate": 0.39701913272956274,
+    "expectancy": -41.5060145894559,
+    "total_pnl": -2768119.124999993
+  },
+  "module_1_entry_quality": {
+    "winner_score_mean": 55.21364906715009,
+    "loser_score_mean": 55.504301984383545,
+    "score_separation": -0.29065291723345865,
+    "best_threshold": 30,
+    "best_threshold_pf": 0.7352723875641756
+  },
+  "module_2_trade_capture": {
+    "avg_capture_pct": -12.320367560482937,
+    "avg_giveback_pct": 122.79696527072163,
+    "best_exit_strategy": "early_75pct_mfe",
+    "best_exit_pf": 7.839780817546682
+  },
+  "module_3_confidence_calibration": {
+    "ece": 0.03451288738041172,
+    "optimal_threshold": 0.46,
+    "optimal_threshold_pf": 1.4858166330042721
+  },
+  "module_4_range_intel": {
+    "range_win_rate": 0.390822601229841,
+    "non_range_win_rate": 0.3991790350628867,
+    "win_rate_gap": 0.008356433833045684,
+    "skip_conditions_found": 4
+  },
+  "module_5_position_size": {
+    "kelly_fraction": -0.14522290155118808,
+    "half_kelly": -0.07261145077559404,
+    "top10_loss_pct": 0.18503700776437007,
+    "best_tiered_pf": 0.7380966398015993
+  },
+  "module_6_loss_clusters": {
+    "n_clusters": 6,
+    "losing_trades_clustered": 40214,
+    "worst_cluster_label": "low-confidence",
+    "worst_cluster_loss_pct": 28.3148382192416
+  },
+  "module_7_improvement_plan": {
+    "total_recommendations": 6,
+    "top_recommendation": "Adopt exit strategy: early_75pct_mfe",
+    "top_recommendation_pf_delta": 7.107600153507637
+  },
+  "reports": {
+    "entry_quality_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\entry_quality\\entry_quality_report.json",
+    "trade_capture_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\trade_capture\\trade_capture_report.json",
+    "confidence_calibration_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\confidence_calibration\\confidence_calibration_report.json",
+    "range_market_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\range_market\\range_market_report.json",
+    "position_size_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\position_size\\position_size_report.json",
+    "loss_clusters": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\loss_clusters\\loss_clusters.json",
+    "ml_improvement_plan": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\improvement\\ml_improvement_plan.json",
+    "phase6_summary": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase6\\phase6_summary.json"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "schema_version": "phase6.normal_ml_rescue.v1",
+  "module": "ml_improvement_engine",
+  "baseline_profit_factor": 0.732180664039045,
+  "baseline_expectancy": -41.5060145894559,
+  "baseline_win_rate": 0.39701913272956274,
+  "baseline_trades": 66692,
+  "total_recommendations": 6,
+  "recommendations": [
+    {
+      "id": "REC_TC_01",
+      "source": "trade_capture_engine",
+      "title": "Adopt exit strategy: early_75pct_mfe",
+      "description": "Modify Normal ML exit logic to use the highest-ranked simulated exit. Strategy: early_75pct_mfe.",
+      "evidence": "Best exit achieves PF=7.840 vs actual PF=0.732; avg_pnl=229.5",
+      "expected_pf_improvement": 7.107600153507637,
+      "expected_expectancy_improvement": 270.9879708210882,
+      "expected_trade_reduction": 0.0,
+      "statistical_confidence": "high",
+      "risk": "Simulation uses MFE/MAE proxies; live path dynamics may differ"
+    },
+    {
+      "id": "REC_CC_01",
+      "source": "confidence_calibration",
+      "title": "Raise minimum confidence threshold to 0.46",
+      "description": "Only execute Normal ML trades when model confidence >= new threshold. Calibration analysis shows over-confidence at low probability buckets.",
+      "evidence": "Threshold 0.46 \u2192 expectancy=67.2 vs baseline=-41.5; PF=1.486; retains 7.1% trades (4,711)",
+      "expected_pf_improvement": 0.7536359689652271,
+      "expected_expectancy_improvement": 108.73011775226726,
+      "expected_trade_reduction": 0.9293618424998501,
+      "statistical_confidence": "moderate",
+      "risk": "Higher threshold = fewer signals; tail risk of under-trading"
+    },
+    {
+      "id": "REC_RM_01",
+      "source": "range_market_intelligence",
+      "title": "Add regime-gating: skip or confirm before entering RANGE trades",
+      "description": "Range regime win rate (39.1%) lags non-range (39.9%). Identified 4 specific skip/delay conditions.",
+      "evidence": "Win rate gap = 0.8 pp; range trades = 17,238",
+      "expected_pf_improvement": 0.05,
+      "expected_expectancy_improvement": 20.0,
+      "expected_trade_reduction": 0.25847178072332516,
+      "statistical_confidence": "moderate",
+      "risk": "Regime proxy is computed; may misclassify transitional sessions"
+    },
+    {
+      "id": "REC_LC_01",
+      "source": "loss_clustering",
+      "title": "Address Cluster 0: low-confidence",
+      "description": "Cluster accounts for 26.3% of losing trades (\u20b92,926,557 loss). Dominant: regime=mixed, side=pe. Recommended: skip_entry.",
+      "evidence": "avg_conf=0.4101188618570401, avg_adx=23.10534895919901, avg_pnl=-276.5",
+      "expected_pf_improvement": 0.03,
+      "expected_expectancy_improvement": 43.88167433875132,
+      "expected_trade_reduction": 0.15869969411623583,
+      "statistical_confidence": "moderate",
+      "risk": "Cluster labels are unsupervised \u2014 validate each cluster manually before applying rules"
+    },
+    {
+      "id": "REC_EQ_01",
+      "source": "entry_quality_engine",
+      "title": "Apply Entry Quality Score >= 30",
+      "description": "Reject trades with Entry Quality Score < 30/100. Score is computed from ADX, DI spread, SuperTrend, EMA alignment, VWAP, RSI zone, trend strength, momentum velocity, and market regime.",
+      "evidence": "Score >= 30 retains 85.9% of trades; PF=0.735 vs baseline 0.732; avg_pnl=-40.8",
+      "expected_pf_improvement": 0.003091723525130541,
+      "expected_expectancy_improvement": 0.7385006673499177,
+      "expected_trade_reduction": 0.14108138907215262,
+      "statistical_confidence": "moderate",
+      "risk": "Heuristic score; may overfit to historical feature distributions"
+    },
+    {
+      "id": "REC_PS_01",
+      "source": "position_size_analysis",
+      "title": "Reduce position size \u2014 system has negative mathematical edge",
+      "description": "Kelly fraction is negative, meaning the current edge does not justify any positive position size. Reduce to minimum until filter improvements are deployed.",
+      "evidence": "Kelly=-0.145, baseline PF=0.732",
+      "expected_pf_improvement": 0.0,
+      "expected_expectancy_improvement": 0.0,
+      "expected_trade_reduction": 0.0,
+      "statistical_confidence": "high",
+      "risk": "Size reduction alone does not improve edge; must combine with filters"
+    }
+  ]
+}

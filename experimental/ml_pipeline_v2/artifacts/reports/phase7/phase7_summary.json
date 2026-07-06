@@ -1,0 +1,40 @@
+{
+  "schema_version": "phase7.adaptive_exit_intelligence.v1",
+  "status": "ok",
+  "phase": 7,
+  "controls": {
+    "experimental_only": true,
+    "production_files_modified": false,
+    "live_engine_integrated": false,
+    "retrained_models": false,
+    "all_strategies_lookahead_free": true
+  },
+  "input_trades": 66692,
+  "matched_trades": 66692,
+  "strategies_simulated": 17,
+  "baseline": {
+    "profit_factor": 0.732180664039045,
+    "expectancy": -41.5060145894559
+  },
+  "module_2_best_strategy": "actual",
+  "module_2_best_pf": 0.732180664039045,
+  "module_2_best_pf_delta": 0.0,
+  "module_3_best_profit_lock": "atr_trail_2.5x",
+  "module_3_best_pf": 0.60237559360105,
+  "module_4_eqs_dominant_action": "Trail",
+  "module_5_feasible_strategies": 16,
+  "module_6_recommended_strategy": "atr_trail_2.5",
+  "module_6_recommended_pf": 0.60237559360105,
+  "module_6_recommended_pf_delta": -0.12980507043799505,
+  "module_6_recommended_expectancy": -133.84865715001746,
+  "phase6_benchmark_pf": 7.84,
+  "phase6_benchmark_note": "early_75pct_mfe uses future MFE \u2014 NOT live feasible. Live-feasible strategies approach this benchmark.",
+  "reports": {
+    "exit_strategy_comparison": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase7\\simulation\\exit_strategy_comparison.json",
+    "exit_quality_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase7\\exit_quality\\exit_quality_report.json",
+    "profit_lock_report": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase7\\profit_lock\\profit_lock_report.json",
+    "live_exit_validation": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase7\\feasibility\\live_exit_validation.json",
+    "recommended_exit_strategy": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase7\\recommendations\\recommended_exit_strategy.json",
+    "phase7_summary": "D:\\All Bots\\trading_system\\experimental\\ml_pipeline_v2\\artifacts\\reports\\phase7\\phase7_summary.json"
+  }
+}

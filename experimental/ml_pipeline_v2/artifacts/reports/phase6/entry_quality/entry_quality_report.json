@@ -1,0 +1,248 @@
+{
+  "schema_version": "phase6.normal_ml_rescue.v1",
+  "module": "entry_quality_engine",
+  "total_trades": 66692,
+  "score_mean": 55.3889072152582,
+  "score_std": 22.26400173814398,
+  "score_p25": 35.0,
+  "score_p50": 54.0,
+  "score_p75": 76.0,
+  "winner_score_mean": 55.21364906715009,
+  "loser_score_mean": 55.504301984383545,
+  "threshold_tests": [
+    {
+      "quality_threshold": 30,
+      "trades": 57283,
+      "coverage": 0.8589186109278474,
+      "win_rate": 0.3985824764764415,
+      "avg_pnl": -40.767513922105984,
+      "total_pnl": -2335285.499999997,
+      "profit_factor": 0.7352723875641756,
+      "profit_factor_delta": 0.003091723525130541
+    },
+    {
+      "quality_threshold": 40,
+      "trades": 45377,
+      "coverage": 0.6803964493492473,
+      "win_rate": 0.3968309936752099,
+      "avg_pnl": -42.018726447319196,
+      "total_pnl": -1906683.7500000033,
+      "profit_factor": 0.729679207885418,
+      "profit_factor_delta": -0.0025014561536270685
+    },
+    {
+      "quality_threshold": 50,
+      "trades": 36442,
+      "coverage": 0.5464223595033887,
+      "win_rate": 0.3930903902090994,
+      "avg_pnl": -44.71624430602063,
+      "total_pnl": -1629549.3750000037,
+      "profit_factor": 0.7164785087934775,
+      "profit_factor_delta": -0.015702155245567506
+    },
+    {
+      "quality_threshold": 60,
+      "trades": 29138,
+      "coverage": 0.4369039764889342,
+      "win_rate": 0.39144759420687764,
+      "avg_pnl": -45.9140254993481,
+      "total_pnl": -1337842.875000005,
+      "profit_factor": 0.7101662750716718,
+      "profit_factor_delta": -0.022014388967373177
+    },
+    {
+      "quality_threshold": 70,
+      "trades": 22130,
+      "coverage": 0.33182390691537217,
+      "win_rate": 0.3904202440126525,
+      "avg_pnl": -48.53882738364231,
+      "total_pnl": -1074164.2500000042,
+      "profit_factor": 0.6941914222707332,
+      "profit_factor_delta": -0.037989241768311865
+    }
+  ],
+  "decile_stats": [
+    {
+      "quality_decile": 0,
+      "trades": 7129,
+      "win_rate": 0.3861691681862814,
+      "avg_pnl": -44.71884205358337,
+      "total_pnl": -318800.62499999587,
+      "avg_score": 22.716510029457147,
+      "avg_mfe": 16.063999158367277,
+      "avg_mae": 16.490510590545668
+    },
+    {
+      "quality_decile": 1,
+      "trades": 7019,
+      "win_rate": 0.3973500498646531,
+      "avg_pnl": -40.578803960677874,
+      "total_pnl": -284822.624999998,
+      "avg_score": 30.55107565180225,
+      "avg_mfe": 15.916412594386678,
+      "avg_mae": 15.643332383530405
+    },
+    {
+      "quality_decile": 2,
+      "trades": 5958,
+      "win_rate": 0.40634441087613293,
+      "avg_pnl": -35.49131419939524,
+      "total_pnl": -211457.24999999686,
+      "avg_score": 35.82796240349111,
+      "avg_mfe": 16.19170023497822,
+      "avg_mae": 15.515575696542474
+    },
+    {
+      "quality_decile": 3,
+      "trades": 6742,
+      "win_rate": 0.41248887570453874,
+      "avg_pnl": -32.356515129041654,
+      "total_pnl": -218147.6249999988,
+      "avg_score": 41.72678730347078,
+      "avg_mfe": 16.391493622070616,
+      "avg_mae": 15.497189261346788
+    },
+    {
+      "quality_decile": 4,
+      "trades": 7152,
+      "win_rate": 0.41023489932885904,
+      "avg_pnl": -31.180736157718467,
+      "total_pnl": -223004.62500000247,
+      "avg_score": 49.9253355704698,
+      "avg_mfe": 16.427894295301993,
+      "avg_mae": 15.413220078299782
+    },
+    {
+      "quality_decile": 5,
+      "trades": 6153,
+      "win_rate": 0.38745327482528846,
+      "avg_pnl": -47.599524622135235,
+      "total_pnl": -292879.8749999981,
+      "avg_score": 58.94376726799935,
+      "avg_mfe": 15.884316593531622,
+      "avg_mae": 16.515236470014607
+    },
+    {
+      "quality_decile": 6,
+      "trades": 6775,
+      "win_rate": 0.4014760147601476,
+      "avg_pnl": -30.38081180811838,
+      "total_pnl": -205830.00000000204,
+      "avg_score": 68.03380073800739,
+      "avg_mfe": 16.955741697416975,
+      "avg_mae": 16.362258302583065
+    },
+    {
+      "quality_decile": 7,
+      "trades": 7336,
+      "win_rate": 0.38972191930207195,
+      "avg_pnl": -43.751908396946604,
+      "total_pnl": -320964.0000000003,
+      "avg_score": 76.71264994547437,
+      "avg_mfe": 16.26235687022901,
+      "avg_mae": 16.758301526717567
+    },
+    {
+      "quality_decile": 8,
+      "trades": 6423,
+      "win_rate": 0.39623229020706835,
+      "avg_pnl": -48.94955628211089,
+      "total_pnl": -314402.99999999825,
+      "avg_score": 83.46567024754788,
+      "avg_mfe": 15.846356842596945,
+      "avg_mae": 16.619321189475343
+    },
+    {
+      "quality_decile": 9,
+      "trades": 6005,
+      "win_rate": 0.3816819317235637,
+      "avg_pnl": -62.91582014987554,
+      "total_pnl": -377809.5000000026,
+      "avg_score": 90.47260616153206,
+      "avg_mfe": 14.497926727726899,
+      "avg_mae": 15.784629475437201
+    }
+  ],
+  "feature_comparison": [
+    {
+      "feature": "adx",
+      "winner_mean": 25.663324899446522,
+      "loser_mean": 25.441383820601207,
+      "winner_median": 23.29731756110011,
+      "loser_median": 23.150501744477232,
+      "separation": 0.22194107884531533
+    },
+    {
+      "feature": "rsi",
+      "winner_mean": 49.77206154124477,
+      "loser_mean": 50.18607471999912,
+      "winner_median": 49.736330231958284,
+      "loser_median": 50.17312698574534,
+      "separation": -0.4140131787543524
+    },
+    {
+      "feature": "trend_strength",
+      "winner_mean": -3.190622965947898e-05,
+      "loser_mean": -9.266369969187734e-06,
+      "winner_median": -1.9385891280432018e-05,
+      "loser_median": 9.243334777943515e-06,
+      "separation": -2.2639859690291243e-05
+    },
+    {
+      "feature": "atr",
+      "winner_mean": 11.143775033491318,
+      "loser_mean": 10.209549112198431,
+      "winner_median": 10.232616313233912,
+      "loser_median": 9.342213521386789,
+      "separation": 0.934225921292887
+    },
+    {
+      "feature": "volatility",
+      "winner_mean": 0.00034602473119349606,
+      "loser_mean": 0.0003095247230226511,
+      "winner_median": 0.00029466622671369997,
+      "loser_median": 0.00026424437628889995,
+      "separation": 3.6500008170844934e-05
+    },
+    {
+      "feature": "momentum_velocity",
+      "winner_mean": 8.440781437405316e-07,
+      "loser_mean": -1.5753615994646952e-07,
+      "winner_median": -1.995536938137477e-06,
+      "loser_median": -2.1888367130462605e-06,
+      "separation": 1.001614303687001e-06
+    },
+    {
+      "feature": "range_compression",
+      "winner_mean": 0.5755057421673628,
+      "loser_mean": 0.5709818561536015,
+      "winner_median": 0.5551377740399837,
+      "loser_median": 0.5509009590908053,
+      "separation": 0.004523886013761302
+    },
+    {
+      "feature": "entry_quality_score",
+      "winner_mean": 55.21364906715009,
+      "loser_mean": 55.504301984383545,
+      "winner_median": 53.0,
+      "loser_median": 54.0,
+      "separation": -0.29065291723345865
+    },
+    {
+      "feature": "directional_confidence",
+      "winner_mean": 0.3992112180595345,
+      "loser_mean": 0.3671244534327927,
+      "winner_median": 0.443480618053673,
+      "loser_median": 0.4074889867841409,
+      "separation": 0.032086764626741815
+    },
+    {
+      "feature": "quality_confidence",
+      "winner_mean": 0.41109404751873,
+      "loser_mean": 0.3863405017791342,
+      "winner_median": 0.4310823311748381,
+      "loser_median": 0.4076797385620915,
+      "separation": 0.024753545739595817
+    }
+  ]
+}

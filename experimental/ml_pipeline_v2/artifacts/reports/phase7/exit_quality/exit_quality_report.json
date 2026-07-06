@@ -1,0 +1,123 @@
+{
+  "schema_version": "phase7.adaptive_exit_intelligence.v1",
+  "module": "exit_quality_score",
+  "trades_scored": 15000,
+  "action_distribution": {
+    "Trail": 5331,
+    "ScaleOut": 4913,
+    "Hold": 2825,
+    "Exit": 1931
+  },
+  "action_analysis": [
+    {
+      "check_bar": 3,
+      "recommended_action": "Hold",
+      "count": 1346,
+      "win_rate": 0.4442793462109955,
+      "avg_actual_pnl": -16.366549034175563,
+      "avg_eqs": 73.75037147102526
+    },
+    {
+      "check_bar": 3,
+      "recommended_action": "Trail",
+      "count": 1946,
+      "win_rate": 0.3776978417266187,
+      "avg_actual_pnl": -47.985932682425656,
+      "avg_eqs": 55.681397738951695
+    },
+    {
+      "check_bar": 3,
+      "recommended_action": "ScaleOut",
+      "count": 1211,
+      "win_rate": 0.2815854665565648,
+      "avg_actual_pnl": -102.93858381502858,
+      "avg_eqs": 40.94384805945499
+    },
+    {
+      "check_bar": 3,
+      "recommended_action": "Exit",
+      "count": 497,
+      "win_rate": 0.19114688128772636,
+      "avg_actual_pnl": -188.880784708247,
+      "avg_eqs": 25.319919517102615
+    },
+    {
+      "check_bar": 6,
+      "recommended_action": "Hold",
+      "count": 701,
+      "win_rate": 0.7774607703281027,
+      "avg_actual_pnl": 153.3691155492152,
+      "avg_eqs": 76.16405135520685
+    },
+    {
+      "check_bar": 6,
+      "recommended_action": "Trail",
+      "count": 1888,
+      "win_rate": 0.3834745762711864,
+      "avg_actual_pnl": -37.88393802966188,
+      "avg_eqs": 59.60699152542373
+    },
+    {
+      "check_bar": 6,
+      "recommended_action": "ScaleOut",
+      "count": 1878,
+      "win_rate": 0.2364217252396166,
+      "avg_actual_pnl": -128.19768370606926,
+      "avg_eqs": 40.76144834930778
+    },
+    {
+      "check_bar": 6,
+      "recommended_action": "Exit",
+      "count": 533,
+      "win_rate": 0.1050656660412758,
+      "avg_actual_pnl": -242.3527204502798,
+      "avg_eqs": 21.53095684803002
+    },
+    {
+      "check_bar": 9,
+      "recommended_action": "Hold",
+      "count": 778,
+      "win_rate": 0.7827763496143959,
+      "avg_actual_pnl": 152.19505141388123,
+      "avg_eqs": 75.37917737789203
+    },
+    {
+      "check_bar": 9,
+      "recommended_action": "Trail",
+      "count": 1497,
+      "win_rate": 0.4863059452237809,
+      "avg_actual_pnl": 22.781813627253566,
+      "avg_eqs": 59.26319305277221
+    },
+    {
+      "check_bar": 9,
+      "recommended_action": "ScaleOut",
+      "count": 1824,
+      "win_rate": 0.2099780701754386,
+      "avg_actual_pnl": -138.55057565789357,
+      "avg_eqs": 41.93201754385965
+    },
+    {
+      "check_bar": 9,
+      "recommended_action": "Exit",
+      "count": 901,
+      "win_rate": 0.05438401775804662,
+      "avg_actual_pnl": -259.4209211986674,
+      "avg_eqs": 22.41953385127636
+    }
+  ],
+  "score_components": {
+    "profit_captured": "0-25 pts \u2014 higher unrealized profit earns more; locks in gains earlier",
+    "trend_health_adx": "0-20 pts \u2014 ADX >= 35 = strong trend = hold signal",
+    "momentum_velocity": "0-20 pts \u2014 aligned momentum = hold; reversed = exit signal",
+    "supertrend_alignment": "0-15 pts \u2014 SuperTrend must agree with trade direction",
+    "time_pressure": "0-10 pts \u2014 early bars score high (hold); late bars score low (exit)",
+    "rsi_health": "0-10 pts \u2014 moderate RSI = healthy; extremes signal exhaustion"
+  },
+  "thresholds": {
+    "Hold": ">= 70",
+    "Trail": "50-70",
+    "ScaleOut": "30-50",
+    "Exit": "< 30"
+  }
+}

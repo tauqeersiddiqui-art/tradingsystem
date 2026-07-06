@@ -1,0 +1,93 @@
+{
+  "schema_version": "phase6.normal_ml_rescue.v1",
+  "module": "position_size_analysis",
+  "current_lot_units": 30,
+  "total_loss": -10335770.249999998,
+  "top10_loss": -19124.99999999995,
+  "top10_loss_pct": 0.18503700776437007,
+  "win_rate": 0.39701913272956274,
+  "avg_win_rs": 285.8090159755271,
+  "avg_loss_rs": 257.0192035112149,
+  "reward_risk_ratio": 1.1120142466827616,
+  "kelly_fraction": -0.14522290155118808,
+  "half_kelly": -0.07261145077559404,
+  "tiered_sizing_simulations": [
+    {
+      "strategy": "low0.25x_highthresh0.65",
+      "low_conf_multiplier": 0.25,
+      "high_conf_threshold": 0.65,
+      "total_pnl": -682738.9687499979,
+      "profit_factor": 0.7380966398015993,
+      "avg_pnl": -10.237194397378964
+    },
+    {
+      "strategy": "low0.25x_highthresh0.7",
+      "low_conf_multiplier": 0.25,
+      "high_conf_threshold": 0.7,
+      "total_pnl": -682738.9687499979,
+      "profit_factor": 0.7380966398015993,
+      "avg_pnl": -10.237194397378964
+    },
+    {
+      "strategy": "low0.5x_highthresh0.65",
+      "low_conf_multiplier": 0.5,
+      "high_conf_threshold": 0.65,
+      "total_pnl": -1377865.6874999963,
+      "profit_factor": 0.7341642691428077,
+      "avg_pnl": -20.66013446140461
+    },
+    {
+      "strategy": "low0.5x_highthresh0.7",
+      "low_conf_multiplier": 0.5,
+      "high_conf_threshold": 0.7,
+      "total_pnl": -1377865.6874999963,
+      "profit_factor": 0.7341642691428077,
+      "avg_pnl": -20.66013446140461
+    }
+  ],
+  "loss_by_regime": [
+    {
+      "market_regime": "mixed",
+      "count": 15124,
+      "total_loss": -3763555.8750000005,
+      "avg_loss": -248.84659316318437,
+      "loss_pct": 36.41292118504667
+    },
+    {
+      "market_regime": "range",
+      "count": 10501,
+      "total_loss": -2644157.6249999986,
+      "avg_loss": -251.8005547090752,
+      "loss_pct": 25.582589018946113
+    },
+    {
+      "market_regime": "volatile_trend",
+      "count": 8477,
+      "total_loss": -2395235.250000002,
+      "avg_loss": -282.55694821281133,
+      "loss_pct": 23.17423077394742
+    },
+    {
+      "market_regime": "trend",
+      "count": 6112,
+      "total_loss": -1532821.4999999977,
+      "avg_loss": -250.7888579842928,
+      "loss_pct": 14.830259022059803
+    }
+  ],
+  "loss_by_confidence": [
+    {
+      "confidence_bucket": "low_confidence",
+      "count": 36454,
+      "total_loss": -9193703.625000004,
+      "avg_loss": -252.200132358589
+    },
+    {
+      "confidence_bucket": "medium_confidence",
+      "count": 3760,
+      "total_loss": -1142066.6249999958,
+      "avg_loss": -303.74112367021166
+    }
+  ],
+  "recommendation": "System has negative Kelly fraction \u2014 reduce all lot sizes to minimum; deploy entry/exit filter improvements before scaling."
+}

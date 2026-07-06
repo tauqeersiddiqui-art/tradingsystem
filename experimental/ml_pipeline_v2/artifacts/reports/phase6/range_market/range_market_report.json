@@ -1,0 +1,219 @@
+{
+  "schema_version": "phase6.normal_ml_rescue.v1",
+  "module": "range_market_intelligence",
+  "overall_metrics": {
+    "label": "all",
+    "trades": 66692,
+    "win_rate": 0.39701913272956274,
+    "avg_pnl": -41.5060145894559,
+    "total_pnl": -2768119.124999993,
+    "profit_factor": 0.732180664039045
+  },
+  "range_metrics": {
+    "label": "range",
+    "trades": 17238,
+    "win_rate": 0.390822601229841,
+    "avg_pnl": -48.21232161503664,
+    "total_pnl": -831084.0000000016,
+    "profit_factor": 0.6856904474444855
+  },
+  "non_range_metrics": {
+    "label": "non_range",
+    "trades": 49454,
+    "win_rate": 0.3991790350628867,
+    "avg_pnl": -39.16842166457702,
+    "total_pnl": -1937035.1249999919,
+    "profit_factor": 0.7481626780443857
+  },
+  "range_win_rate": 0.390822601229841,
+  "non_range_win_rate": 0.3991790350628867,
+  "win_rate_gap": 0.008356433833045684,
+  "indicator_differences": [
+    {
+      "feature": "adx",
+      "range_winner_mean": 14.630385340397579,
+      "range_loser_mean": 14.611624377416392,
+      "overall_mean": 25.529498675241435,
+      "separation": 0.01876096298118668
+    },
+    {
+      "feature": "rsi",
+      "range_winner_mean": 50.4262603661981,
+      "range_loser_mean": 50.67860414210261,
+      "overall_mean": 50.02170356683146,
+      "separation": -0.25234377590450663
+    },
+    {
+      "feature": "trend_strength",
+      "range_winner_mean": 5.361401334593969e-06,
+      "range_loser_mean": 1.243808009297737e-05,
+      "overall_mean": -1.8254827428546153e-05,
+      "separation": -7.076678758383402e-06
+    },
+    {
+      "feature": "atr",
+      "range_winner_mean": 9.82604338538014,
+      "range_loser_mean": 9.194036480024497,
+      "overall_mean": 10.58045467724361,
+      "separation": 0.6320069053556434
+    },
+    {
+      "feature": "volatility",
+      "range_winner_mean": 0.00028248714943989546,
+      "range_loser_mean": 0.00026212978047688586,
+      "overall_mean": 0.00032401592461126194,
+      "separation": 2.0357368963009595e-05
+    },
+    {
+      "feature": "momentum_velocity",
+      "range_winner_mean": -5.253152904546159e-06,
+      "range_loser_mean": -3.0907336271192855e-06,
+      "overall_mean": 2.4012388223286895e-07,
+      "separation": -2.162419277426873e-06
+    },
+    {
+      "feature": "range_compression",
+      "range_winner_mean": 0.6221069251740686,
+      "range_loser_mean": 0.6196496985713795,
+      "overall_mean": 0.5727779254553524,
+      "separation": 0.0024572266026891
+    },
+    {
+      "feature": "directional_confidence",
+      "range_winner_mean": 0.3846213871077752,
+      "range_loser_mean": 0.3534416615013149,
+      "overall_mean": 0.3798635128969994,
+      "separation": 0.031179725606460318
+    },
+    {
+      "feature": "quality_confidence",
+      "range_winner_mean": 0.4052446759137498,
+      "range_loser_mean": 0.38211768753840136,
+      "overall_mean": 0.3961681330406501,
+      "separation": 0.023126988375348434
+    },
+    {
+      "feature": "confidence",
+      "range_winner_mean": 0.4052446759137498,
+      "range_loser_mean": 0.38211768753840136,
+      "overall_mean": 0.3961681330406501,
+      "separation": 0.023126988375348434
+    },
+    {
+      "feature": "mfe_points",
+      "range_winner_mean": 30.658074810746594,
+      "range_loser_mean": 5.2362774973812,
+      "overall_mean": 16.065864721405877,
+      "separation": 25.421797313365396
+    },
+    {
+      "feature": "mae_points",
+      "range_winner_mean": 3.833241799020336,
+      "range_loser_mean": 22.44596228930576,
+      "overall_mean": 16.065864721405877,
+      "separation": -18.612720490285426
+    },
+    {
+      "feature": "holding_bars",
+      "range_winner_mean": 6.3390233041413095,
+      "range_loser_mean": 12.650699933339682,
+      "overall_mean": 9.972365501109579,
+      "separation": -6.311676629198373
+    },
+    {
+      "feature": "price_vs_vwap",
+      "range_winner_mean": 6.564288682559392e-05,
+      "range_loser_mean": 8.937770240211814e-05,
+      "overall_mean": -2.0959031062345066e-05,
+      "separation": -2.3734815576524217e-05
+    },
+    {
+      "feature": "ema_alignment",
+      "range_winner_mean": 0.03696007124833012,
+      "range_loser_mean": 0.06866012760689458,
+      "overall_mean": -0.0015594074251784322,
+      "separation": -0.03170005635856446
+    },
+    {
+      "feature": "supertrend_dir",
+      "range_winner_mean": 0.013804363960219682,
+      "range_loser_mean": 0.058375392819731454,
+      "overall_mean": -0.003478678102321118,
+      "separation": -0.04457102885951177
+    }
+  ],
+  "time_of_day_analysis": [
+    {
+      "hour": 9,
+      "trades": 1536,
+      "win_rate": 0.4342447916666667,
+      "avg_pnl": -34.64965820312516
+    },
+    {
+      "hour": 10,
+      "trades": 6842,
+      "win_rate": 0.3802981584332067,
+      "avg_pnl": -54.42602674656559
+    },
+    {
+      "hour": 14,
+      "trades": 7326,
+      "win_rate": 0.40363090363090365,
+      "avg_pnl": -39.28030303030297
+    },
+    {
+      "hour": 15,
+      "trades": 1534,
+      "win_rate": 0.333116036505867,
+      "avg_pnl": -76.73516949152544
+    }
+  ],
+  "direction_analysis": [
+    {
+      "side": "ce",
+      "trades": 8619,
+      "win_rate": 0.377770042928414,
+      "avg_pnl": -56.39875565610881
+    },
+    {
+      "side": "pe",
+      "trades": 8619,
+      "win_rate": 0.4038751595312681,
+      "avg_pnl": -40.025887573964454
+    }
+  ],
+  "skip_conditions": [
+    {
+      "condition": "range AND confidence < 0.50",
+      "trades_affected": 17227,
+      "win_rate": 0.3908399605270796,
+      "avg_pnl": -48.03500319266278,
+      "action": "skip",
+      "rationale": "Low confidence in range regime has near-random directional value"
+    },
+    {
+      "condition": "range AND adx < 18",
+      "trades_affected": 17222,
+      "win_rate": 0.39095343165718266,
+      "avg_pnl": -48.18876291952162,
+      "action": "skip",
+      "rationale": "Very low ADX in range = no momentum; ML edge collapses"
+    },
+    {
+      "condition": "range AND trading against VWAP direction",
+      "trades_affected": 3761,
+      "win_rate": 0.4153150757777187,
+      "avg_pnl": -40.16089470885371,
+      "action": "require_confirmation",
+      "rationale": "Fading VWAP in range amplifies mean-reversion drawdown"
+    },
+    {
+      "condition": "range AND SuperTrend opposes trade direction",
+      "trades_affected": 8619,
+      "win_rate": 0.3955215222183548,
+      "avg_pnl": -53.24473546815149,
+      "action": "delay",
+      "rationale": "SuperTrend contradiction in range increases fade risk"
+    }
+  ]
+}

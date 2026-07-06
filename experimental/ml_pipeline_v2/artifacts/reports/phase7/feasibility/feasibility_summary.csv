@@ -1,0 +1,18 @@
+strategy,is_live_feasible,complexity,verdict
+actual,False,reference,FAIL — uses lookahead data
+atr_trail_2.5,True,low,PASS
+time_10bars,True,low,PASS
+vol_adaptive,True,medium,PASS
+time_8bars,True,low,PASS
+atr_trail_2.0,True,low,PASS
+time_6bars,True,low,PASS
+vwap_exit,True,low,PASS
+partial_runner,True,medium,PASS
+supertrend_exit,True,low,PASS
+ema20_exit,True,low,PASS
+momentum_exhaust,True,medium,PASS
+atr_trail_1.5,True,low,PASS
+chandelier_1.5,True,low,PASS
+be_trail_1.5,True,medium,PASS
+be_trail_1.0,True,medium,PASS
+chandelier_1.0,True,low,PASS

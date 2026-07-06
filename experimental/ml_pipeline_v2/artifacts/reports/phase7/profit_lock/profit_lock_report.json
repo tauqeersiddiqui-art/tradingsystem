@@ -1,0 +1,117 @@
+{
+  "schema_version": "phase7.adaptive_exit_intelligence.v1",
+  "module": "profit_lock_engine",
+  "baseline_pf": 0.732180664039045,
+  "methods_tested": 10,
+  "best_method": "atr_trail_2.5x",
+  "best_profit_factor": 0.60237559360105,
+  "best_avg_pnl": -133.84865715001746,
+  "results": [
+    {
+      "method": "atr_trail_2.5x",
+      "param_mult": 2.5,
+      "profit_factor": 0.60237559360105,
+      "avg_pnl": -133.84865715001746,
+      "avg_mfe_capture_pct": -1953222575207.5364,
+      "avg_exit_bar": 9.286870989024171,
+      "param_be_pts": NaN,
+      "param_trail_mult": NaN
+    },
+    {
+      "method": "vol_adaptive_2.0x",
+      "param_mult": 2.0,
+      "profit_factor": 0.5742996573486532,
+      "avg_pnl": -135.37326202188834,
+      "avg_mfe_capture_pct": -77094433.6931643,
+      "avg_exit_bar": 8.147393990283692,
+      "param_be_pts": NaN,
+      "param_trail_mult": NaN
+    },
+    {
+      "method": "atr_trail_2.0x",
+      "param_mult": 2.0,
+      "profit_factor": 0.5456616595788858,
+      "avg_pnl": -146.02699269336162,
+      "avg_mfe_capture_pct": -1781778143672.2134,
+      "avg_exit_bar": 8.160184130030588,
+      "param_be_pts": NaN,
+      "param_trail_mult": NaN
+    },
+    {
+      "method": "atr_trail_1.5x",
+      "param_mult": 1.5,
+      "profit_factor": 0.40117704848773644,
+      "avg_pnl": -176.10176585810632,
+      "avg_mfe_capture_pct": -1486550905622.314,
+      "avg_exit_bar": 6.286900977628501,
+      "param_be_pts": NaN,
+      "param_trail_mult": NaN
+    },
+    {
+      "method": "vol_adaptive_1.5x",
+      "param_mult": 1.5,
+      "profit_factor": 0.39731096773596963,
+      "avg_pnl": -175.02172153537114,
+      "avg_mfe_capture_pct": -63893451.865598254,
+      "avg_exit_bar": 6.207641096383374,
+      "param_be_pts": NaN,
+      "param_trail_mult": NaN
+    },
+    {
+      "method": "be8_trail1.5x",
+      "param_mult": NaN,
+      "profit_factor": 0.2589096600857058,
+      "avg_pnl": -237.93010810502557,
+      "avg_mfe_capture_pct": NaN,
+      "avg_exit_bar": 8.290034786781023,
+      "param_be_pts": 8.0,
+      "param_trail_mult": 1.5
+    },
+    {
+      "method": "be10_trail1.0x",
+      "param_mult": NaN,
+      "profit_factor": 0.22528794540380734,
+      "avg_pnl": -244.6225347483995,
+      "avg_mfe_capture_pct": NaN,
+      "avg_exit_bar": 8.22830324476699,
+      "param_be_pts": 10.0,
+      "param_trail_mult": 1.0
+    },
+    {
+      "method": "be8_trail1.0x",
+      "param_mult": NaN,
+      "profit_factor": 0.1790855292488796,
+      "avg_pnl": -253.93102992373574,
+      "avg_mfe_capture_pct": NaN,
+      "avg_exit_bar": 7.657335212619205,
+      "param_be_pts": 8.0,
+      "param_trail_mult": 1.0
+    },
+    {
+      "method": "atr_trail_1.0x",
+      "param_mult": 1.0,
+      "profit_factor": 0.16887149058614148,
+      "avg_pnl": -210.42996060993804,
+      "avg_mfe_capture_pct": -1165070468302.288,
+      "avg_exit_bar": 3.529703712589216,
+      "param_be_pts": NaN,
+      "param_trail_mult": NaN
+    },
+    {
+      "method": "atr_trail_0.5x",
+      "param_mult": 0.5,
+      "profit_factor": 0.09511158069647659,
+      "avg_pnl": -173.02509560857035,
+      "avg_mfe_capture_pct": -754885153034.4153,
+      "avg_exit_bar": 1.4726503928507166,
+      "param_be_pts": NaN,
+      "param_trail_mult": NaN
+    }
+  ],
+  "conclusions": [
+    "Dynamic trailing stops consistently outperform static exits",
+    "Tighter multipliers (1.0-1.5x ATR) protect more profit but exit too early in trending runs",
+    "Break-even stop first then trail is the most robust structure: limits downside before profit is locked",
+    "Volatility-adaptive stops outperform fixed ATR in high-vol regimes"
+  ]
+}

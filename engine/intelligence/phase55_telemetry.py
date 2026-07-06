@@ -97,7 +97,9 @@ class Phase55Telemetry:
         self.blocked_regimes: Counter[str] = Counter()
         self._decisions: dict[str, dict[str, Any]] = {}
         self._open_shadows: dict[str, dict[str, Any]] = {}
-        self._next_id = 1
+        # Seed from any decisions already persisted this session so restarts
+        # don't reset the counter and produce duplicate decision IDs.
+        self._next_id = self._peek_next_id()
 
     @classmethod
     def from_config(cls, config: object | None) -> "Phase55Telemetry":
@@ -335,6 +337,10 @@ class Phase55Telemetry:
 
     def generate_eod_report(self, *, timestamp: datetime | None = None) -> dict[str, Any]:
         self.close_all_open_shadows(timestamp=timestamp, exit_reason="SHADOW_EOD_MARK")
+        # Reconstruct full-session stats from the persisted CSVs. In-memory
+        # counters only reflect the current process and reset to zero on
+        # restart, which previously produced all-zero EOD reports.
+        self.hydrate_from_disk()
         stats = self.snapshot()
         recommendation = self._recommendation(stats)
         top_reasons = self.blocking_reasons.most_common(5)
@@ -358,6 +364,69 @@ class Phase55Telemetry:
         payload["json_path"] = str(json_path)
         payload["report_path"] = str(md_path)
         return payload
+
+    def _read_csv_rows(self, path: Path) -> list[dict[str, str]]:
+        if not path.exists():
+            return []
+        try:
+            with path.open("r", newline="", encoding="utf-8") as handle:
+                return list(csv.DictReader(handle))
+        except OSError:
+            return []
+
+    def _peek_next_id(self) -> int:
+        """Return the next unused sequence id based on decisions already on disk."""
+        max_id = 0
+        for row in self._read_csv_rows(self.decisions_path):
+            suffix = str(row.get("decision_id", "")).rsplit("-", 1)[-1]
+            try:
+                max_id = max(max_id, int(suffix))
+            except ValueError:
+                continue
+        return max_id + 1
+
+    def hydrate_from_disk(self) -> None:
+        """Rebuild session counters from the persisted CSVs.
+
+        Decisions and outcomes are appended synchronously during the session,
+        so the CSV files are the authoritative full-day record. In-memory
+        counters only reflect the current process and reset to zero on
+        restart, so EOD reporting must reconcile against disk.
+        """
+        self.trades_evaluated = 0
+        self.trades_allowed = 0
+        self.trades_blocked = 0
+        self.blocked_by_ce_threshold = 0
+        self.blocked_by_pe_threshold = 0
+        self.blocked_by_mixed_regime = 0
+        self.blocking_reasons = Counter()
+        self.blocked_regimes = Counter()
+
+        for row in self._read_csv_rows(self.decisions_path):
+            self.trades_evaluated += 1
+            allow = str(row.get("allow_trade", "")).strip().lower() in {"true", "1", "yes"}
+            if allow:
+                self.trades_allowed += 1
+            else:
+                self.trades_blocked += 1
+                reason = row.get("blocking_reason") or "UNKNOWN"
+                self.blocking_reasons[reason] += 1
+                self.blocked_regimes[row.get("regime") or "UNKNOWN"] += 1
+                filters = str(row.get("applied_filters", "")).split("|")
+                self._count_block_bucket(reason, filters)
+
+        self.correct_blocks = 0
+        self.false_positive_blocks = 0
+        self.estimated_pnl_saved = 0.0
+        self.estimated_pnl_missed = 0.0
+        for row in self._read_csv_rows(self.outcomes_path):
+            outcome_class = str(row.get("outcome_class", ""))
+            if outcome_class == "CORRECT_BLOCK":
+                self.correct_blocks += 1
+                self.estimated_pnl_saved += _safe_float(row.get("estimated_pnl_saved"))
+            elif outcome_class == "FALSE_POSITIVE_BLOCK":
+                self.false_positive_blocks += 1
+                self.estimated_pnl_missed += _safe_float(row.get("estimated_pnl_missed"))
 
     def _count_block_bucket(self, reason: str, filters: list[str]) -> None:
         text = " ".join([reason, *filters]).upper()

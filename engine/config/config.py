@@ -53,7 +53,9 @@ class Config:
         self.ENABLE_PHASE55_FILTERS = _env_bool("ENABLE_PHASE55_FILTERS", False)
         self.ENABLE_PHASE55_CE_THRESHOLD = _env_bool("ENABLE_PHASE55_CE_THRESHOLD", True)
         self.ENABLE_PHASE55_PE_THRESHOLD = _env_bool("ENABLE_PHASE55_PE_THRESHOLD", True)
-        self.ENABLE_PHASE55_REGIME_FILTER = _env_bool("ENABLE_PHASE55_REGIME_FILTER", True)
+        # Mixed-regime CE block was anti-selective in shadow (blocked 65% winners,
+        # 2026-07-06) — default OFF so it never blocks unnecessarily. Opt in via env.
+        self.ENABLE_PHASE55_REGIME_FILTER = _env_bool("ENABLE_PHASE55_REGIME_FILTER", False)
         self.ENABLE_PHASE55_TELEMETRY = _env_bool("ENABLE_PHASE55_TELEMETRY", True)
         self.PHASE55_TELEMETRY_DIR = os.getenv("PHASE55_TELEMETRY_DIR", "data/phase55")
         self.PHASE55_CE_QUALITY_THRESHOLD = float(os.getenv("PHASE55_CE_QUALITY_THRESHOLD", "0.4358"))

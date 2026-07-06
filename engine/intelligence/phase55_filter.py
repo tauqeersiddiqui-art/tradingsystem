@@ -14,7 +14,7 @@ class Phase55FilterConfig:
     enabled: bool = False
     ce_threshold_enabled: bool = True
     pe_threshold_enabled: bool = True
-    regime_filter_enabled: bool = True
+    regime_filter_enabled: bool = False
     ce_quality_threshold: float = CE_QUALITY_THRESHOLD
     pe_directional_threshold: float = PE_DIRECTIONAL_THRESHOLD
 

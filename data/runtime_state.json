@@ -1,13 +1,13 @@
 {
-  "session_date": "2026-07-03",
-  "saved_at": "2026-07-03T15:30:00.762508",
-  "pnl": 98.99999999999864,
-  "trades_today": 1,
-  "scalp_trades_today": 0,
-  "scalp_pnl_today": 0.0,
+  "session_date": "2026-07-06",
+  "saved_at": "2026-07-06T11:08:07.875613",
+  "pnl": -446.9999999999993,
+  "trades_today": 4,
+  "scalp_trades_today": 3,
+  "scalp_pnl_today": -439.4999999999993,
   "daily_profit_locked": false,
   "positions": [
-    98.99999999999864
+    -7.5
   ],
   "open_position": null,
   "scalp_position": null

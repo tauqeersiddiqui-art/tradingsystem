@@ -66,6 +66,11 @@ def set_trade_quiet(enabled: bool):
 # Engine loop calls are non-blocking — never stall trading.
 # ─────────────────────────────────────────────────────────────────────
 _tg_queue          = queue.Queue(maxsize=50)
+_live_update_lock  = threading.Lock()
+_pending_trade_live = None
+_trade_live_queued  = False
+_pending_scalp_live = None
+_scalp_live_queued  = False
 _poll_interval     = 3.0
 _poll_interval_max = 60.0
 _last_poll_ts      = 0.0
@@ -117,8 +122,9 @@ def _tg_enqueue(fn, *args, **kwargs):
     _ensure_thread()
     try:
         _tg_queue.put_nowait((fn, args, kwargs))
+        return True
     except queue.Full:
-        pass
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -135,12 +141,14 @@ _EDIT_GONE      = "GONE"
 
 
 def _load_state():
-    global _engine_msg_id, _market_msg_id
+    global _engine_msg_id, _market_msg_id, _trade_msg_id, _scalp_msg_id
     try:
         with open(_STATE_FILE) as f:
             d = json.load(f)
         _engine_msg_id = d.get("engine")
         _market_msg_id = d.get("market")
+        _trade_msg_id  = d.get("trade")
+        _scalp_msg_id  = d.get("scalp")
     except Exception:
         pass
 
@@ -148,7 +156,12 @@ def _load_state():
 def _save_state():
     try:
         with open(_STATE_FILE, "w") as f:
-            json.dump({"engine": _engine_msg_id, "market": _market_msg_id}, f)
+            json.dump({
+                "engine": _engine_msg_id,
+                "market": _market_msg_id,
+                "trade":  _trade_msg_id,
+                "scalp":  _scalp_msg_id,
+            }, f)
     except Exception:
         pass
 
@@ -418,6 +431,7 @@ def delete_trade_message():
     mid = _trade_msg_id
     _trade_msg_id = None
     _last_edited.pop(mid, None)
+    _save_state()
     try:
         requests.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
@@ -433,11 +447,70 @@ def freeze_trade_message(exit_text: str):
     mid = _trade_msg_id
     _trade_msg_id = None
     _last_edited.pop(mid, None)
+    _save_state()
     _tg_enqueue(_do_freeze_trade, mid, exit_text)
 
 
 def _do_freeze_trade(mid: int, exit_text: str):
     _edit_with_markup(mid, exit_text, reply_markup=None)
+
+
+def _trade_exit_markup():
+    return {"inline_keyboard": [[{"text": "EXIT NOW", "callback_data": "manual_exit"}]]}
+
+
+def _do_send_trade_entry_with_exit_button(message):
+    global _trade_msg_id
+    result = _send(BOT_CHAT_ID, message, reply_markup=_trade_exit_markup())
+    _send(CHANNEL_ID, message, parse_mode="HTML")
+    if result:
+        _trade_msg_id = result["message_id"]
+        _last_edited.pop(_trade_msg_id, None)
+        _save_state()
+
+
+def send_trade_entry_with_exit_button(message):
+    _tg_enqueue(_do_send_trade_entry_with_exit_button, message)
+
+
+def update_trade_live(message: str):
+    global _pending_trade_live, _trade_live_queued
+    with _live_update_lock:
+        _pending_trade_live = message
+        if _trade_live_queued:
+            return
+        _trade_live_queued = True
+    if not _tg_enqueue(_do_update_trade_live):
+        with _live_update_lock:
+            _trade_live_queued = False
+
+
+def _do_update_trade_live():
+    global _trade_msg_id, _pending_trade_live, _trade_live_queued
+    with _live_update_lock:
+        message = _pending_trade_live
+        _pending_trade_live = None
+        _trade_live_queued = False
+    if not message:
+        return
+
+    if _trade_msg_id:
+        expected_msg_id = _trade_msg_id
+        result = _edit_with_markup(expected_msg_id, message, _trade_exit_markup())
+        if result == _EDIT_GONE and _trade_msg_id == expected_msg_id:
+            _trade_msg_id = None
+            _last_edited.pop(expected_msg_id, None)
+            _save_state()
+        elif result:
+            return
+        else:
+            return
+
+    result = _send(BOT_CHAT_ID, message, reply_markup=_trade_exit_markup())
+    if result:
+        _trade_msg_id = result["message_id"]
+        _last_edited.pop(_trade_msg_id, None)
+        _save_state()
 
 
 def remove_exit_button():
@@ -479,6 +552,7 @@ def delete_scalp_message():
     mid = _scalp_msg_id
     _scalp_msg_id = None
     _last_edited.pop(mid, None)
+    _save_state()
     try:
         requests.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
@@ -494,6 +568,7 @@ def freeze_scalp_message(exit_text: str):
     mid = _scalp_msg_id
     _scalp_msg_id = None
     _last_edited.pop(mid, None)
+    _save_state()
     _tg_enqueue(_edit, mid, exit_text)
 
 

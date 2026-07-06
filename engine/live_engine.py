@@ -783,13 +783,24 @@ class LiveEngine:
         # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
         return self._finalize_signal(signal, features, price)
 
-    def _finalize_signal(self, signal: dict, features: dict, price: float):
+    def evaluate_phase55_candidate(
+        self,
+        *,
+        side: str,
+        confidence: float,
+        symbol: str = "BANKNIFTY",
+        features: dict | None = None,
+        timestamp: datetime | None = None,
+        source: str = "ML",
+    ) -> dict:
+        """Evaluate Phase55 for any final trade candidate.
+
+        Used by the main ML path and by scalp before order placement so both
+        entry systems respect the same deployment filter.
         """
-        STEP 6 — attach risk stops + expected-PnL guard, then return the
-        signal (or None if it fails the guard). Shared by both the legacy
-        direction-gate path and the predict-first path.
-        """
-        side = str(signal.get("side", "")).upper()
+        ts = timestamp or datetime.now()
+        side = str(side or "").upper()
+        features = features or self._last_features or {}
         phase55_regime = infer_regime_from_features(features)
         phase55_decision = evaluate_phase55_filter(
             market_features=features,
@@ -801,22 +812,22 @@ class LiveEngine:
             },
             current_regime=phase55_regime,
             confidence_scores={
-                "side_confidence": signal.get("ml_prob", 0.0),
-                "confidence": signal.get("ml_prob", 0.0),
+                "side_confidence": confidence,
+                "confidence": confidence,
                 "ce_confidence": self._last_ce_adj,
                 "pe_confidence": self._last_pe_adj,
-                "ce_quality_confidence": signal.get("quality_confidence", self._last_ce_adj),
-                "pe_directional_confidence": self._last_pe_adj,
-                "directional_confidence": signal.get("ml_prob", 0.0),
+                "ce_quality_confidence": self._last_ce_adj if side == "CE" else confidence,
+                "pe_directional_confidence": self._last_pe_adj if side == "PE" else confidence,
+                "directional_confidence": confidence,
             },
             direction=side,
             config=self._phase55_config,
-            symbol=signal.get("symbol", "UNKNOWN"),
-            timestamp=datetime.now(),
+            symbol=symbol,
+            timestamp=ts,
         )
         applied_filters = phase55_decision.get("applied_filters", [])
         phase55_allow = bool(phase55_decision.get("allow_trade", True))
-        phase55_confidence = float(signal.get("ml_prob", 0.0) or 0.0)
+        phase55_confidence = float(confidence or 0.0)
         phase55_ml_probability = (
             float(self._last_ce_prob or 0.0) if side == "CE"
             else float(self._last_pe_prob or 0.0)
@@ -824,8 +835,8 @@ class LiveEngine:
         phase55_telemetry_id = ""
         if self._phase55_telemetry is not None:
             phase55_telemetry_id = self._phase55_telemetry.record_decision(
-                timestamp=datetime.now(),
-                symbol=signal.get("symbol", "BANKNIFTY"),
+                timestamp=ts,
+                symbol=symbol or "BANKNIFTY",
                 direction=side,
                 regime=phase55_regime,
                 confidence=phase55_confidence,
@@ -844,22 +855,53 @@ class LiveEngine:
             "shadow_attached": False,
             "reason": phase55_decision.get("blocking_reason", ""),
             "recommendation": phase55_decision.get("recommendation", ""),
+            "source": source,
         }
         if not phase55_allow:
             reason = str(phase55_decision.get("blocking_reason", "PHASE55_BLOCK"))
             logger.info(
                 "[PHASE55 BLOCK] "
-                f"timestamp={datetime.now().isoformat()} "
-                f"symbol={signal.get('symbol', 'UNKNOWN')} "
+                f"timestamp={ts.isoformat()} "
+                f"symbol={symbol or 'UNKNOWN'} "
                 f"direction={side} "
                 f"confidence={phase55_confidence:.4f} "
                 f"regime={phase55_regime} "
                 f"blocking_rule={reason} "
+                f"source={source} "
                 "original_decision=ALLOW "
                 "final_decision=BLOCK"
             )
             self._count_block("PHASE55")
             self._last_block_reason = f"PHASE55_BLOCK ({reason})"
+
+        out = dict(self._last_phase55_decision)
+        out.update(
+            {
+                "allow_trade": phase55_allow,
+                "applied_filters": list(applied_filters),
+                "blocking_reason": phase55_decision.get("blocking_reason", ""),
+                "regime": phase55_regime,
+            }
+        )
+        return out
+
+    def _finalize_signal(self, signal: dict, features: dict, price: float):
+        """
+        STEP 6 — attach risk stops + expected-PnL guard, then return the
+        signal (or None if it fails the guard). Shared by both the legacy
+        direction-gate path and the predict-first path.
+        """
+        side = str(signal.get("side", "")).upper()
+        phase55_state = self.evaluate_phase55_candidate(
+            side=side,
+            confidence=float(signal.get("ml_prob", 0.0) or 0.0),
+            symbol=signal.get("symbol", "BANKNIFTY"),
+            features=features,
+            timestamp=datetime.now(),
+            source="ML",
+        )
+        phase55_telemetry_id = str(phase55_state.get("telemetry_id", "") or "")
+        if not bool(phase55_state.get("allow_trade", True)):
             return None
 
         atr_val  = features.get("atr", price * 0.01)

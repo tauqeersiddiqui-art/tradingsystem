@@ -230,12 +230,49 @@ def _raise_stop(ctx, position: dict, new_stop: float, min_step: float = 0.0) -> 
     """Raise virtual/broker stop only when the new level is meaningfully tighter."""
     current = float(position.get("stop_loss", 0.0) or 0.0)
     new_stop = float(new_stop or 0.0)
-    min_step = max(float(min_step or 0.0), 1e-6)
-    if (new_stop - current) + 1e-6 < min_step:
+    min_step = max(float(min_step or 0.0), 0.0)
+    if new_stop <= current + 1e-6:
+        return False
+    if min_step > 0.0 and (new_stop - current) + 1e-6 < min_step:
         return False
     position["stop_loss"] = new_stop
     _sl_modify(ctx, position, new_stop)
     return True
+
+
+def _position_cost_rs(ctx, qty: int) -> float:
+    """Round-trip cost for the actual position quantity."""
+    lot_units = max(int(getattr(ctx.config, "LOT_SIZE", 30) or 30), 1)
+    cost_per_lot = float(getattr(ctx.config, "COST_PER_LOT", 66.0) or 66.0)
+    lots = _position_lots(ctx, qty)
+    return lots * cost_per_lot
+
+
+def _position_lots(ctx, qty: int) -> int:
+    lot_units = max(int(getattr(ctx.config, "LOT_SIZE", 30) or 30), 1)
+    return max(1, round(float(qty or lot_units) / lot_units))
+
+
+def _scalp_lock_floor_rs(ctx, qty: int) -> float:
+    """Minimum gross locked PnL before scalp trailing is allowed."""
+    cost = _position_cost_rs(ctx, qty)
+    slip_buffer_per_lot = float(
+        getattr(ctx.config, "SCALP_PROFIT_SLIPPAGE_BUFFER_RS", cost) or 0.0
+    )
+    slip_buffer = max(0.0, slip_buffer_per_lot) * _position_lots(ctx, qty)
+    min_net = float(getattr(ctx.config, "SCALP_MIN_NET_PROFIT_RS", 0.0) or 0.0)
+    return cost + slip_buffer + max(0.0, min_net)
+
+
+def _scalp_trail_arm_mfe_rs(ctx, qty: int) -> float:
+    """MFE required before any scalp profit lock/trail can tighten stops."""
+    cost = _position_cost_rs(ctx, qty)
+    floor = _scalp_lock_floor_rs(ctx, qty)
+    cost_mult = float(
+        getattr(ctx.config, "SCALP_MIN_TRAIL_MFE_COST_MULT", 3.0) or 0.0
+    )
+    explicit = float(getattr(ctx.config, "SCALP_MIN_TRAIL_MFE_RS", 0.0) or 0.0)
+    return max(floor, cost * max(cost_mult, 0.0), explicit)
 
 
 def _daily_bank_reached(ctx, open_pnl: float = 0.0) -> bool:
@@ -2005,50 +2042,73 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     )
                     _s_open_pnl = (_s_ltp - scalp_position["entry"]) * scalp_position["qty"]
 
-                    # Centralized profit-lock ladder also governs scalp trades
-                    # (single source of truth — identical to normal trades).
-                    _sc_new_stop, _sc_stage, _sc_lock = ladder_stop(
-                        scalp_position["entry"],
-                        scalp_position["qty"],
-                        scalp_position["max_pnl"],
-                        scalp_position["stop_loss"],
-                        scalp_position.get("ml_prob", 0.5),
-                        str(ctx.ml_learner.get_day_type()),
-                    )
-                    if _sc_new_stop > scalp_position["stop_loss"] + 1e-6:
-                        logger.info(
-                            f"[LADDER]\nMFE={scalp_position['max_pnl']:.0f}\n"
-                            f"LOCK={_sc_lock:.0f}\nstage={_sc_stage} (scalp)  "
-                            f"SL {scalp_position['stop_loss']:.2f}->{_sc_new_stop:.2f}"
-                        )
-                        _raise_stop(ctx, scalp_position, _sc_new_stop, _sc_stop_step)
-
                     _bank_mfe = float(getattr(ctx.config, "SCALP_BANK_MFE_RS", 90.0) or 0.0)
-                    if _bank_mfe > 0 and scalp_position["max_pnl"] >= _bank_mfe:
+                    _scalp_qty = int(scalp_position.get("qty", 0) or 0)
+                    _sc_cost = _position_cost_rs(ctx, _scalp_qty)
+                    _sc_lock_floor = _scalp_lock_floor_rs(ctx, _scalp_qty)
+                    _sc_arm_mfe = _scalp_trail_arm_mfe_rs(ctx, _scalp_qty)
+
+                    # Centralized profit-lock ladder also governs scalp trades
+                    # (single source of truth), but scalp arms later because
+                    # a 1-lot scalp needs cost plus slippage cushion.
+                    if scalp_position["max_pnl"] >= _sc_arm_mfe:
+                        _sc_new_stop, _sc_stage, _sc_lock = ladder_stop(
+                            scalp_position["entry"],
+                            scalp_position["qty"],
+                            scalp_position["max_pnl"],
+                            scalp_position["stop_loss"],
+                            scalp_position.get("ml_prob", 0.5),
+                            str(ctx.ml_learner.get_day_type()),
+                        )
+                        _sc_lock = min(
+                            scalp_position["max_pnl"],
+                            max(float(_sc_lock or 0.0), _sc_lock_floor),
+                        )
+                        _sc_new_stop = max(
+                            scalp_position["stop_loss"],
+                            scalp_position["entry"] + (_sc_lock / max(scalp_position["qty"], 1)),
+                        )
+                        if _sc_new_stop > scalp_position["stop_loss"] + 1e-6:
+                            logger.info(
+                                f"[LADDER]\nMFE={scalp_position['max_pnl']:.0f}\n"
+                                f"LOCK={_sc_lock:.0f}\nstage={_sc_stage} (scalp)  "
+                                f"SL {scalp_position['stop_loss']:.2f}->{_sc_new_stop:.2f}"
+                            )
+                            _raise_stop(ctx, scalp_position, _sc_new_stop, _sc_stop_step)
+
+                    if _bank_mfe > 0 and scalp_position["max_pnl"] >= max(_bank_mfe, _sc_arm_mfe):
                         _bank_pct = max(0.0, min(float(getattr(ctx.config, "SCALP_BANK_LOCK_PCT", 0.70) or 0.0), 1.0))
-                        _bank_min = max(0.0, float(getattr(ctx.config, "SCALP_BANK_MIN_LOCK_RS", 30.0) or 0.0))
+                        _bank_min = max(
+                            _sc_lock_floor,
+                            float(getattr(ctx.config, "SCALP_BANK_MIN_LOCK_RS", 30.0) or 0.0),
+                        )
                         _bank_lock_rs = min(scalp_position["max_pnl"], max(_bank_min, scalp_position["max_pnl"] * _bank_pct))
                         _bank_stop = scalp_position["entry"] + (_bank_lock_rs / max(scalp_position["qty"], 1))
-                        if _raise_stop(ctx, scalp_position, _bank_stop, 0.0):
+                        if _raise_stop(ctx, scalp_position, _bank_stop, _sc_stop_step):
                             logger.info(
                                 f"[SCALP BANK] MFE={scalp_position['max_pnl']:.0f} "
-                                f"lock={_bank_lock_rs:.0f} SL={scalp_position['stop_loss']:.2f}"
+                                f"cost={_sc_cost:.0f} lock={_bank_lock_rs:.0f} "
+                                f"SL={scalp_position['stop_loss']:.2f}"
                             )
 
-                    # ── Lock at +2pt then trail 2pt behind peak (all lots held) ──
+                    # Cost-aware scalp trail. It only arms once peak profit has
+                    # enough cushion for round-trip cost plus a slippage buffer.
                     _s_move = _s_ltp - scalp_position["entry"]
-                    if _s_move >= ctx.config.SCALP_LOCK_PTS:
+                    if _s_move >= ctx.config.SCALP_LOCK_PTS and scalp_position["max_pnl"] >= _sc_arm_mfe:
                         if not scalp_position.get("lock_triggered"):
-                            _lock_stop = scalp_position["entry"] + 1.0
-                            _raise_stop(ctx, scalp_position, _lock_stop, 0.0)
+                            _lock_stop = scalp_position["entry"] + (_sc_lock_floor / max(scalp_position["qty"], 1))
+                            if _raise_stop(ctx, scalp_position, _lock_stop, _sc_stop_step):
+                                logger.info(
+                                    f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt | "
+                                    f"MFE={scalp_position['max_pnl']:.0f} cost={_sc_cost:.0f} "
+                                    f"floor={_sc_lock_floor:.0f} | "
+                                    f"trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt below peak"
+                                )
                             scalp_position["lock_triggered"] = True
-                            logger.info(
-                                f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt → "
-                                f"SL locked at entry+1={_lock_stop:.1f} | "
-                                f"trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt below peak"
-                            )
                         # Trail SL 2pt below current ltp — ratchet up only, never down
-                        _trail_sl = _s_ltp - ctx.config.SCALP_TRAIL_PTS
+                        _trail_stop = _s_ltp - ctx.config.SCALP_TRAIL_PTS
+                        _floor_stop = scalp_position["entry"] + (_sc_lock_floor / max(scalp_position["qty"], 1))
+                        _trail_sl = max(_trail_stop, _floor_stop)
                         _raise_stop(ctx, scalp_position, _trail_sl, _sc_stop_step)
 
                     _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
@@ -2257,47 +2317,78 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     )
                                 else:
                                     _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
-                                    _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
-                                    if _s_order:
-                                        scalp_position = {
-                                            "symbol":         _s_symbol,
-                                            "side":           _s_side,
-                                            "qty":            _scalp_entry_qty,
-                                            "lot_size":       ctx.config.LOT_SIZE,
-                                            "entry":          _s_order["price"],
-                                            "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
-                                            "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
-                                            "max_pnl":        0.0,
-                                            "min_pnl":        0.0,
-                                            "ml_prob":        float(_s_ml_prob or 0.0),
-                                            "features":       ctx.live_engine._last_features or {},
-                                            "regime":         "SCALP",
-                                            "reason":         _s_sig["reason"],
-                                            "entry_ts":       ts,
-                                            "sl_order_id":    None,
-                                            "lock_triggered": False,
-                                        }
-                                        _sl_create(ctx, scalp_position)
-                                        save_state(
-                                            ctx,
-                                            position,
-                                            scalp_position,
-                                            _scalp_trades_today,
-                                            scalp_pnl_today=_scalp_pnl_today,
-                                            daily_profit_locked=_daily_profit_locked,
+                                    _p55_scalp = ctx.live_engine.evaluate_phase55_candidate(
+                                        side=_s_side,
+                                        confidence=float(_s_ml_prob or 0.0),
+                                        symbol=_s_symbol,
+                                        features=ctx.live_engine._last_features or {},
+                                        timestamp=ts,
+                                        source="SCALP",
+                                    )
+                                    if not bool(_p55_scalp.get("allow_trade", True)):
+                                        _p55_reason = (
+                                            _p55_scalp.get("blocking_reason")
+                                            or _p55_scalp.get("reason")
+                                            or "PHASE55_BLOCK"
                                         )
                                         logger.info(
-                                            f"[SCALP ENTRY] {_s_side} {_s_symbol} "
-                                            f"@ {_s_order['price']:.1f} "
-                                            f"| BANKNIFTY move={_s_sig['move_pts']:+.1f}pt "
-                                            f"| ml={float(_s_ml_prob or 0.0):.3f} "
-                                            f"opp_ml={float(_s_opp_prob or 0.0):.3f} "
-                                            f"| scalp={_scalp_trades_today+1}/{_scalp_max}"
+                                            f"[SCALP SKIP] Phase55 blocked {_s_side} {_s_symbol}: "
+                                            f"{_p55_reason}"
                                         )
-                                        _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
-                                        send_scalp_entry(_scalp_entry_msg)
-                                        send_trade_channel(_scalp_entry_msg)
-                                        set_trade_quiet(True)
+                                        try:
+                                            if ctx.live_engine.phase55_telemetry_enabled():
+                                                ctx.live_engine.attach_phase55_block_shadow(
+                                                    symbol=_s_symbol,
+                                                    entry_price=float(_s_opt_ltp or 0.0),
+                                                    quantity=_scalp_entry_qty,
+                                                    timestamp=ts,
+                                                )
+                                        except Exception as _p55_shadow_e:
+                                            logger.debug(
+                                                f"[PHASE55 TELEMETRY] scalp shadow failed: {_p55_shadow_e}"
+                                            )
+                                    else:
+                                        _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
+                                        if _s_order:
+                                            scalp_position = {
+                                                "symbol":         _s_symbol,
+                                                "side":           _s_side,
+                                                "qty":            _scalp_entry_qty,
+                                                "lot_size":       ctx.config.LOT_SIZE,
+                                                "entry":          _s_order["price"],
+                                                "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
+                                                "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
+                                                "max_pnl":        0.0,
+                                                "min_pnl":        0.0,
+                                                "ml_prob":        float(_s_ml_prob or 0.0),
+                                                "features":       ctx.live_engine._last_features or {},
+                                                "regime":         "SCALP",
+                                                "reason":         _s_sig["reason"],
+                                                "entry_ts":       ts,
+                                                "sl_order_id":    None,
+                                                "lock_triggered": False,
+                                            }
+                                            _sl_create(ctx, scalp_position)
+                                            save_state(
+                                                ctx,
+                                                position,
+                                                scalp_position,
+                                                _scalp_trades_today,
+                                                scalp_pnl_today=_scalp_pnl_today,
+                                                daily_profit_locked=_daily_profit_locked,
+                                            )
+                                            logger.info(
+                                                f"[SCALP ENTRY] {_s_side} {_s_symbol} "
+                                                f"@ {_s_order['price']:.1f} "
+                                                f"| BANKNIFTY move={_s_sig['move_pts']:+.1f}pt "
+                                                f"| ml={float(_s_ml_prob or 0.0):.3f} "
+                                                f"opp_ml={float(_s_opp_prob or 0.0):.3f} "
+                                                f"| scalp={_scalp_trades_today+1}/{_scalp_max}"
+                                            )
+                                            _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
+                                            send_scalp_entry(_scalp_entry_msg)
+                                            send_trade_channel(_scalp_entry_msg)
+                                            set_trade_quiet(True)
 
             # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)

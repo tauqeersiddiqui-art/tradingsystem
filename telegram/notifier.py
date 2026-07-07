@@ -14,6 +14,7 @@ import logging
 import time
 import threading
 import queue
+import re
 import requests
 from dotenv import load_dotenv
 
@@ -60,6 +61,20 @@ def set_trade_quiet(enabled: bool):
     global TRADE_QUIET_MODE
     TRADE_QUIET_MODE = bool(enabled)
 
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 # ─────────────────────────────────────────────────────────────────────
 # BACKGROUND TELEGRAM THREAD
 # Telegram I/O runs in a daemon thread with a queue.
@@ -73,8 +88,26 @@ _pending_scalp_live = None
 _scalp_live_queued  = False
 _poll_interval     = 3.0
 _poll_interval_max = 60.0
+_tg_http_timeout   = _env_float("TG_HTTP_TIMEOUT_SECONDS", 2.0)
+_tg_poll_timeout   = _env_float("TG_POLL_TIMEOUT_SECONDS", 1.0)
+try:
+    _tg_max_tasks_per_tick = max(1, int(os.getenv("TG_MAX_TASKS_PER_TICK", "5")))
+except (TypeError, ValueError):
+    _tg_max_tasks_per_tick = 5
 _last_poll_ts      = 0.0
 _poll_fail_count   = 0
+_last_queue_warn_ts = 0.0
+
+_http = requests.Session()
+_http.trust_env = _env_bool("TG_TRUST_ENV_PROXY", False)
+_BOT_URL_RE = re.compile(r"/bot[^/\s]+")
+
+
+def _redact(value) -> str:
+    text = str(value)
+    if BOT_TOKEN:
+        text = text.replace(BOT_TOKEN, "<redacted>")
+    return _BOT_URL_RE.sub("/bot<redacted>", text)
 
 
 def _tg_worker():
@@ -82,15 +115,21 @@ def _tg_worker():
     current_interval = _poll_interval
     while True:
         try:
-            while True:
+            processed = 0
+            while processed < _tg_max_tasks_per_tick:
+                task = None
                 try:
-                    fn, args, kwargs = _tg_queue.get_nowait()
+                    task = _tg_queue.get_nowait()
+                    fn, args, kwargs = task
                     fn(*args, **kwargs)
-                    _tg_queue.task_done()
                 except queue.Empty:
                     break
                 except Exception as e:
-                    _log.warning("[TG-thread] send error: %s", e)
+                    _log.warning("[TG-thread] send error: %s", _redact(e))
+                finally:
+                    if task is not None:
+                        _tg_queue.task_done()
+                        processed += 1
 
             now = time.time()
             if now - _last_poll_ts >= current_interval:
@@ -103,7 +142,7 @@ def _tg_worker():
                     current_interval = _poll_interval
 
         except Exception as e:
-            _log.warning("[TG-thread] worker error: %s", e)
+            _log.warning("[TG-thread] worker error: %s", _redact(e))
 
         time.sleep(0.5)
 
@@ -119,11 +158,16 @@ def _ensure_thread():
 
 
 def _tg_enqueue(fn, *args, **kwargs):
+    global _last_queue_warn_ts
     _ensure_thread()
     try:
         _tg_queue.put_nowait((fn, args, kwargs))
         return True
     except queue.Full:
+        now = time.time()
+        if now - _last_queue_warn_ts > 30:
+            _last_queue_warn_ts = now
+            _log.warning("[TG] queue full; dropping %s", getattr(fn, "__name__", "task"))
         return False
 
 
@@ -183,14 +227,14 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
     if reply_markup:
         payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
     try:
-        r = requests.post(SEND_URL, json=payload, timeout=10)
+        r = _http.post(SEND_URL, json=payload, timeout=_tg_http_timeout)
         d = r.json()
         if not d.get("ok"):
-            _log.warning("[TG] Send error: %s", d)
+            _log.warning("[TG] Send error: %s", _redact(d))
             return None
         return d.get("result")
     except Exception as e:
-        _log.warning("[TG] Send exception: %s", e)
+        _log.warning("[TG] Send exception: %s", _redact(e))
         return None
 
 
@@ -199,13 +243,13 @@ def _edit(message_id, text, parse_mode="HTML"):
     if _last_edited.get(message_id) == text:
         return True
     try:
-        r = requests.post(EDIT_MESSAGE_URL, json={
+        r = _http.post(EDIT_MESSAGE_URL, json={
             "chat_id": BOT_CHAT_ID,
             "message_id": message_id,
             "text": text,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True,
-        }, timeout=10)
+        }, timeout=_tg_http_timeout)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -222,13 +266,13 @@ def _edit(message_id, text, parse_mode="HTML"):
             "message_id_invalid",
             "chat not found",
         )):
-            _log.warning("[TG] Edit target gone: %s", d)
+            _log.warning("[TG] Edit target gone: %s", _redact(d))
             return _EDIT_GONE
 
-        _log.warning("[TG] Edit error: %s", d)
+        _log.warning("[TG] Edit error: %s", _redact(d))
         return False
     except Exception as e:
-        _log.warning("[TG] Edit exception: %s", e)
+        _log.warning("[TG] Edit exception: %s", _redact(e))
         return False
 
 
@@ -246,7 +290,7 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
-        r = requests.post(EDIT_MESSAGE_URL, json=payload, timeout=10)
+        r = _http.post(EDIT_MESSAGE_URL, json=payload, timeout=_tg_http_timeout)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -263,21 +307,21 @@ def _edit_with_markup(message_id, text, reply_markup=None):
             "message_id_invalid",
             "chat not found",
         )):
-            _log.warning("[TG] Edit target gone: %s", d)
+            _log.warning("[TG] Edit target gone: %s", _redact(d))
             return _EDIT_GONE
 
-        _log.warning("[TG] Market edit error: %s", d)
+        _log.warning("[TG] Market edit error: %s", _redact(d))
         return False
     except Exception as e:
-        _log.warning("[TG] Market edit exception: %s", e)
+        _log.warning("[TG] Market edit exception: %s", _redact(e))
         return False
 
 
 def _answer_cb(callback_id, text=""):
     try:
-        requests.post(ANSWER_CALLBACK_URL,
-                      json={"callback_query_id": callback_id, "text": text},
-                      timeout=5)
+        _http.post(ANSWER_CALLBACK_URL,
+                   json={"callback_query_id": callback_id, "text": text},
+                   timeout=_tg_http_timeout)
     except Exception:
         pass
 
@@ -376,10 +420,10 @@ def _do_repost_engine(text: str):
     global _engine_msg_id
     if _engine_msg_id:
         try:
-            requests.post(f"{API_URL}/deleteMessage", json={
+            _http.post(f"{API_URL}/deleteMessage", json={
                 "chat_id": BOT_CHAT_ID,
                 "message_id": _engine_msg_id,
-            }, timeout=10)
+            }, timeout=_tg_http_timeout)
         except Exception:
             pass
         _last_edited.pop(_engine_msg_id, None)
@@ -413,9 +457,9 @@ def delete_trade_message():
     _last_edited.pop(mid, None)
     _save_state()
     try:
-        requests.post(f"{API_URL}/deleteMessage", json={
+        _http.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
-        }, timeout=10)
+        }, timeout=_tg_http_timeout)
     except Exception:
         pass
 
@@ -501,12 +545,17 @@ def remove_exit_button():
 # SCALP TRADE MESSAGES
 # ─────────────────────────────────────────────────────────────────────
 
-def send_scalp_entry(message: str):
+def _do_send_scalp_entry(message: str):
     global _scalp_msg_id
     result = _send(BOT_CHAT_ID, message)
     if result:
         _scalp_msg_id = result["message_id"]
         _last_edited.pop(_scalp_msg_id, None)
+        _save_state()
+
+
+def send_scalp_entry(message: str):
+    _tg_enqueue(_do_send_scalp_entry, message)
 
 
 def update_scalp_live(message: str):
@@ -558,9 +607,9 @@ def delete_scalp_message():
     _last_edited.pop(mid, None)
     _save_state()
     try:
-        requests.post(f"{API_URL}/deleteMessage", json={
+        _http.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
-        }, timeout=10)
+        }, timeout=_tg_http_timeout)
     except Exception:
         pass
 
@@ -640,7 +689,7 @@ def _poll_commands_internal(status_cb=None):
         if _last_update_id:
             params["offset"] = _last_update_id + 1
 
-        r = requests.get(GET_UPDATES_URL, params=params, timeout=5)
+        r = _http.get(GET_UPDATES_URL, params=params, timeout=_tg_poll_timeout)
         data = r.json()
         if not data.get("ok"):
             return
@@ -732,7 +781,7 @@ def _poll_commands_internal(status_cb=None):
     except Exception as e:
         _poll_fail_count += 1
         if _poll_fail_count == 1 or _poll_fail_count % 10 == 0:
-            _log.warning("[TG] poll_commands error (#%d): %s", _poll_fail_count, e)
+            _log.warning("[TG] poll_commands error (#%d): %s", _poll_fail_count, _redact(e))
     else:
         _poll_fail_count = 0
 

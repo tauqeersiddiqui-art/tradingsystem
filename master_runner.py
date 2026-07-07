@@ -538,6 +538,9 @@ def _classify_exit_type(reason: str, stop_loss: float, entry: float) -> str:
 # F7 — PROFIT RETENTION SIMULATION  (analysis-only, never changes exits)
 # ══════════════════════════════════════════════════════════════════════
 
+_TRAIL_ARM_PTS = float(os.getenv("TRAIL_ARM_PTS", "10.0"))
+_TRAIL_GAP_PTS = float(os.getenv("TRAIL_GAP_PTS", "5.0"))
+
 _LADDER_LEVELS = [
     (2.0,  0.0),   # +2 pts → break-even
     (4.0,  1.0),   # +4 pts → lock +1 pt
@@ -562,10 +565,8 @@ def _profit_retention_sim(ctx: TradingContext) -> str | None:
         qty      = ea.get("qty_list",     [30] * n)[i]
 
         best_lock_pts = None
-        for trigger_pts, lock_pts in reversed(_LADDER_LEVELS):
-            if mfe_pts >= trigger_pts:
-                best_lock_pts = lock_pts
-                break
+        if mfe_pts >= _TRAIL_ARM_PTS:
+            best_lock_pts = max(0.0, mfe_pts - _TRAIL_GAP_PTS)
 
         sim_pnl = (
             max(actual, best_lock_pts * qty)
@@ -1391,7 +1392,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         pass
 
                 # ── Live trade card update (every 2s) ────────────────
-                _trade_live_interval = float(getattr(ctx.config, "TRADE_LIVE_UPDATE_SECONDS", 3.0) or 3.0)
+                _trade_live_interval = float(getattr(ctx.config, "TRADE_LIVE_UPDATE_SECONDS", 2.0) or 2.0)
                 if _tg.can_send("trade_live", _trade_live_interval) and entry_time is not None:
                     try:
                         live_msg = format_trade_live(position, pos_ltp, entry_time)
@@ -2017,7 +2018,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _scalp_ltp_history.append((ts, ltp_current))
 
                 # ── Scalp live card update (every 2s while in scalp) ──
-                _trade_live_interval = float(getattr(ctx.config, "TRADE_LIVE_UPDATE_SECONDS", 3.0) or 3.0)
+                _trade_live_interval = float(getattr(ctx.config, "TRADE_LIVE_UPDATE_SECONDS", 2.0) or 2.0)
                 if scalp_position is not None and _tg.can_send("scalp_live", _trade_live_interval):
                     try:
                         _sl_live_ltp = ctx.broker.ltp(scalp_position["symbol"]) or scalp_position["entry"]
@@ -2042,7 +2043,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     )
                     _s_open_pnl = (_s_ltp - scalp_position["entry"]) * scalp_position["qty"]
 
-                    _bank_mfe = float(getattr(ctx.config, "SCALP_BANK_MFE_RS", 90.0) or 0.0)
+                    _bank_mfe = float(getattr(ctx.config, "SCALP_BANK_MFE_RS", 0.0) or 0.0)
                     _scalp_qty = int(scalp_position.get("qty", 0) or 0)
                     _sc_cost = _position_cost_rs(ctx, _scalp_qty)
                     _sc_lock_floor = _scalp_lock_floor_rs(ctx, _scalp_qty)

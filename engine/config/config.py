@@ -22,7 +22,9 @@ class Config:
         self.DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", -2000))
         self.DAILY_PROFIT_TARGET = float(os.getenv("DAILY_PROFIT_TARGET", "800"))
         self.DAILY_PROFIT_LOCK_ENABLED = os.getenv("DAILY_PROFIT_LOCK_ENABLED", "1") == "1"
-        self.TRADE_LIVE_UPDATE_SECONDS = float(os.getenv("TRADE_LIVE_UPDATE_SECONDS", "3.0"))
+        self.TRADE_LIVE_UPDATE_SECONDS = float(os.getenv("TRADE_LIVE_UPDATE_SECONDS", "2.0"))
+        self.TRAIL_ARM_PTS = float(os.getenv("TRAIL_ARM_PTS", "10.0"))
+        self.TRAIL_GAP_PTS = float(os.getenv("TRAIL_GAP_PTS", "5.0"))
         # Session trade limit. Scalp + ML share this counter.
         self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 20))
 
@@ -70,10 +72,10 @@ class Config:
         self.SCALP_MOMENTUM_THRESHOLD = float(os.getenv("SCALP_MOMENTUM_THRESHOLD", "12.0"))
         self.SCALP_COOLDOWN           = int(os.getenv("SCALP_COOLDOWN", "60"))
         self.SCALP_LOTS               = int(os.getenv("SCALP_LOTS", "2"))
-        self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "2.0"))   # lock SL at entry after +2pt
-        self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "2.0"))  # trail SL 2pt below peak
+        self.SCALP_LOCK_PTS           = float(os.getenv("SCALP_LOCK_PTS", "10.0"))  # first lock after +10pt
+        self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "5.0"))  # trail SL 5pt below peak
         self.SCALP_STOP_MODIFY_MIN_STEP = float(os.getenv("SCALP_STOP_MODIFY_MIN_STEP", "1.0"))
-        self.SCALP_BANK_MFE_RS        = float(os.getenv("SCALP_BANK_MFE_RS", "90.0"))
+        self.SCALP_BANK_MFE_RS        = float(os.getenv("SCALP_BANK_MFE_RS", "0.0"))
         self.SCALP_BANK_LOCK_PCT      = float(os.getenv("SCALP_BANK_LOCK_PCT", "0.70"))
         self.SCALP_BANK_MIN_LOCK_RS   = float(os.getenv("SCALP_BANK_MIN_LOCK_RS", "30.0"))
         self.SCALP_PROFIT_SLIPPAGE_BUFFER_RS = float(os.getenv("SCALP_PROFIT_SLIPPAGE_BUFFER_RS", str(self.COST_PER_LOT)))

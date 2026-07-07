@@ -117,6 +117,19 @@ def _pts_str(pts: float) -> str:
     return f"{pts:.1f}"
 
 
+def _trail_lock_label(entry: float, stop: float, qty: int, max_pnl: float) -> str:
+    locked_pts = max(0.0, stop - entry)
+    if locked_pts <= 0:
+        peak_pts = max_pnl / max(qty, 1)
+        return f"building; peak {_pts_str(peak_pts)}pt"
+
+    locked_rs = locked_pts * max(qty, 1)
+    if max_pnl > 0:
+        capture = min(999.0, max(0.0, locked_rs / max_pnl * 100.0))
+        return f"locked +{locked_pts:.1f}pt / Rs{locked_rs:,.0f} ({capture:.0f}% peak)"
+    return f"locked +{locked_pts:.1f}pt / Rs{locked_rs:,.0f}"
+
+
 def _map_exit_reason(raw: str, entry_price: float, stop_level: float) -> tuple:
     """Returns (label, emoji)."""
     if raw in ("STOP", "Stop Loss"):
@@ -222,20 +235,7 @@ def format_trade_live(position: dict, ltp: float, entry_time: datetime) -> str:
     else:
         status = "⚪ BREAKEVEN"
 
-    # Trail lock status
-    from engine.execution.profit_manager import LOCK_PTS
-    if peak_pts >= 40:
-        lock_label = "🔒 80% locked"
-    elif peak_pts >= 25:
-        lock_label = "🔒 65% locked"
-    elif peak_pts >= 15:
-        lock_label = "🔒 40% locked"
-    elif peak_pts >= 8:
-        lock_label = f"🔒 Rs400/lot locked"
-    elif peak_pts >= 4:
-        lock_label = f"🔒 Rs200/lot locked"
-    else:
-        lock_label = "⏳ building..."
+    lock_label = _trail_lock_label(entry, stop, qty, max_pnl)
 
     pnl_sign = "+" if pnl >= 0 else ""
     move_sign = "+" if move_pts >= 0 else ""
@@ -379,7 +379,8 @@ def format_scalp_live(pos: dict, ltp: float) -> str:
         f"💰 P&amp;L         : <b>{pnl_sign}Rs {abs(pnl):,.0f}</b>\n"
         f"📈 Peak P&amp;L    : +Rs {max_pnl:,.0f}  ({_pts_str(peak_pts)} pts)\n"
         f"\n"
-        f"🛑 Stop           : {stop:.1f}  🎯 Target: {target:.1f}\n"
+        f"🛑 Stop           : {stop:.1f}  ({_trail_lock_label(entry, stop, qty, max_pnl)})\n"
+        f"🎯 Target         : {target:.1f}\n"
         f"\n"
         f"⏱️ Held: {_held_str(held)}  |  🕐 {now_str}"
     )

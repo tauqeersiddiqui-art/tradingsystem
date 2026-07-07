@@ -31,13 +31,29 @@
 #   * max_pnl is the only profit reference used.
 
 import logging
+import os
 
 logger = logging.getLogger("profit_manager")
 
 # Retained for backward-compat (telegram.messages imports LOCK_PTS).
-_LOT_QTY  = 30
-_RS_FLOOR = 200.0
-LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # ~6.67 pts (BANKNIFTY 30-qty lot)
+_LOT_QTY = 30
+_TRAIL_ARM_PTS_DEFAULT = 10.0
+_TRAIL_GAP_PTS_DEFAULT = 5.0
+LOCK_PTS = _TRAIL_GAP_PTS_DEFAULT
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def trail_settings() -> tuple[float, float]:
+    """Return (arm_points, trail_gap_points) for long-option trailing stops."""
+    arm_pts = max(0.0, _env_float("TRAIL_ARM_PTS", _TRAIL_ARM_PTS_DEFAULT))
+    gap_pts = max(0.0, _env_float("TRAIL_GAP_PTS", _TRAIL_GAP_PTS_DEFAULT))
+    return arm_pts, gap_pts
 
 # ─────────────────────────────────────────────────────────────────────────
 # COST-AWARE PROFIT LADDER  (replaces the old fixed Rs rungs)
@@ -128,6 +144,7 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS,
     from _dynamic_lock_profile() so high-conviction / trend trades give the move
     more room while weak / choppy trades lock fast.
     """
+    qty = max(int(qty or 0), 1)
     cost = _cost_rs(qty)
     prof = _dynamic_lock_profile(ml_prob, regime)
 
@@ -212,11 +229,7 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob,
     # ── 2  Drawdown exit — only after meaningful profit ───────────────
     # DYNAMIC: retention now comes from _dynamic_lock_profile(), so a trending
     # high-conviction trade keeps running while a choppy/weak one locks fast.
-    _prof = _dynamic_lock_profile(ml_prob, regime)
-    if max_pnl >= qty * 8:
-        retention = _prof["ret_hi"] if ml_prob >= 0.65 else _prof["ret_lo"]
-        if pnl <= max_pnl * retention:
-            reason = "Drawdown"
+    # Drawdown exit disabled: the 5-point trail is the profit-protection exit.
 
     # ── 3  Hard stop — VIRTUAL trigger (market exit, fill may gap below) ─
     if ltp <= stop_loss:

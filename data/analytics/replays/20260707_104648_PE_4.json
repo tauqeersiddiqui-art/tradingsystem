@@ -1,0 +1,94 @@
+{
+  "symbol": "BANKNIFTY26JUL58400PE",
+  "side": "PE",
+  "entry": 668.6,
+  "qty": 30,
+  "summary": {
+    "max_pnl": 168.0,
+    "mae_rs": -64.5,
+    "mae_pts": -2.15,
+    "ladder_stage": "S2_TIGHT_LOCONV",
+    "locked_profit": 134.4,
+    "retained_profit_pct": 0.321,
+    "exit_reason": "STOP",
+    "exit_price": 670.4,
+    "final_stop_loss": 672.63,
+    "pnl": 54.0
+  },
+  "events": [
+    {
+      "t": "10:46:48",
+      "type": "ENTRY",
+      "price": 668.6,
+      "spot": 58398.85,
+      "ml_ce": 0.018,
+      "ml_pe": 0.651,
+      "adx": 16.1,
+      "rsi": 48.8,
+      "vwap": "below",
+      "st_dir": -1,
+      "stop": 658.6,
+      "regime": "RANGE"
+    },
+    {
+      "t": "10:46:51",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.75,
+      "price": 668.75
+    },
+    {
+      "t": "10:47:11",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.4,
+      "price": 668.9
+    },
+    {
+      "t": "10:47:23",
+      "type": "MFE_PEAK",
+      "mfe_pts": 4.85,
+      "price": 673.5
+    },
+    {
+      "t": "10:47:23",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 672.09,
+      "pts_locked": 3.49,
+      "mfe_pts": 4.85,
+      "locked_rs": 116.4
+    },
+    {
+      "t": "10:47:24",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 672.13,
+      "pts_locked": 3.53,
+      "mfe_pts": 4.9,
+      "locked_rs": 117.6
+    },
+    {
+      "t": "10:47:27",
+      "type": "MFE_PEAK",
+      "mfe_pts": 5.6,
+      "price": 674.2
+    },
+    {
+      "t": "10:47:27",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 672.63,
+      "pts_locked": 4.03,
+      "mfe_pts": 5.6,
+      "locked_rs": 134.4
+    },
+    {
+      "t": "10:47:29",
+      "type": "EXIT",
+      "price": 670.4,
+      "reason": "STOP",
+      "pnl": 54.0,
+      "mfe_pts": 5.6,
+      "mae_pts": -2.15
+    }
+  ]
+}

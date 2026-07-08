@@ -29,6 +29,11 @@ _COLUMNS = [
     "holding_seconds", "stop_loss", "target",
     "stop_distance_pts", "peak_pnl",
     "entry_reason", "exit_reason",
+    "signal_ts", "order_submit_ts", "fill_ts",
+    "signal_price", "fill_price",
+    "first_bid", "first_ask", "first_ltp",
+    "spread", "slippage_pts",
+    "signal_to_order_latency_ms", "order_to_fill_latency_ms",
     "ce_threshold", "pe_threshold",
 ]
 
@@ -69,6 +74,18 @@ def log_trade(
     entry_reason = position.get("reason", "")
     max_pnl      = position.get("max_pnl", 0.0)
     peak_pnl     = max_pnl   # highest P&L reached during trade
+    signal_ts    = position.get("_exec_signal_ts", "")
+    submit_ts    = position.get("_exec_order_submit_ts", "")
+    fill_ts      = position.get("_exec_fill_ts", "")
+    signal_price = position.get("_exec_signal_price", 0.0)
+    fill_price   = position.get("entry", entry_order.get("price", 0))
+    first_bid    = position.get("_exec_first_bid", "")
+    first_ask    = position.get("_exec_first_ask", "")
+    first_ltp    = position.get("_exec_first_ltp", "")
+    spread       = position.get("_exec_spread", "")
+    slippage_pts = position.get("_exec_slippage_pts", "")
+    signal_to_order_ms = position.get("_exec_signal_to_order_ms", "")
+    order_to_fill_ms   = position.get("_exec_order_to_fill_ms", "")
 
     pnl          = (exit_price - entry_price) * qty
     holding_s    = (exit_time - entry_time).total_seconds() if entry_time else 0
@@ -106,26 +123,39 @@ def log_trade(
                 round(stop_pts, 2),
                 round(peak_pnl, 2),
                 entry_reason, exit_reason,
+                signal_ts, submit_ts, fill_ts,
+                round(signal_price, 2) if signal_price else 0.0,
+                round(fill_price, 2) if fill_price else 0.0,
+                round(first_bid, 2) if isinstance(first_bid, (int, float)) else first_bid,
+                round(first_ask, 2) if isinstance(first_ask, (int, float)) else first_ask,
+                round(first_ltp, 2) if isinstance(first_ltp, (int, float)) else first_ltp,
+                round(spread, 2) if isinstance(spread, (int, float)) else spread,
+                round(slippage_pts, 2) if isinstance(slippage_pts, (int, float)) else slippage_pts,
+                int(signal_to_order_ms) if signal_to_order_ms != "" else "",
+                int(order_to_fill_ms) if order_to_fill_ms != "" else "",
                 round(ce_threshold, 3), round(pe_threshold, 3),
             ])
 
     return pnl
 
 
-def today_summary() -> dict:
-    """Read today's trades from CSV and return summary stats."""
-    path = _week_path()
+def today_summary(trade_date: date | None = None) -> dict:
+    """Read trades for the requested day from CSV and return summary stats."""
+    if trade_date is None:
+        trade_date = date.today()
+
+    path = _week_path(trade_date)
     if not os.path.exists(path):
         return {"trades": 0, "pnl": 0, "wins": 0, "losses": 0,
                 "avg_win": 0, "avg_loss": 0, "best": 0, "worst": 0}
 
     trades = []
     try:
-        today_str = date.today().isoformat()
+        target_date_str = trade_date.isoformat()
         with open(path, "r") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if row.get("date") == today_str:
+                if row.get("date") == target_date_str:
                     try:
                         trades.append(float(row["pnl"]))
                     except (ValueError, KeyError):

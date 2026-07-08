@@ -978,6 +978,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     consecutive_stops = 0       # auto-pause trigger
     _eod_sent         = False   # send EOD summary once at 15:30
     _eod_shutdown_requested = False
+    _retrain_thread   = None   # Friday EOD full-pipeline retrain thread
     _last_feed_warn   = 0.0     # watchdog: last time we warned about stale feed
     _journal_id       = None    # diagnostics journal id for current open trade
     _last_atm_check   = 0.0     # epoch time of last ATM drift check
@@ -985,6 +986,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _last_heartbeat   = 0.0     # epoch time of last alive-ping to Telegram
     ltp_current       = 0.0     # last known BANKNIFTY spot LTP (avoids UnboundLocalError on first tick)
     _signal_first_ts  = None    # ts when this signal was first produced (entry delay tracking)
+    _signal_snapshot  = None    # resolved symbol + quote snapshot for the current signal
     _last_exit_symbol = None    # symbol of most-recently exited ML trade
     _last_exit_epoch  = 0.0     # epoch time of that exit (for same-symbol cooldown)
     _daily_profit_locked = False
@@ -1352,8 +1354,23 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # Track when this signal was first generated (for entry-delay logging)
             if decision is not None and _signal_first_ts is None:
                 _signal_first_ts = ts
+                try:
+                    _sig_side = decision.get("side", "CE")
+                    _sig_symbol, _ = ctx.broker.get_atm_option(_sig_side)
+                    if _sig_symbol is not None:
+                        _signal_snapshot = {
+                            "side": _sig_side,
+                            "symbol": _sig_symbol,
+                            "quote": ctx.broker.get_quote_snapshot(_sig_symbol),
+                            "ts": ts,
+                        }
+                    else:
+                        _signal_snapshot = None
+                except Exception:
+                    _signal_snapshot = None
             elif decision is None:
                 _signal_first_ts = None
+                _signal_snapshot = None
 
             # ══════════════════════════════════════════════════════════
             # POSITION MANAGEMENT — runs every cycle, NOT in except block
@@ -1374,6 +1391,21 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f"[LTP MISSING] {position['symbol']} using last known LTP"
                     )
                     pos_ltp = position.get("_last_ltp", position["entry"])
+                if not position.get("_exec_first_quote_captured", False):
+                    try:
+                        _entry_quote = ctx.broker.get_quote_snapshot(position["symbol"])
+                        _eq_ltp = _entry_quote.get("ltp")
+                        _eq_bid = _entry_quote.get("bid")
+                        _eq_ask = _entry_quote.get("ask")
+                        if _eq_ltp is not None or _eq_bid is not None or _eq_ask is not None:
+                            position["_exec_first_ltp"] = _eq_ltp if _eq_ltp is not None else pos_ltp
+                            position["_exec_first_bid"] = _eq_bid
+                            position["_exec_first_ask"] = _eq_ask
+                            if _eq_bid is not None and _eq_ask is not None:
+                                position["_exec_spread"] = float(_eq_ask - _eq_bid)
+                            position["_exec_first_quote_captured"] = True
+                    except Exception:
+                        pass
                 held_seconds = (ts - entry_time).total_seconds() if entry_time else 0
 
                 # ── Track MAE (maximum adverse excursion) ────────────
@@ -1786,7 +1818,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # stop. Raised 90s->300s (config): trade #3 on 2026-06-17
                 # re-entered 24100CE 3 min after a stop and lost Rs481.
                 _SAME_SYMBOL_COOLDOWN = getattr(ctx.config, "SAME_SYMBOL_COOLDOWN", 300)
-                _cand_sym, _ = ctx.broker.get_atm_option(decision.get("side", "CE"))
+                _cand_sym = (_signal_snapshot or {}).get("symbol")
+                if _cand_sym is None:
+                    _cand_sym, _ = ctx.broker.get_atm_option(decision.get("side", "CE"))
                 if (
                     _cand_sym is not None
                     and _cand_sym == _last_exit_symbol
@@ -1810,8 +1844,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if decision is not None and position is None:
 
-                side   = decision["side"]
-                symbol, _price_ignored = ctx.broker.get_atm_option(side)
+                side = decision["side"]
+                symbol = (_signal_snapshot or {}).get("symbol")
+                _price_ignored = ((_signal_snapshot or {}).get("quote") or {}).get("ltp")
+                if symbol is None:
+                    symbol, _price_ignored = ctx.broker.get_atm_option(side)
 
                 if symbol is None:
                     logger.warning("[ENTRY] get_atm_option returned None symbol")
@@ -1819,8 +1856,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if decision is not None and position is None:
 
-                side   = decision["side"]
-                symbol, _ = ctx.broker.get_atm_option(side)
+                side = decision["side"]
 
                 # FIX-4: lot_size from instrument map, not from get_atm_option()
                 lot_size = ctx.executor.get_lot_size(symbol)
@@ -1844,8 +1880,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if decision is not None and position is None:
 
-                side     = decision["side"]
-                symbol, _ = ctx.broker.get_atm_option(side)
+                side = decision["side"]
                 lot_size  = ctx.executor.get_lot_size(symbol)
 
                 # Position sizing via allocator (SINGLE computation — the
@@ -1870,8 +1905,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if decision is not None and position is None:
 
-                side     = decision["side"]
-                symbol, _ = ctx.broker.get_atm_option(side)
+                side = decision["side"]
                 lot_size  = ctx.executor.get_lot_size(symbol)
                 # qty was computed and validated in the block above — single
                 # source of truth, no fallback recompute here.
@@ -1892,7 +1926,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 _signal_opt_ltp = 0.0
                 if decision is not None:
                     try:
-                        _signal_opt_ltp = ctx.broker.ltp(symbol) or 0.0
+                        _signal_opt_ltp = ((_signal_snapshot or {}).get("quote") or {}).get("ltp") or 0.0
+                        if not _signal_opt_ltp:
+                            _signal_opt_ltp = ctx.broker.ltp(symbol) or 0.0
                     except Exception:
                         pass
 
@@ -1902,6 +1938,30 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 )
 
                 if order and order.get("price", 0) > 0:
+                    _signal_ts = (_signal_snapshot or {}).get("ts") or ts
+                    _order_submit_ts = order.get("submit_ts")
+                    _fill_ts = order.get("fill_ts")
+                    _dt_mod = __import__("datetime").datetime
+                    _signal_to_order_ms = (
+                        int(max(0.0, (_order_submit_ts - _signal_ts.timestamp()) * 1000))
+                        if _order_submit_ts is not None else 0
+                    )
+                    _order_to_fill_ms = (
+                        int(max(0.0, (_fill_ts - _order_submit_ts) * 1000))
+                        if (_fill_ts is not None and _order_submit_ts is not None) else 0
+                    )
+                    _first_bid = order.get("bid_before")
+                    _first_ask = order.get("ask_before")
+                    _first_ltp = order.get("ltp_before")
+                    _first_spread = (
+                        float(_first_ask - _first_bid)
+                        if _first_ask is not None and _first_bid is not None
+                        else ""
+                    )
+                    _slippage_pts = (
+                        float(order["price"] - _signal_opt_ltp)
+                        if _signal_opt_ltp else ""
+                    )
 
                     # Premium-space stops computed from the ACTUAL fill premium.
                     # (The signal's spot-based stop is unusable here: position
@@ -1931,6 +1991,17 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "entry_ts": ts,   # for held-time display in dashboard
                         "_phase55_telemetry_id": decision.get("_phase55_telemetry_id", ""),
                         "_phase55_decision": decision.get("_phase55_decision", {}),
+                        "_exec_signal_ts": _signal_ts.isoformat(),
+                        "_exec_order_submit_ts": _dt_mod.fromtimestamp(_order_submit_ts).isoformat() if _order_submit_ts is not None else "",
+                        "_exec_fill_ts": _dt_mod.fromtimestamp(_fill_ts).isoformat() if _fill_ts is not None else "",
+                        "_exec_signal_price": float(_signal_opt_ltp or 0.0),
+                        "_exec_first_bid": _first_bid,
+                        "_exec_first_ask": _first_ask,
+                        "_exec_first_ltp": _first_ltp,
+                        "_exec_spread": _first_spread,
+                        "_exec_slippage_pts": _slippage_pts,
+                        "_exec_signal_to_order_ms": _signal_to_order_ms,
+                        "_exec_order_to_fill_ms": _order_to_fill_ms,
                         "sl_order_id": None,   # broker protective SL-M id (set below)
                     }
                     ctx.live_engine.update_phase55_actual_entry(position, ts)
@@ -1953,6 +2024,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         daily_profit_locked=_daily_profit_locked,
                     )
                     _signal_first_ts = None   # reset for next trade
+                    _signal_snapshot = None
 
                     # F1: start replay timeline (observational)
                     try:
@@ -1969,7 +2041,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     try:
                         _ms_j   = ctx.live_engine.get_market_state(ts)
                         _htf_j  = "bullish" if _ms_j.get("htf_bullish", True) else "bearish"
-                        _delay_ms = int((_signal_first_ts and (ts - _signal_first_ts).total_seconds() * 1000) or 0)
+                        _delay_ms = int(max(0.0, (ts - _signal_ts).total_seconds() * 1000))
                         _jid    = ctx.journal.on_entry(
                             position    = position,
                             market_state= _ms_j,
@@ -2029,6 +2101,21 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # ── Scalp exit management ─────────────────────────────
                 if scalp_position is not None:
                     _s_ltp = ctx.broker.ltp(scalp_position["symbol"]) or scalp_position["entry"]
+                    if not scalp_position.get("_exec_first_quote_captured", False):
+                        try:
+                            _s_entry_quote = ctx.broker.get_quote_snapshot(scalp_position["symbol"])
+                            _sq_ltp = _s_entry_quote.get("ltp")
+                            _sq_bid = _s_entry_quote.get("bid")
+                            _sq_ask = _s_entry_quote.get("ask")
+                            if _sq_ltp is not None or _sq_bid is not None or _sq_ask is not None:
+                                scalp_position["_exec_first_ltp"] = _sq_ltp if _sq_ltp is not None else _s_ltp
+                                scalp_position["_exec_first_bid"] = _sq_bid
+                                scalp_position["_exec_first_ask"] = _sq_ask
+                                if _sq_bid is not None and _sq_ask is not None:
+                                    scalp_position["_exec_spread"] = float(_sq_ask - _sq_bid)
+                                scalp_position["_exec_first_quote_captured"] = True
+                        except Exception:
+                            pass
                     _sc_stop_step = max(
                         float(getattr(ctx.config, "SCALP_STOP_MODIFY_MIN_STEP", 1.0) or 0.0),
                         0.0,
@@ -2363,6 +2450,29 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     else:
                                         _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
                                         if _s_order:
+                                            _s_submit_ts = _s_order.get("submit_ts")
+                                            _s_fill_ts = _s_order.get("fill_ts")
+                                            _s_dt_mod = __import__("datetime").datetime
+                                            _s_signal_to_order_ms = (
+                                                int(max(0.0, (_s_submit_ts - ts.timestamp()) * 1000))
+                                                if _s_submit_ts is not None else 0
+                                            )
+                                            _s_order_to_fill_ms = (
+                                                int(max(0.0, (_s_fill_ts - _s_submit_ts) * 1000))
+                                                if (_s_fill_ts is not None and _s_submit_ts is not None) else 0
+                                            )
+                                            _s_first_bid = _s_order.get("bid_before")
+                                            _s_first_ask = _s_order.get("ask_before")
+                                            _s_first_ltp = _s_order.get("ltp_before")
+                                            _s_first_spread = (
+                                                float(_s_first_ask - _s_first_bid)
+                                                if _s_first_ask is not None and _s_first_bid is not None
+                                                else ""
+                                            )
+                                            _s_slippage_pts = (
+                                                float(_s_order["price"] - _s_opt_ltp)
+                                                if _s_opt_ltp else ""
+                                            )
                                             scalp_position = {
                                                 "symbol":         _s_symbol,
                                                 "side":           _s_side,
@@ -2378,6 +2488,18 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                                 "regime":         "SCALP",
                                                 "reason":         _s_sig["reason"],
                                                 "entry_ts":       ts,
+                                                "_exec_signal_ts": ts.isoformat(),
+                                                "_exec_order_submit_ts": _s_dt_mod.fromtimestamp(_s_submit_ts).isoformat() if _s_submit_ts is not None else "",
+                                                "_exec_fill_ts": _s_dt_mod.fromtimestamp(_s_fill_ts).isoformat() if _s_fill_ts is not None else "",
+                                                "_exec_signal_price": float(_s_opt_ltp or 0.0),
+                                                "_exec_first_bid": _s_first_bid,
+                                                "_exec_first_ask": _s_first_ask,
+                                                "_exec_first_ltp": _s_first_ltp,
+                                                "_exec_spread": _s_first_spread,
+                                                "_exec_slippage_pts": _s_slippage_pts,
+                                                "_exec_signal_to_order_ms": _s_signal_to_order_ms,
+                                                "_exec_order_to_fill_ms": _s_order_to_fill_ms,
+                                                "_exec_first_quote_captured": bool(_s_first_ltp or _s_first_bid or _s_first_ask),
                                                 "sl_order_id":    None,
                                                 "lock_triggered": False,
                                             }
@@ -2443,8 +2565,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # ── EOD summary at 15:30 ─────────────────────────────────
             if not _eod_sent and now >= __import__("datetime").time(15, 30):
                 _eod_sent = True
-                summary = today_summary()
-                send_eod_summary(summary)
+                session_date = ts.date()
+                summary = today_summary(session_date)
+                send_eod_summary(summary, trade_date=session_date)
                 try:
                     _p55_report = ctx.live_engine.generate_phase55_eod_report(ts)
                     if _p55_report:
@@ -2513,24 +2636,83 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 except Exception as _e34:
                     logger.warning(f"[EOD F3/F4/F7] {_e34}")
 
-                # ── Weekly model retrain (Friday after close) ──────────
+                # ── Friday EOD full-pipeline retrain ───────────────────
+                # Runs dataset_builder_v3.py → trainer_v3.py after market
+                # close every Friday.  Engine waits for this thread before
+                # exiting so the new champions are on disk before Sunday.
                 try:
                     if ts.weekday() == 4 and not check_retrain_lock():
                         import threading as _thr
-                        from ml.feedback_trainer import retrain_with_feedback
+                        import subprocess as _sp
+                        import sys as _sys
 
-                        def _do_retrain():
+                        def _do_full_retrain():
                             try:
-                                tg_force("[RETRAIN] Starting weekly model retrain...")
-                                retrain_with_feedback(live_weight=3)
-                                write_retrain_lock()
-                                tg_force("[RETRAIN] Weekly retrain complete. Models updated.")
-                                logger.info("[RETRAIN] Weekly retrain finished successfully")
-                            except Exception as _re:
-                                logger.warning(f"[RETRAIN] Failed: {_re}")
-                                tg_force(f"[RETRAIN] Failed: {_re}")
+                                tg_force(
+                                    "[RETRAIN] Friday EOD — rebuilding dataset "
+                                    "(dataset_builder_v3)..."
+                                )
+                                logger.info("[RETRAIN] Starting dataset_builder_v3.py")
+                                _r1 = _sp.run(
+                                    [_sys.executable, "ml/dataset_builder_v3.py"],
+                                    capture_output=True, text=True, timeout=1800,
+                                )
+                                if _r1.returncode != 0:
+                                    _err = (_r1.stderr or _r1.stdout or "")[-500:]
+                                    logger.error(
+                                        f"[RETRAIN] dataset_builder_v3 failed "
+                                        f"(rc={_r1.returncode}): {_err}"
+                                    )
+                                    tg_force(
+                                        f"[RETRAIN] dataset_builder failed "
+                                        f"(rc={_r1.returncode}). Trainer skipped."
+                                    )
+                                    return
 
-                        _thr.Thread(target=_do_retrain, daemon=True, name="weekly_retrain").start()
+                                tg_force(
+                                    "[RETRAIN] Dataset built — running trainer_v3..."
+                                )
+                                logger.info("[RETRAIN] Starting trainer_v3.py")
+                                _r2 = _sp.run(
+                                    [_sys.executable, "ml/trainer_v3.py"],
+                                    capture_output=True, text=True, timeout=3600,
+                                )
+                                if _r2.returncode != 0:
+                                    _err = (_r2.stderr or _r2.stdout or "")[-500:]
+                                    logger.error(
+                                        f"[RETRAIN] trainer_v3 failed "
+                                        f"(rc={_r2.returncode}): {_err}"
+                                    )
+                                    tg_force(
+                                        f"[RETRAIN] Trainer failed "
+                                        f"(rc={_r2.returncode}). Champions unchanged."
+                                    )
+                                    return
+
+                                write_retrain_lock()
+                                logger.info("[RETRAIN] Full pipeline complete")
+                                # Extract deploy gate result from stdout for Telegram
+                                _out = _r2.stdout or ""
+                                _gate_line = next(
+                                    (l for l in _out.splitlines()
+                                     if "DEPLOY" in l.upper() or "AUC" in l.upper()),
+                                    "see logs"
+                                )
+                                tg_force(
+                                    f"[RETRAIN] Friday retrain complete.\n"
+                                    f"Deploy gate: {_gate_line}"
+                                )
+                            except Exception as _re:
+                                logger.warning(f"[RETRAIN] Pipeline error: {_re}")
+                                tg_force(f"[RETRAIN] Pipeline error: {_re}")
+
+                        _retrain_thread = _thr.Thread(
+                            target=_do_full_retrain,
+                            daemon=True,
+                            name="friday_retrain",
+                        )
+                        _retrain_thread.start()
+                        logger.info("[RETRAIN] Friday retrain thread launched")
                 except Exception as _retrain_e:
                     logger.warning(f"[RETRAIN] Trigger error: {_retrain_e}")
 
@@ -2543,6 +2725,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     tg_force("EOD summaries sent. Waiting for open trade to close before stopping engine.")
 
             if _eod_shutdown_requested and position is None and scalp_position is None:
+                # Wait for Friday retrain to finish before exiting.
+                # Poll every 5s so the engine stays responsive to KeyboardInterrupt.
+                if _retrain_thread is not None and _retrain_thread.is_alive():
+                    logger.info("[EOD] Waiting for Friday retrain to complete...")
+                    tg_force("EOD complete. Waiting for Friday retrain to finish...")
+                    _retrain_thread.join(timeout=7200)  # max 2h safety ceiling
+                    if _retrain_thread.is_alive():
+                        logger.warning("[RETRAIN] Still running after 2h — engine exiting anyway")
+                        tg_force("[RETRAIN] Timeout (2h). Engine exiting; check logs.")
                 try:
                     save_state(
                         ctx,

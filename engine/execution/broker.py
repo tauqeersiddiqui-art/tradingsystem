@@ -48,6 +48,100 @@ class ZerodhaBroker:
         self._atm_ce_token:    int | None = None  # instrument_token of the ATM CE
         self._atm_pe_token:    int | None = None  # instrument_token of the ATM PE
 
+    def _resolve_tick_key(self, instrument):
+        if not instrument:
+            return None, None, None
+
+        if ":" in instrument:
+            _exchange, symbol = instrument.split(":", 1)
+        else:
+            symbol = instrument
+
+        if symbol == "NIFTY BANK":
+            return 260105, symbol, instrument
+
+        inst = self.instrument_map.get(symbol)
+        if not inst:
+            return None, symbol, instrument
+
+        full_symbol = (
+            instrument
+            if ":" in instrument
+            else (f"NFO:{symbol}" if inst["segment"].startswith("NFO") else f"NSE:{symbol}")
+        )
+        return inst["instrument_token"], symbol, full_symbol
+
+    def _cached_quote(self, instrument):
+        token, symbol, full_symbol = self._resolve_tick_key(instrument)
+        if token is None:
+            return None
+
+        tick = self._last_ticks.get(token)
+        if not tick:
+            return None
+
+        depth = tick.get("depth", {}) or {}
+        bids = depth.get("buy", []) or []
+        asks = depth.get("sell", []) or []
+        bid = bids[0]["price"] if bids else None
+        ask = asks[0]["price"] if asks else None
+
+        return {
+            "instrument_token": token,
+            "symbol": symbol,
+            "full_symbol": full_symbol,
+            "ltp": tick.get("last_price"),
+            "bid": bid,
+            "ask": ask,
+            "timestamp": tick.get("_price_updated_at"),
+            "source": "ws",
+        }
+
+    def get_quote_snapshot(self, instrument):
+        cached = self._cached_quote(instrument)
+        if cached and cached.get("ltp") is not None:
+            return cached
+
+        token, symbol, full_symbol = self._resolve_tick_key(instrument)
+        if full_symbol is None:
+            return {
+                "instrument_token": None,
+                "symbol": symbol or str(instrument),
+                "full_symbol": instrument,
+                "ltp": None,
+                "bid": None,
+                "ask": None,
+                "timestamp": time.time(),
+                "source": "unresolved",
+            }
+
+        try:
+            quote = self.kite.quote([full_symbol]).get(full_symbol, {})
+            depth = quote.get("depth", {}) or {}
+            bids = depth.get("buy", []) or []
+            asks = depth.get("sell", []) or []
+            return {
+                "instrument_token": token,
+                "symbol": symbol,
+                "full_symbol": full_symbol,
+                "ltp": quote.get("last_price"),
+                "bid": bids[0]["price"] if bids else None,
+                "ask": asks[0]["price"] if asks else None,
+                "timestamp": time.time(),
+                "source": "rest",
+            }
+        except Exception:
+            return {
+                "instrument_token": token,
+                "symbol": symbol,
+                "full_symbol": full_symbol,
+                "ltp": None,
+                "bid": None,
+                "ask": None,
+                "timestamp": time.time(),
+                "source": "rest_error",
+            }
+
     # ── websocket ────────────────────────────────────────────────────────────
 
     def start_feed(self, symbols):
@@ -253,6 +347,9 @@ class ZerodhaBroker:
 
     def ltp(self, instrument):
         try:
+            cached = self._cached_quote(instrument)
+            if cached and cached.get("ltp") is not None:
+                return cached["ltp"]
             if ":" in instrument:
                 return list(self.kite.ltp(instrument).values())[0]["last_price"]
             inst = self.instrument_map.get(instrument)
@@ -266,24 +363,8 @@ class ZerodhaBroker:
 
     def get_bid_ask(self, symbol):
         try:
-            inst = self.instrument_map.get(symbol)
-            if inst:
-                tick  = self._last_ticks.get(inst["instrument_token"])
-                if tick:
-                    depth = tick.get("depth", {})
-                    bids  = depth.get("buy",  [])
-                    asks  = depth.get("sell", [])
-                    if bids and asks:
-                        return bids[0]["price"], asks[0]["price"]
-            sym   = symbol if ":" in symbol else f"NFO:{symbol}"
-            quote = self.kite.quote([sym])
-            data  = quote.get(sym)
-            if not data:
-                return None, None
-            bids = data.get("depth", {}).get("buy",  [])
-            asks = data.get("depth", {}).get("sell", [])
-            return (bids[0]["price"] if bids else None,
-                    asks[0]["price"] if asks else None)
+            quote = self.get_quote_snapshot(symbol)
+            return quote.get("bid"), quote.get("ask")
         except Exception:
             return None, None
 

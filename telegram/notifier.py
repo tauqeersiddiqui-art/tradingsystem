@@ -221,9 +221,10 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": parse_mode,
         "disable_web_page_preview": disable_web_page_preview,
     }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
     try:
@@ -843,4 +844,85 @@ def send_eod_summary(summary: dict):
         result = _send(CHANNEL_ID, msg)
         if result:
             break
+        time.sleep(2)
+
+
+def send_eod_summary(summary: dict, trade_date=None):
+    from datetime import date
+
+    if trade_date is None:
+        trade_date = date.today()
+
+    t = int(summary.get("trades", 0) or 0)
+    pnl = float(summary.get("pnl", 0) or 0)
+    wins = int(summary.get("wins", 0) or 0)
+    losses = int(summary.get("losses", 0) or 0)
+    wr = float(summary.get("win_rate", 0) or 0)
+    avg_w = float(summary.get("avg_win", 0) or 0)
+    avg_l = float(summary.get("avg_loss", 0) or 0)
+    best = float(summary.get("best", 0) or 0)
+    worst = float(summary.get("worst", 0) or 0)
+
+    pnl_str = f"+{pnl:,.0f}" if pnl >= 0 else f"{pnl:,.0f}"
+    avg_loss_str = f"-Rs{abs(avg_l):,.0f}" if avg_l < 0 else f"Rs{avg_l:,.0f}"
+    best_str = f"+Rs{best:,.0f}" if best >= 0 else f"-Rs{abs(best):,.0f}"
+    worst_str = f"-Rs{abs(worst):,.0f}" if worst < 0 else f"Rs{worst:,.0f}"
+    status = "PROFIT DAY" if pnl > 0 else ("BREAK EVEN" if pnl == 0 else "LOSS DAY")
+
+    msg = (
+        f"<b>END OF DAY - {trade_date.strftime('%d %b %Y')}</b>\n"
+        f"<code>------------------------</code>\n"
+        f"Status    : {status}\n"
+        f"Total P&amp;L : <b>Rs{pnl_str}</b>\n"
+        f"\n"
+        f"Trades    : {t}  ({wins}W / {losses}L)\n"
+        f"Win Rate  : {wr:.0f}%\n"
+        f"Avg Win   : +Rs{avg_w:,.0f}\n"
+        f"Avg Loss  : {avg_loss_str}\n"
+        f"Best      : {best_str}\n"
+        f"Worst     : {worst_str}\n"
+        f"<code>------------------------</code>\n"
+        f"<i>DRY RUN - no real money</i>"
+    )
+
+    plain_msg = (
+        f"END OF DAY - {trade_date.strftime('%d %b %Y')}\n"
+        f"------------------------\n"
+        f"Status    : {status}\n"
+        f"Total P&L : Rs{pnl_str}\n"
+        f"\n"
+        f"Trades    : {t} ({wins}W / {losses}L)\n"
+        f"Win Rate  : {wr:.0f}%\n"
+        f"Avg Win   : +Rs{avg_w:,.0f}\n"
+        f"Avg Loss  : {avg_loss_str}\n"
+        f"Best      : {best_str}\n"
+        f"Worst     : {worst_str}\n"
+        f"------------------------\n"
+        f"DRY RUN - no real money"
+    )
+
+    bot_sent = False
+    for attempt in range(3):
+        result = _send(BOT_CHAT_ID, msg)
+        if result:
+            bot_sent = True
+            break
+        _log.warning("[TG] EOD summary send failed (bot, attempt %d/3)", attempt + 1)
+        time.sleep(2)
+
+    if not bot_sent:
+        _log.warning("[TG] EOD summary HTML send failed; retrying plain-text bot fallback")
+        for attempt in range(3):
+            result = _send(BOT_CHAT_ID, plain_msg, parse_mode=None)
+            if result:
+                bot_sent = True
+                break
+            _log.warning("[TG] EOD plain-text fallback failed (bot, attempt %d/3)", attempt + 1)
+            time.sleep(2)
+
+    for attempt in range(3):
+        result = _send(CHANNEL_ID, msg)
+        if result:
+            break
+        _log.warning("[TG] EOD summary send failed (channel, attempt %d/3)", attempt + 1)
         time.sleep(2)

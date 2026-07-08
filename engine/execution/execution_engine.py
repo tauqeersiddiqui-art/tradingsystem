@@ -53,13 +53,13 @@ class ExecutionEngine:
     # FILL VALIDATION
     # ══════════════════════════════════════════════════════════════════
 
-    def _get_fill_price(self, order_id: str, fallback_price: float) -> float:
+    def _get_fill_price(self, order_id: str, fallback_price: float) -> tuple[float, float | None]:
         """
         Poll order book until order is COMPLETE or max attempts reached.
         Returns actual average fill price or fallback.
         """
         if str(order_id).startswith("dry_"):
-            return fallback_price
+            return fallback_price, time.time()
 
         for attempt in range(_FILL_POLL_ATTEMPTS):
             try:
@@ -74,12 +74,12 @@ class ExecutionEngine:
                                 f"avg_price={avg_price:.2f} "
                                 f"attempt={attempt+1}"
                             )
-                            return avg_price
+                            return avg_price, time.time()
                         elif status in ("REJECTED", "CANCELLED"):
                             logger.error(
                                 f"[FILL] order={order_id} status={status}"
                             )
-                            return 0.0
+                            return 0.0, None
             except Exception as e:
                 logger.warning(f"[FILL] Poll attempt {attempt+1} failed: {e}")
 
@@ -89,7 +89,7 @@ class ExecutionEngine:
             f"[FILL] order={order_id} not confirmed after "
             f"{_FILL_POLL_ATTEMPTS} attempts — using fallback={fallback_price:.2f}"
         )
-        return fallback_price
+        return fallback_price, None
 
     # ══════════════════════════════════════════════════════════════════
     # ENTRY
@@ -112,14 +112,28 @@ class ExecutionEngine:
         if self.config.DRY_RUN or getattr(self.broker, "is_paper", False):
             price = self.broker.ltp(symbol) or 0.0
             order_id = f"dry_{int(time.time())}"
+            submit_ts = time.time()
+            quote = self.broker.get_quote_snapshot(symbol)
             logger.info(
                 f"[DRY ENTRY] {symbol} side={side} qty={qty} price={price:.2f}"
             )
             self._active_order_id = order_id
-            return {"order_id": order_id, "price": price, "qty": qty, "symbol": symbol}
+            return {
+                "order_id": order_id,
+                "price": price,
+                "qty": qty,
+                "symbol": symbol,
+                "submit_ts": submit_ts,
+                "fill_ts": submit_ts,
+                "ltp_before": quote.get("ltp", price),
+                "bid_before": quote.get("bid"),
+                "ask_before": quote.get("ask"),
+            }
 
         # ── Live order ────────────────────────────────────────────────
-        ltp_before = self.broker.ltp(symbol) or 0.0
+        quote_before = self.broker.get_quote_snapshot(symbol)
+        ltp_before = quote_before.get("ltp") or 0.0
+        submit_ts = time.time()
 
         try:
             order_id = self.broker.kite.place_order(
@@ -135,7 +149,7 @@ class ExecutionEngine:
             logger.error(f"[ENTRY] Order placement failed: {e}")
             return None
 
-        fill_price = self._get_fill_price(order_id, ltp_before)
+        fill_price, fill_ts = self._get_fill_price(order_id, ltp_before)
 
         if fill_price <= 0:
             logger.error(
@@ -155,6 +169,11 @@ class ExecutionEngine:
             "price":    fill_price,
             "qty":      qty,
             "symbol":   symbol,
+            "submit_ts": submit_ts,
+            "fill_ts": fill_ts,
+            "ltp_before": ltp_before,
+            "bid_before": quote_before.get("bid"),
+            "ask_before": quote_before.get("ask"),
         }
 
     # ══════════════════════════════════════════════════════════════════

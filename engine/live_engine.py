@@ -18,7 +18,7 @@ from datetime import datetime, time as dtime
 from ml.predictor_champion import ChampionPredictor
 from ml.feature_config import build_live_features, _safe_build_live_features, FEATURE_COLUMNS
 from ml.ml_intraday_learner import IntradayMLLearner
-from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
+from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator, atr_wilder as _atr_wilder, rsi_wilder as _rsi_wilder
 from engine.execution.profit_manager import manage_position
 from engine.risk.risk_manager import compute_entry_stops
 from engine.intelligence.phase55_filter import (
@@ -402,7 +402,9 @@ class LiveEngine:
 
         n = len(closes)
 
-        # EMA20 / EMA50
+        # EMA20 / EMA50 — Wilder-style seed from oldest available bar.
+        # Use as many bars as possible (no arbitrary cap) so convergence
+        # matches training as closely as the live window allows.
         def ema(series, span):
             alpha = 2 / (span + 1)
             val = series[0]
@@ -410,31 +412,20 @@ class LiveEngine:
                 val = p * alpha + val * (1 - alpha)
             return val
 
-        ema20 = ema(closes[-min(n, 60):], 20)
-        ema50 = ema(closes[-min(n, 100):], 50) if n >= 50 else ema20
+        ema20 = ema(closes, 20)
+        ema50 = ema(closes, 50) if n >= 50 else ema(closes, 20)
 
-        # RSI-14
-        if n >= 15:
-            gains, losses = [], []
-            for i in range(-14, 0):
-                diff = closes[i] - closes[i - 1]
-                (gains if diff > 0 else losses).append(abs(diff))
-            avg_g = np.mean(gains) if gains else 1e-6
-            avg_l = np.mean(losses) if losses else 1e-6
-            rsi_1m = 100 - (100 / (1 + avg_g / avg_l))
-        else:
-            rsi_1m = 50.0
+        # RSI-14 — Wilder recursive smoothing (matches training _compute_rsi)
+        c_arr_rsi = np.array(closes, dtype=float)
+        rsi_arr   = _rsi_wilder(c_arr_rsi, period=14)
+        rsi_1m    = float(rsi_arr[-1]) if n >= 14 else 50.0
 
-        # ATR-14 (Wilder)
-        if n >= 15:
-            h = np.array(highs[-14:])
-            l = np.array(lows[-14:])
-            c = np.array(closes[-14:])
-            tr = [max(h[i] - l[i], abs(h[i] - c[i-1]), abs(l[i] - c[i-1]))
-                  for i in range(1, 14)]
-            atr_val = float(np.mean(tr))
-        else:
-            atr_val = abs(closes[-1] - closes[-2]) * 14 ** 0.5
+        # ATR-14 — Wilder RMA over full window (matches training atr_wilder)
+        h_full = np.array(highs, dtype=float)
+        l_full = np.array(lows,  dtype=float)
+        c_full = np.array(closes, dtype=float)
+        atr_arr = _atr_wilder(h_full, l_full, c_full, period=14)
+        atr_val = float(atr_arr[-1]) if n >= 14 else abs(closes[-1] - closes[-2]) * 14 ** 0.5
         atr_val = max(atr_val, 0.5)
 
         trend_strength = (ema20 - ema50) / closes[-1] if closes[-1] != 0 else 0.0

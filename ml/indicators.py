@@ -34,6 +34,26 @@ def atr_wilder(high: np.ndarray, low: np.ndarray, close: np.ndarray,
     return _wilder_smooth(tr, period)
 
 
+def rsi_wilder(close: np.ndarray, period: int = 14) -> np.ndarray:
+    """Wilder RSI — identical to training pipeline _compute_rsi."""
+    n = len(close)
+    rsi = np.full(n, 50.0)
+    delta = np.diff(close, prepend=close[0])
+    gains  = np.where(delta > 0, delta, 0.0)
+    losses = np.where(delta < 0, -delta, 0.0)
+    avg_gain = np.zeros(n)
+    avg_loss = np.zeros(n)
+    if n >= period:
+        avg_gain[period - 1] = gains[1:period].mean()
+        avg_loss[period - 1] = losses[1:period].mean()
+        for i in range(period, n):
+            avg_gain[i] = (avg_gain[i - 1] * (period - 1) + gains[i]) / period
+            avg_loss[i] = (avg_loss[i - 1] * (period - 1) + losses[i]) / period
+        rs = avg_gain / (avg_loss + 1e-10)
+        rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
 # ════════════════════════════════════════════════════════════════════════
 # SUPERTREND  (period=10, multiplier=3)
 # ════════════════════════════════════════════════════════════════════════

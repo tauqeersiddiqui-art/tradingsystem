@@ -973,7 +973,8 @@ class LiveEngine:
         other  = pe_adj if side == "CE" else ce_adj
 
         logger.info(
-            f"[PREDICT-FIRST] CE={ce_adj:.3f} PE={pe_adj:.3f} -> {side} "
+            f"[PREDICT-FIRST] CE={ce_adj:.3f}(raw={self._last_ce_prob:.3f}) "
+            f"PE={pe_adj:.3f}(raw={self._last_pe_prob:.3f}) -> {side} "
             f"thr={thr:.2f} 5m={htf5} pvwap={pvwap:.4f}"
         )
 

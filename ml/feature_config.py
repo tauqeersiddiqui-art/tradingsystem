@@ -168,8 +168,10 @@ def build_live_features(closes, opens, highs, lows, volumes, signal, ts=None):
     import numpy as np
 
     mom_vel = 0.0
-    if len(closes) >= 4:
-        mom_vel = (closes[-1] - closes[-2]) - (closes[-2] - closes[-3])
+    if len(closes) >= 4 and closes[-2] != 0 and closes[-3] != 0:
+        r1 = (closes[-1] - closes[-2]) / closes[-2]
+        r2 = (closes[-2] - closes[-3]) / closes[-3]
+        mom_vel = r1 - r2
 
     range_comp = 1.0
     if len(highs) >= 15 and len(lows) >= 15:

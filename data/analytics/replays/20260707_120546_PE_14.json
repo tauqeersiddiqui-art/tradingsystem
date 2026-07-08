@@ -1,0 +1,97 @@
+{
+  "symbol": "BANKNIFTY26JUL58500PE",
+  "side": "PE",
+  "entry": 682.1,
+  "qty": 60,
+  "summary": {
+    "max_pnl": 312.0,
+    "mae_rs": -306.0,
+    "mae_pts": -5.1,
+    "ladder_stage": "S2_TIGHT_LOCONV",
+    "locked_profit": 249.6,
+    "retained_profit_pct": 0.587,
+    "exit_reason": "STOP",
+    "exit_price": 685.15,
+    "final_stop_loss": 685.84,
+    "pnl": 183.0
+  },
+  "events": [
+    {
+      "t": "12:05:46",
+      "type": "ENTRY",
+      "price": 682.1,
+      "spot": 58458.95,
+      "ml_ce": 0.356,
+      "ml_pe": 0.752,
+      "adx": 12.5,
+      "rsi": 54.6,
+      "vwap": "above",
+      "st_dir": 1,
+      "stop": 675.06,
+      "regime": "RANGE"
+    },
+    {
+      "t": "12:07:04",
+      "type": "MFE_PEAK",
+      "mfe_pts": 2.9,
+      "price": 685.75
+    },
+    {
+      "t": "12:07:05",
+      "type": "MFE_PEAK",
+      "mfe_pts": 3.65,
+      "price": 685.75
+    },
+    {
+      "t": "12:07:05",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 684.73,
+      "pts_locked": 2.63,
+      "mfe_pts": 3.65,
+      "locked_rs": 175.2
+    },
+    {
+      "t": "12:07:09",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 684.91,
+      "pts_locked": 2.81,
+      "mfe_pts": 3.9,
+      "locked_rs": 187.2
+    },
+    {
+      "t": "12:07:12",
+      "type": "MFE_PEAK",
+      "mfe_pts": 4.9,
+      "price": 687
+    },
+    {
+      "t": "12:07:12",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 685.63,
+      "pts_locked": 3.53,
+      "mfe_pts": 4.9,
+      "locked_rs": 235.2
+    },
+    {
+      "t": "12:07:14",
+      "type": "STOP_MOVE",
+      "label": "S2_TIGHT_LOCONV",
+      "new_stop": 685.84,
+      "pts_locked": 3.74,
+      "mfe_pts": 5.2,
+      "locked_rs": 249.6
+    },
+    {
+      "t": "12:07:16",
+      "type": "EXIT",
+      "price": 685.15,
+      "reason": "STOP",
+      "pnl": 183.0,
+      "mfe_pts": 4.9,
+      "mae_pts": -5.1
+    }
+  ]
+}

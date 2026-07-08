@@ -2316,6 +2316,18 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         f"[SCALP SKIP] RANGE_DAY weak move {_s_side}: "
                                         f"{_s_sig['move_pts']:+.1f}pt < {_range_mom_thresh:.0f}pt"
                                     )
+                                elif (
+                                    _is_range_day
+                                    and _s_side == "CE"
+                                    and bool(getattr(ctx.config, "SCALP_REQUIRE_HTF30_BULLISH", True))
+                                    and not bool(_ms_s.get("htf_bullish", True))
+                                ):
+                                    # RANGE_DAY: CE scalp requires 30m HTF to be bullish
+                                    # Today's forensics: 3 CE scalp losses (−181, −252, −177) on flat day
+                                    logger.info(
+                                        f"[SCALP SKIP] RANGE_DAY CE requires HTF30 bullish: "
+                                        f"htf_bullish={_ms_s.get('htf_bullish')} ml={_s_ml_prob:.3f}"
+                                    )
                                 else:
                                     _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
                                     _p55_scalp = ctx.live_engine.evaluate_phase55_candidate(

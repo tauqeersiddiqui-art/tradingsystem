@@ -36,14 +36,13 @@ def compute_entry_stops(entry_premium, atr, regime, delta=0.5):
     if not atr or atr <= 0:
         atr = max(entry_premium, 1.0) * 0.10
 
-    # Raw stop in premium space. Multiplier raised 0.7->0.9 to give the trade
-    # room beyond typical entry noise (today's winners dipped 1.2-2.7pt before
-    # running). Ceiling stays 10pt so WORST-CASE loss per trade is unchanged.
+    # Raw stop in premium space. Multiplier 0.9 gives room beyond entry noise.
+    # Ceiling raised 10->15pt to allow bigger moves to breathe before stopping.
     raw_sl_pts = delta * atr * 0.9
 
-    # Hard limits: 4 pts floor (was 3 — too tight, caused noise stop-outs),
-    # 10 pts ceiling UNCHANGED (capital protection / max loss cap).
-    stop_distance = max(min(raw_sl_pts, 10.0), 4.0)
+    # Hard limits: 6 pts floor (raised from 4 — options need room on RANGE days),
+    # 15 pts ceiling (raised from 10 — stops were firing before trades could move).
+    stop_distance = max(min(raw_sl_pts, 15.0), 6.0)
 
     stop_loss = entry_premium - stop_distance
     target    = entry_premium + stop_distance * 3.5   # 3.5R — rarely hit; trailing does the work

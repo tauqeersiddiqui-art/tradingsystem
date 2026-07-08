@@ -89,7 +89,7 @@ _scalp_live_queued  = False
 _poll_interval     = 3.0
 _poll_interval_max = 60.0
 _tg_http_timeout   = _env_float("TG_HTTP_TIMEOUT_SECONDS", 2.0)
-_tg_poll_timeout   = _env_float("TG_POLL_TIMEOUT_SECONDS", 1.0)
+_tg_poll_timeout   = _env_float("TG_POLL_TIMEOUT_SECONDS", 5.0)
 try:
     _tg_max_tasks_per_tick = max(1, int(os.getenv("TG_MAX_TASKS_PER_TICK", "5")))
 except (TypeError, ValueError):
@@ -99,7 +99,7 @@ _poll_fail_count   = 0
 _last_queue_warn_ts = 0.0
 
 _http = requests.Session()
-_http.trust_env = _env_bool("TG_TRUST_ENV_PROXY", False)
+_http.trust_env = False
 _BOT_URL_RE = re.compile(r"/bot[^/\s]+")
 
 
@@ -214,7 +214,7 @@ _load_state()
 
 
 # ─────────────────────────────────────────────────────────────────────
-# LOW-LEVEL HELPERS  — direct requests, no proxy
+# LOW-LEVEL HELPERS  — direct requests
 # ─────────────────────────────────────────────────────────────────────
 
 def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_preview=True):

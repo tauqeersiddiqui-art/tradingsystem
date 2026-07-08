@@ -100,6 +100,8 @@ class Config:
         self.SCALP_REQUIRE_HTF5_CONFIRM = os.getenv("SCALP_REQUIRE_HTF5_CONFIRM", "1") == "1"
         self.SCALP_REQUIRE_VWAP_CONFIRM = os.getenv("SCALP_REQUIRE_VWAP_CONFIRM", "1") == "1"
         self.SCALP_VWAP_TOLERANCE       = float(os.getenv("SCALP_VWAP_TOLERANCE", "0.0015"))
+        # RANGE_DAY: require 30m HTF bullish before CE scalp (forensic: 3 CE scalp losses on flat days)
+        self.SCALP_REQUIRE_HTF30_BULLISH = os.getenv("SCALP_REQUIRE_HTF30_BULLISH", "1") == "1"
         # RANGE_DAY: require stronger spot move before scalp fires (reduces chop noise)
         self.SCALP_RANGE_MOM_THRESH   = float(os.getenv("SCALP_RANGE_MOM_THRESH", "15.0"))
 

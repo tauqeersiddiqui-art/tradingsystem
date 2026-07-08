@@ -56,8 +56,9 @@ _MIN_EXPECTED_PNL = 150.0
 # calibrator squash bug (now fixed in predictor_champion.py) was hiding
 # this mismatch.  Use the model's own saved thresholds (0.72 CE / 0.64 PE)
 # as the floors so signals can actually fire on de-saturated outputs.
-_MIN_ML_FLOOR    = 0.55   # PE floor (model threshold=0.64; learner adaptive adds ~0.02)
-_CE_ML_FLOOR     = 0.65   # CE floor (model threshold=0.72; learner adaptive adds ~0.02)
+_MIN_ML_FLOOR      = 0.55   # PE floor (model threshold=0.64; learner adaptive adds ~0.02)
+_CE_ML_FLOOR       = 0.65   # CE floor (model threshold=0.72; learner adaptive adds ~0.02)
+_CE_RANGE_DAY_FLOOR = float(os.getenv("CE_ML_RANGE_FLOOR", "0.75"))  # stricter CE floor on RANGE days
 # Re-entry cooldown is config-driven (Config.REENTRY_COOLDOWN, default 300s);
 # see LiveEngine.__init__ self._reentry_cooldown.
 _CE_ORB_ENABLED  = True   # CE allowed but gated by _CE_ML_FLOOR
@@ -721,7 +722,7 @@ class LiveEngine:
                     # (0.80-0.96). De-saturated model tops out at ~0.75.
                     _regime_str = str(self.learner.get_day_type()).upper()
                     _is_range   = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
-                    _ce_floor   = 0.72 if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
+                    _ce_floor   = _CE_RANGE_DAY_FLOOR if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
                     ce_thr = max(threshold - 0.03 if (ce_breakout and orb_ok) else threshold, _ce_floor)
                     # ── CE relative-strength gate (model is CE-saturated) ──
                     # The CE model outputs 0.80-0.96 nearly all day, so the
@@ -989,6 +990,22 @@ class LiveEngine:
             self._count_block("ML_BELOW_THR")
             self._last_block_reason = f"ML_BELOW_THR ({side} {prob:.2f} < {thr:.2f})"
             return None
+
+        # 3b. CE RANGE-DAY HARD FLOOR — pure-ML CE on a RANGE day needs higher conviction
+        # (shadow data: ml_95 block would have saved -288 and -396 today)
+        if side == "CE":
+            _regime_now = str(self.learner.get_day_type()).upper()
+            _is_range_now = "RANGE" in _regime_now or _regime_now in ("UNKNOWN", "")
+            _ce_hard_floor = float(os.getenv("CE_ML_HARD_FLOOR", "0.78"))
+            if _is_range_now and prob < _ce_hard_floor:
+                self._count_block("CE_RANGE_HARD_FLOOR")
+                self._last_block_reason = (
+                    f"CE_RANGE_HARD_FLOOR (prob={prob:.3f} < {_ce_hard_floor:.2f}, RANGE day)"
+                )
+                logger.info(
+                    f"[BLOCK] CE_RANGE_HARD_FLOOR — prob={prob:.3f} < {_ce_hard_floor:.2f} on RANGE day, skipped"
+                )
+                return None
 
         # 4. CONFIRM — 5m trend must AGREE (htf5==0 = insufficient data → allow)
         if side == "CE" and htf5 == -1:

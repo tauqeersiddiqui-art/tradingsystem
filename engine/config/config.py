@@ -91,6 +91,7 @@ class Config:
         # Min absolute ML prob for the trade side before scalp entry is allowed.
         # Scalp is an execution layer, so keep it close to the main AI floor.
         self.SCALP_ML_MIN_PROB        = float(os.getenv("SCALP_ML_MIN_PROB", "0.65"))
+        self.SCALP_MAIN_AI_THRESHOLD_CAP = float(os.getenv("SCALP_MAIN_AI_THRESHOLD_CAP", "0.65"))
         # Min positive ML edge (side_prob - opp_prob) required for scalp entry.
         # Blocks near-neutral entries where models have no view (e.g. right after restart
         # before sufficient candles accumulate, or in choppy open conditions).

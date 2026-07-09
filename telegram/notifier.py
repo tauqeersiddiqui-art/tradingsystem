@@ -37,6 +37,8 @@ API_URL             = f"https://api.telegram.org/bot{BOT_TOKEN}"
 SEND_URL            = f"{API_URL}/sendMessage"
 EDIT_MESSAGE_URL    = f"{API_URL}/editMessageText"
 EDIT_MARKUP_URL     = f"{API_URL}/editMessageReplyMarkup"
+SEND_PHOTO_URL      = f"{API_URL}/sendPhoto"
+EDIT_MEDIA_URL      = f"{API_URL}/editMessageMedia"
 GET_UPDATES_URL     = f"{API_URL}/getUpdates"
 ANSWER_CALLBACK_URL = f"{API_URL}/answerCallbackQuery"
 
@@ -176,6 +178,7 @@ def _tg_enqueue(fn, *args, **kwargs):
 # ─────────────────────────────────────────────────────────────────────
 _engine_msg_id = None
 _market_msg_id = None
+_chart_msg_id  = None
 _trade_msg_id  = None
 _scalp_msg_id  = None
 
@@ -185,12 +188,13 @@ _EDIT_GONE      = "GONE"
 
 
 def _load_state():
-    global _engine_msg_id, _market_msg_id, _trade_msg_id, _scalp_msg_id
+    global _engine_msg_id, _market_msg_id, _chart_msg_id, _trade_msg_id, _scalp_msg_id
     try:
         with open(_STATE_FILE) as f:
             d = json.load(f)
         _engine_msg_id = d.get("engine")
         _market_msg_id = d.get("market")
+        _chart_msg_id  = d.get("chart")
         _trade_msg_id  = d.get("trade")
         _scalp_msg_id  = d.get("scalp")
     except Exception:
@@ -203,6 +207,7 @@ def _save_state():
             json.dump({
                 "engine": _engine_msg_id,
                 "market": _market_msg_id,
+                "chart":  _chart_msg_id,
                 "trade":  _trade_msg_id,
                 "scalp":  _scalp_msg_id,
             }, f)
@@ -236,6 +241,32 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         return d.get("result")
     except Exception as e:
         _log.warning("[TG] Send exception: %s", _redact(e))
+        return None
+
+
+def _send_photo(chat_id, photo_path, caption=None, parse_mode="HTML"):
+    if not photo_path or not os.path.exists(photo_path):
+        _log.warning("[TG] photo send skipped; file missing: %s", photo_path)
+        return None
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
+        data["parse_mode"] = parse_mode
+    try:
+        with open(photo_path, "rb") as fh:
+            r = _http.post(
+                SEND_PHOTO_URL,
+                data=data,
+                files={"photo": (os.path.basename(photo_path), fh, "image/png")},
+                timeout=max(_tg_http_timeout, 15.0),
+            )
+        d = r.json()
+        if not d.get("ok"):
+            _log.warning("[TG] Send photo error: %s", _redact(d))
+            return None
+        return d.get("result")
+    except Exception as e:
+        _log.warning("[TG] Send photo exception: %s", _redact(e))
         return None
 
 
@@ -318,6 +349,55 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         return False
 
 
+def _edit_photo(message_id, photo_path, caption=None, parse_mode="HTML"):
+    if not photo_path or not os.path.exists(photo_path):
+        _log.warning("[TG] photo edit skipped; file missing: %s", photo_path)
+        return False
+    media = {"type": "photo", "media": "attach://photo"}
+    if caption:
+        media["caption"] = caption
+        media["parse_mode"] = parse_mode
+    try:
+        with open(photo_path, "rb") as fh:
+            r = _http.post(
+                EDIT_MEDIA_URL,
+                data={
+                    "chat_id": BOT_CHAT_ID,
+                    "message_id": message_id,
+                    "media": json.dumps(media),
+                },
+                files={"photo": (os.path.basename(photo_path), fh, "image/png")},
+                timeout=max(_tg_http_timeout, 15.0),
+            )
+        d = r.json()
+        if d.get("ok"):
+            return True
+
+        desc = str(d.get("description", "")).lower()
+        if any(phrase in desc for phrase in (
+            "message to edit not found",
+            "message can't be edited",
+            "message_id_invalid",
+            "chat not found",
+        )):
+            _log.warning("[TG] Chart edit target gone: %s", _redact(d))
+            return _EDIT_GONE
+
+        _log.warning("[TG] Chart edit error: %s", _redact(d))
+        return False
+    except Exception as e:
+        _log.warning("[TG] Chart edit exception: %s", _redact(e))
+        return False
+
+
+def _safe_unlink(path):
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
 def _answer_cb(callback_id, text=""):
     try:
         _http.post(ANSWER_CALLBACK_URL,
@@ -393,6 +473,29 @@ def _do_send_or_edit_market(text: str, reply_markup=None):
                 _save_state()
 
 
+def _do_send_or_edit_chart(photo_path: str, caption=None):
+    global _chart_msg_id
+    try:
+        if _chart_msg_id is None:
+            result = _send_photo(BOT_CHAT_ID, photo_path, caption=caption)
+            if result:
+                _chart_msg_id = result["message_id"]
+                _save_state()
+        else:
+            ok = _edit_photo(_chart_msg_id, photo_path, caption=caption)
+            if ok == _EDIT_GONE:
+                old_id = _chart_msg_id
+                _chart_msg_id = None
+                _last_edited.pop(old_id, None)
+                _save_state()
+                result = _send_photo(BOT_CHAT_ID, photo_path, caption=caption)
+                if result:
+                    _chart_msg_id = result["message_id"]
+                    _save_state()
+    finally:
+        _safe_unlink(photo_path)
+
+
 def send_or_edit_engine_dashboard(text: str):
     _tg_enqueue(_do_send_or_edit_engine, text)
 
@@ -401,14 +504,19 @@ def send_or_edit_market_dashboard(text: str, reply_markup=None):
     _tg_enqueue(_do_send_or_edit_market, text, reply_markup)
 
 
+def send_or_edit_chart_dashboard(photo_path: str, caption=None):
+    _tg_enqueue(_do_send_or_edit_chart, photo_path, caption)
+
+
 def send_or_edit_dashboard(text: str, parse_mode: str = "HTML"):
     send_or_edit_engine_dashboard(text)
 
 
 def reset_dashboard():
-    global _engine_msg_id, _market_msg_id
+    global _engine_msg_id, _market_msg_id, _chart_msg_id
     _engine_msg_id = None
     _market_msg_id = None
+    _chart_msg_id = None
     _last_edited.clear()
     _save_state()
 

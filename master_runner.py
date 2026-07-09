@@ -79,6 +79,7 @@ from ml.ml_intraday_learner import IntradayMLLearner
 
 from engine.services.dashboard import render_engine, render_market
 
+from telegram.chart_image import render_banknifty_chart
 from telegram.messages import (
     format_trade_entry,
     format_trade_exit,
@@ -100,6 +101,7 @@ from telegram.notifier import (
     poll_commands,
     ask_trade_permission,
     send_or_edit_market_dashboard,
+    send_or_edit_chart_dashboard,
     send_eod_summary,
     MANUAL_EXIT_REQUESTED,
     send_scalp_entry,
@@ -655,50 +657,88 @@ def _build_banknifty_chart_state(df_window, builder, ltp_current: float) -> dict
         if df_window is None or len(df_window) < 2:
             return {}
 
-        view = df_window.tail(30).copy()
-        closes = [float(x) for x in view["close"].tolist()]
-        if not closes:
+        view = df_window.tail(150).copy()
+        if view.empty:
             return {}
 
+        view["ts"] = pd.to_datetime(view["ts"])
         wip = builder.current_wip() if builder else None
+        live_row = None
         if wip and float(wip.get("close", 0.0) or 0.0) > 0:
-            live_close = float(wip["close"])
-            if live_close != closes[-1]:
-                closes.append(live_close)
+            live_row = {
+                "ts": pd.to_datetime(wip.get("ts")),
+                "open": float(wip.get("open", wip["close"])),
+                "high": float(wip.get("high", wip["close"])),
+                "low": float(wip.get("low", wip["close"])),
+                "close": float(wip["close"]),
+                "volume": int(wip.get("volume", 0) or 0),
+            }
         elif ltp_current:
-            live_close = float(ltp_current)
-            if live_close != closes[-1]:
-                closes.append(live_close)
+            last_close = float(view["close"].iloc[-1])
+            live_ts = view["ts"].iloc[-1] + pd.Timedelta(minutes=1)
+            live_row = {
+                "ts": pd.to_datetime(live_ts),
+                "open": last_close,
+                "high": max(last_close, float(ltp_current)),
+                "low": min(last_close, float(ltp_current)),
+                "close": float(ltp_current),
+                "volume": int(view["volume"].iloc[-1]) if "volume" in view.columns else 0,
+            }
 
-        if len(closes) > 31:
-            closes = closes[-31:]
+        if live_row is not None and pd.notna(live_row["ts"]):
+            view = pd.concat([view, pd.DataFrame([live_row])], ignore_index=True)
 
-        ts_vals = view["ts"].tolist() if "ts" in view.columns else []
-        start = "--"
-        end = "--"
-        if ts_vals:
-            start = pd.to_datetime(ts_vals[0]).strftime("%H:%M")
-            end = pd.to_datetime(ts_vals[-1]).strftime("%H:%M")
-        if wip and wip.get("ts") is not None:
-            end = pd.to_datetime(wip["ts"]).strftime("%H:%M")
+        chart = (
+            view.sort_values("ts")
+            .assign(bucket=lambda df: df["ts"].dt.floor("5min"))
+            .groupby("bucket", as_index=False)
+            .agg(
+                open=("open", "first"),
+                high=("high", "max"),
+                low=("low", "min"),
+                close=("close", "last"),
+                ts_end=("ts", "max"),
+            )
+            .tail(12)
+            .reset_index(drop=True)
+        )
+        closes = [round(float(x), 1) for x in chart["close"].tolist()]
+        if len(closes) < 2:
+            return {}
 
-        def _move(minutes: int):
-            if len(closes) <= minutes:
+        start = pd.to_datetime(chart["bucket"].iloc[0]).strftime("%H:%M")
+        end = pd.to_datetime(chart["ts_end"].iloc[-1]).strftime("%H:%M")
+
+        def _move(bars: int):
+            if len(closes) <= bars:
                 return None
-            return round(closes[-1] - closes[-minutes - 1], 1)
+            return round(closes[-1] - closes[-bars - 1], 1)
 
         return {
-            "closes": [round(x, 1) for x in closes],
-            "first": round(closes[0], 1),
-            "last": round(closes[-1], 1),
-            "high": round(max(closes), 1),
-            "low": round(min(closes), 1),
+            "interval_label": "5M",
+            "closes": closes,
+            "first": closes[0],
+            "last": closes[-1],
+            "high": round(float(chart["high"].max()), 1),
+            "low": round(float(chart["low"].min()), 1),
             "start": start,
             "end": end,
+            "move_labels": ["5m", "15m", "30m"],
+            "bars": [
+                {
+                    "ts": pd.to_datetime(row["bucket"]).strftime("%Y-%m-%d %H:%M:%S"),
+                    "label": pd.to_datetime(row["bucket"]).strftime("%H:%M"),
+                    "open": round(float(row["open"]), 1),
+                    "high": round(float(row["high"]), 1),
+                    "low": round(float(row["low"]), 1),
+                    "close": round(float(row["close"]), 1),
+                }
+                for _, row in chart.iterrows()
+            ],
             "moves": {
-                "5m": _move(5),
-                "15m": _move(15),
-                "30m": _move(30),
+                "5m": _move(1),
+                "15m": _move(3),
+                "30m": _move(6),
             },
         }
     except Exception as exc:
@@ -2331,6 +2371,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 _ml_disagree_margin = getattr(ctx.config, "SCALP_ML_DISAGREE_MARGIN", 0.12)
                                 _ml_min_prob        = getattr(ctx.config, "SCALP_ML_MIN_PROB", 0.40)
                                 _ml_min_edge        = getattr(ctx.config, "SCALP_ML_MIN_EDGE", 0.08)
+                                _main_ai_thr_cap    = float(getattr(ctx.config, "SCALP_MAIN_AI_THRESHOLD_CAP", _ml_min_prob) or _ml_min_prob)
                                 _use_main_ai_thr    = bool(getattr(ctx.config, "SCALP_USE_MAIN_AI_THRESHOLD", True))
                                 _range_mom_thresh   = getattr(ctx.config, "SCALP_RANGE_MOM_THRESH", 15.0)
                                 _day_type_str       = str(ctx.ml_learner.get_day_type()).upper()
@@ -2349,6 +2390,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         _ms_s.get(_side_thr_key, _ms_s.get("ml_threshold", _ml_min_prob))
                                         or _ml_min_prob
                                     )
+                                    _main_ai_thr = min(_main_ai_thr, _main_ai_thr_cap)
                                     _ml_min_prob = max(float(_ml_min_prob), _main_ai_thr)
 
                                 if _s_ml_edge < -_ml_disagree_margin:
@@ -2561,6 +2603,21 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # Dashboard 2: Live Status
                 market_msg = render_market(ctx, market_state, None, ltp_current)
                 send_or_edit_market_dashboard(market_msg)
+                try:
+                    chart_state = market_state.get("banknifty_chart") or {}
+                    chart_path = render_banknifty_chart(
+                        chart_state,
+                        out_dir=os.path.join("data", "telegram_charts"),
+                    )
+                    if chart_path:
+                        caption = (
+                            f"<b>BANKNIFTY 5M Chart</b>\n"
+                            f"<code>{chart_state.get('start', '--')} -> {chart_state.get('end', '--')}  "
+                            f"{float(chart_state.get('last', 0.0)):,.1f}</code>"
+                        )
+                        send_or_edit_chart_dashboard(chart_path, caption=caption)
+                except Exception as _chart_e:
+                    logger.debug(f"[TG] chart dashboard failed: {_chart_e}")
 
             # ── EOD summary at 15:30 ─────────────────────────────────
             if not _eod_sent and now >= __import__("datetime").time(15, 30):

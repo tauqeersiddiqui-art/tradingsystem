@@ -489,18 +489,21 @@ def _section_banknifty_chart(ms: dict) -> str:
     start_ts = chart.get("start", "--")
     end_ts = chart.get("end", "--")
     moves = chart.get("moves") or {}
+    interval_label = str(chart.get("interval_label") or "LIVE").upper()
+    move_labels = chart.get("move_labels") or ["5m", "15m", "30m"]
 
     def _fmt_move(value):
         return "--" if value is None else f"{float(value):+.1f}"
 
+    move_text = "  ".join(
+        f"{label} {_fmt_move(moves.get(label))}" for label in move_labels
+    )
+
     return (
-        f"\n<b>BANKNIFTY 30M CHART</b>\n"
+        f"\n<b>BANKNIFTY LIVE CHART ({interval_label})</b>\n"
         f"<code>{line}</code>\n"
         f"<code>{start_ts} {first:,.1f} -> {end_ts} {last:,.1f} ({change:+.1f})</code>\n"
-        f"<code>H {high:,.1f}  L {low:,.1f}  "
-        f"5m {_fmt_move(moves.get('5m'))}  "
-        f"15m {_fmt_move(moves.get('15m'))}  "
-        f"30m {_fmt_move(moves.get('30m'))}</code>\n"
+        f"<code>H {high:,.1f}  L {low:,.1f}  {move_text}</code>\n"
     )
 
 

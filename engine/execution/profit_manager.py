@@ -49,6 +49,13 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 def trail_settings() -> tuple[float, float]:
     """Return (arm_points, trail_gap_points) for long-option trailing stops."""
     arm_pts = max(0.0, _env_float("TRAIL_ARM_PTS", _TRAIL_ARM_PTS_DEFAULT))
@@ -85,10 +92,23 @@ _TRAIL_PCT    = 0.72
 
 def _cost_rs(qty: int) -> float:
     """Round-trip cost in Rs for a given position qty (scales by lots)."""
-    import os
     cost_per_lot = float(os.getenv("COST_PER_LOT", _COST_PER_LOT))
     lots = max(1, round(qty / _LOT_UNITS))
     return lots * cost_per_lot
+
+
+def _profit_lock_floor_rs(qty: int) -> float:
+    """
+    Minimum gross profit the ladder should try to protect.
+
+    Default behavior is the user's requested gross-cost floor: Rs66 per lot.
+    Extra buffer / net-profit requirements are opt-in via env.
+    """
+    cost = _cost_rs(qty)
+    lots = max(1, round(qty / _LOT_UNITS))
+    slip_buffer = max(0.0, _env_float("PROFIT_LOCK_SLIPPAGE_BUFFER_RS", 0.0)) * lots
+    min_net = max(0.0, _env_float("PROFIT_LOCK_MIN_NET_PROFIT_RS", 0.0))
+    return cost + slip_buffer + min_net
 
 
 def _dynamic_lock_profile(ml_prob, regime):
@@ -146,14 +166,16 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS,
     """
     qty = max(int(qty or 0), 1)
     cost = _cost_rs(qty)
+    floor = _profit_lock_floor_rs(qty)
     prof = _dynamic_lock_profile(ml_prob, regime)
+    arm_threshold = max(floor, cost * prof["arm_mult"])
 
     # Not enough cushion yet — rely on the initial stop (no early lock).
-    if max_pnl < cost * prof["arm_mult"]:
+    if max_pnl < arm_threshold:
         return 0.0, "INITIAL"
 
-    # Trail a dynamic fraction of the peak, floored at break-even-after-cost.
-    locked = max(prof["trail_pct"] * max_pnl, cost)
+    # Trail a dynamic fraction of the peak, floored at the configured gross lock.
+    locked = max(prof["trail_pct"] * max_pnl, floor)
 
     # Lock more aggressively when deep in profit (protect large winners).
     if   max_pnl >= 2000.0:
@@ -166,7 +188,7 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS,
         locked = max(locked, 0.65 * max_pnl)
         stage  = "S4_TRAIL65%"
     else:
-        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else f"S2_{prof['label']}"
+        stage  = "S1_COSTLOCK" if locked <= floor + 1e-6 else f"S2_{prof['label']}"
 
     locked = min(locked, max_pnl)   # never lock more than the peak itself
     return locked, stage
@@ -211,8 +233,8 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob,
     max_pnl = max(max_pnl, pnl)
     reason  = None
 
-    # ── 0  Fixed target hit ───────────────────────────────────────────
-    if target is not None and ltp >= target:
+    # ── 0  Optional fixed target hit (disabled by default) ────────────
+    if _env_bool("TARGET_EXIT_ENABLED", False) and target is not None and ltp >= target:
         return stop_loss, max_pnl, "TARGET_HIT"
 
     # ── 1  Centralized profit-lock ladder (single source of truth) ────

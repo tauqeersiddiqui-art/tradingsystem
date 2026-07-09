@@ -20,8 +20,9 @@ class Config:
         self.INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", 100000))
         self.RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.02))
         self.DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", -2000))
-        self.DAILY_PROFIT_TARGET = float(os.getenv("DAILY_PROFIT_TARGET", "800"))
-        self.DAILY_PROFIT_LOCK_ENABLED = os.getenv("DAILY_PROFIT_LOCK_ENABLED", "1") == "1"
+        self.DAILY_PROFIT_TARGET = float(os.getenv("DAILY_PROFIT_TARGET", "0"))
+        self.DAILY_PROFIT_LOCK_ENABLED = os.getenv("DAILY_PROFIT_LOCK_ENABLED", "0") == "1"
+        self.TARGET_EXIT_ENABLED = os.getenv("TARGET_EXIT_ENABLED", "0") == "1"
         self.TRADE_LIVE_UPDATE_SECONDS = float(os.getenv("TRADE_LIVE_UPDATE_SECONDS", "2.0"))
         self.TRAIL_ARM_PTS = float(os.getenv("TRAIL_ARM_PTS", "10.0"))
         self.TRAIL_GAP_PTS = float(os.getenv("TRAIL_GAP_PTS", "5.0"))
@@ -31,6 +32,8 @@ class Config:
         # Round-trip cost per 30-qty BANKNIFTY lot (buy+sell). Drives the cost-aware
         # profit ladder so it never locks a profit below the trade's own cost.
         self.COST_PER_LOT = float(os.getenv("COST_PER_LOT", 66.0))
+        self.PROFIT_LOCK_SLIPPAGE_BUFFER_RS = float(os.getenv("PROFIT_LOCK_SLIPPAGE_BUFFER_RS", "0.0"))
+        self.PROFIT_LOCK_MIN_NET_PROFIT_RS = float(os.getenv("PROFIT_LOCK_MIN_NET_PROFIT_RS", "0.0"))
 
         # Lunch chop filter (11:00-12:30). Kept OFF for dry-run testing.
         # Flip LUNCH_FILTER_ENABLED=1 when switching to real money.
@@ -67,6 +70,7 @@ class Config:
         self.SCALP_ENABLED            = os.getenv("SCALP_ENABLED", "1") == "1"
         self.SCALP_SL_PTS             = float(os.getenv("SCALP_SL_PTS", "3.0"))
         self.SCALP_TARGET_PTS         = float(os.getenv("SCALP_TARGET_PTS", "50.0"))  # disabled — trailing SL is primary exit
+        self.SCALP_TARGET_EXIT_ENABLED = os.getenv("SCALP_TARGET_EXIT_ENABLED", "0") == "1"
         self.SCALP_MAX_HOLD_SECONDS   = int(os.getenv("SCALP_MAX_HOLD_SECONDS", "180"))
         self.SCALP_MOMENTUM_WINDOW    = int(os.getenv("SCALP_MOMENTUM_WINDOW", "30"))
         self.SCALP_MOMENTUM_THRESHOLD = float(os.getenv("SCALP_MOMENTUM_THRESHOLD", "12.0"))
@@ -82,7 +86,7 @@ class Config:
         self.SCALP_MIN_NET_PROFIT_RS  = float(os.getenv("SCALP_MIN_NET_PROFIT_RS", "0.0"))
         self.SCALP_MIN_TRAIL_MFE_COST_MULT = float(os.getenv("SCALP_MIN_TRAIL_MFE_COST_MULT", "3.0"))
         self.SCALP_MIN_TRAIL_MFE_RS   = float(os.getenv("SCALP_MIN_TRAIL_MFE_RS", "0.0"))
-        self.SCALP_DAILY_PROFIT_TARGET = float(os.getenv("SCALP_DAILY_PROFIT_TARGET", "2000.0"))
+        self.SCALP_DAILY_PROFIT_TARGET = float(os.getenv("SCALP_DAILY_PROFIT_TARGET", "0.0"))
         self.SCALP_MIN_OPT_PTS        = float(os.getenv("SCALP_MIN_OPT_PTS", "30.0"))  # skip options cheaper than this
         # Max scalp trades per session — reserves remaining slots for ML engine
         self.SCALP_MAX_TRADES         = int(os.getenv("SCALP_MAX_TRADES", "10"))

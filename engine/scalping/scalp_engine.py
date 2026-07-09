@@ -17,6 +17,7 @@ class ScalpEngine:
     def __init__(self, config):
         self._sl_pts        = config.SCALP_SL_PTS
         self._target_pts    = config.SCALP_TARGET_PTS
+        self._target_exit_enabled = bool(getattr(config, "SCALP_TARGET_EXIT_ENABLED", False))
         self._max_hold      = config.SCALP_MAX_HOLD_SECONDS
         self._mom_window    = config.SCALP_MOMENTUM_WINDOW
         self._mom_thresh    = config.SCALP_MOMENTUM_THRESHOLD
@@ -28,7 +29,8 @@ class ScalpEngine:
         logger.info(
             f"[SCALP ENGINE] initialized | threshold={self._mom_thresh}pt "
             f"window={self._mom_window}s SL={self._sl_pts}pt "
-            f"target={self._target_pts}pt max_hold={self._max_hold}s "
+            f"target={'on' if self._target_exit_enabled else 'off'}:{self._target_pts}pt "
+            f"max_hold={self._max_hold}s "
             f"cooldown={self._cooldown_secs}s"
         )
 
@@ -106,7 +108,7 @@ class ScalpEngine:
         if current_ltp <= entry - self._sl_pts:
             return True, "STOP"
 
-        if current_ltp >= entry + self._target_pts:
+        if self._target_exit_enabled and current_ltp >= entry + self._target_pts:
             return True, "TARGET"
 
         held = (ts - scalp_pos["entry_ts"]).total_seconds()

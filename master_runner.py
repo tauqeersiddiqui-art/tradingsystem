@@ -96,6 +96,7 @@ from telegram.notifier import (
     repost_engine_dashboard,
     send_bot,
     send_bot_force,
+    send_bot_sync,
     send_trade_channel,
     remove_exit_button,
     poll_commands,
@@ -639,6 +640,14 @@ def tg_force(msg: str):
         send_bot_force(msg)
     except Exception as e:
         logger.warning(f"[TELEGRAM] force send failed: {e}")
+
+
+def tg_force_sync(msg: str):
+    """Synchronous send for shutdown-critical alerts."""
+    try:
+        send_bot_sync(msg)
+    except Exception as e:
+        logger.warning(f"[TELEGRAM] sync force send failed: {e}")
 
 
 def _request_process_stop(reason: str) -> None:
@@ -2646,7 +2655,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 # ── F2: comprehensive daily review ─────────────────────
                 try:
-                    tg_force(eod_review())
+                    tg_force_sync(eod_review())
                 except Exception as _e2:
                     logger.warning(f"[EOD F2] {_e2}")
 
@@ -2654,7 +2663,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 try:
                     _ret_report = _profit_retention_sim(ctx)
                     if _ret_report:
-                        tg_force(_ret_report)
+                        tg_force_sync(_ret_report)
                 except Exception as _rr_e:
                     logger.warning(f"[EOD F7 SIM] {_rr_e}")
 
@@ -2662,7 +2671,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 try:
                     _drift_rpt, _drift_alerts = drift_check()
                     if _drift_alerts:
-                        tg_force(_drift_rpt)
+                        tg_force_sync(_drift_rpt)
                         for _da in _drift_alerts:
                             logger.warning(f"[DRIFT] {_da}")
                 except Exception as _e6:
@@ -2673,7 +2682,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _eq_rpt, _eq_alerts = equity_curve_stats()
                     if _eq_alerts:
                         for _ea in _eq_alerts:
-                            tg_force(_ea)
+                            tg_force_sync(_ea)
                 except Exception as _e8:
                     logger.warning(f"[EOD F8] {_e8}")
 
@@ -2681,7 +2690,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 try:
                     _slip_rpt = slippage_stats(n_trades=50)
                     if _slip_rpt and "No slippage" not in _slip_rpt:
-                        tg_force(_slip_rpt)
+                        tg_force_sync(_slip_rpt)
                 except Exception as _e5:
                     logger.warning(f"[EOD F5] {_e5}")
 
@@ -2779,18 +2788,18 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "[EOD] Summaries complete but position still open; "
                         "shutdown will wait until flat"
                     )
-                    tg_force("EOD summaries sent. Waiting for open trade to close before stopping engine.")
+                    tg_force_sync("EOD summaries sent. Waiting for open trade to close before stopping engine.")
 
             if _eod_shutdown_requested and position is None and scalp_position is None:
                 # Wait for Friday retrain to finish before exiting.
                 # Poll every 5s so the engine stays responsive to KeyboardInterrupt.
                 if _retrain_thread is not None and _retrain_thread.is_alive():
                     logger.info("[EOD] Waiting for Friday retrain to complete...")
-                    tg_force("EOD complete. Waiting for Friday retrain to finish...")
+                    tg_force_sync("EOD complete. Waiting for Friday retrain to finish...")
                     _retrain_thread.join(timeout=7200)  # max 2h safety ceiling
                     if _retrain_thread.is_alive():
                         logger.warning("[RETRAIN] Still running after 2h — engine exiting anyway")
-                        tg_force("[RETRAIN] Timeout (2h). Engine exiting; check logs.")
+                        tg_force_sync("[RETRAIN] Timeout (2h). Engine exiting; check logs.")
                 try:
                     save_state(
                         ctx,
@@ -2806,7 +2815,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     update_health(snapshot(ctx))
                 except Exception as _health_e:
                     logger.warning(f"[EOD] Final health update failed: {_health_e}")
-                tg_force("EOD summaries sent. Engine stopped for the day.")
+                tg_force_sync("EOD summaries sent. Engine stopped for the day.")
                 logger.info("[EOD] Summaries complete; stopping engine for the day")
                 _request_process_stop("eod_complete")
                 break

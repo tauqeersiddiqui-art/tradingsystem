@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-07-09T15:30:00.466068",
+  "session": "20260709",
+  "stats": {
+    "telemetry_enabled": true,
+    "trades_evaluated": 204,
+    "trades_allowed": 161,
+    "trades_blocked": 43,
+    "blocked_by_ce_threshold": 43,
+    "blocked_by_pe_threshold": 0,
+    "blocked_by_mixed_regime": 43,
+    "block_percentage": 21.08,
+    "correct_blocks": 0,
+    "false_positive_blocks": 43,
+    "correct_block_rate": 0.0,
+    "false_block_rate": 100.0,
+    "estimated_pnl_saved": 0.0,
+    "estimated_pnl_missed": 18987.0
+  },
+  "top_blocking_reasons": [
+    [
+      "PHASE55_CE_MIXED_REGIME",
+      43
+    ]
+  ],
+  "regimes_most_frequently_blocked": [
+    [
+      "mixed",
+      43
+    ]
+  ],
+  "recommendation": "Relax Thresholds",
+  "decisions_path": "data\\phase55\\phase55_decisions_20260709.csv",
+  "outcomes_path": "data\\phase55\\phase55_outcomes_20260709.csv"
+}

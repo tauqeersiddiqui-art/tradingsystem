@@ -422,6 +422,34 @@ def send_bot_force(message, parse_mode="HTML"):
     _tg_enqueue(_send, BOT_CHAT_ID, message, parse_mode=parse_mode)
 
 
+def send_bot_sync(message, parse_mode="HTML", retries=3, retry_sleep=2.0, plain_text_fallback=True):
+    """
+    Synchronous bot send for shutdown-critical messages such as EOD summaries.
+    Unlike the queued senders, this waits for the network call to complete.
+    """
+    for attempt in range(int(max(retries, 1))):
+        result = _send(BOT_CHAT_ID, message, parse_mode=parse_mode)
+        if result:
+            return result
+        _log.warning("[TG] Sync bot send failed (attempt %d/%d)", attempt + 1, retries)
+        time.sleep(max(retry_sleep, 0.0))
+
+    if plain_text_fallback and parse_mode:
+        plain = re.sub(r"<[^>]+>", "", str(message))
+        for attempt in range(int(max(retries, 1))):
+            result = _send(BOT_CHAT_ID, plain, parse_mode=None)
+            if result:
+                return result
+            _log.warning(
+                "[TG] Sync bot plain-text fallback failed (attempt %d/%d)",
+                attempt + 1,
+                retries,
+            )
+            time.sleep(max(retry_sleep, 0.0))
+
+    return None
+
+
 def send_trade_channel(message):
     if TRADE_QUIET_MODE:
         _log.debug("[TG QUIET] suppressed channel message")

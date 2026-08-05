@@ -1,6 +1,7 @@
 # execution/broker.py
 import os
 import time
+import threading
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from kiteconnect import KiteConnect, KiteTicker
@@ -48,6 +49,9 @@ class ZerodhaBroker:
         self._atm_ce_token:    int | None = None  # instrument_token of the ATM CE
         self._atm_pe_token:    int | None = None  # instrument_token of the ATM PE
 
+        # Thread lock for shared state (WebSocket callback and main thread)
+        self._lock = threading.RLock()
+
     def _resolve_tick_key(self, instrument):
         if not instrument:
             return None, None, None
@@ -76,26 +80,27 @@ class ZerodhaBroker:
         if token is None:
             return None
 
-        tick = self._last_ticks.get(token)
-        if not tick:
-            return None
+        with self._lock:
+            tick = self._last_ticks.get(token)
+            if not tick:
+                return None
 
-        depth = tick.get("depth", {}) or {}
-        bids = depth.get("buy", []) or []
-        asks = depth.get("sell", []) or []
-        bid = bids[0]["price"] if bids else None
-        ask = asks[0]["price"] if asks else None
+            depth = tick.get("depth", {}) or {}
+            bids = depth.get("buy", []) or []
+            asks = depth.get("sell", []) or []
+            bid = bids[0]["price"] if bids else None
+            ask = asks[0]["price"] if asks else None
 
-        return {
-            "instrument_token": token,
-            "symbol": symbol,
-            "full_symbol": full_symbol,
-            "ltp": tick.get("last_price"),
-            "bid": bid,
-            "ask": ask,
-            "timestamp": tick.get("_price_updated_at"),
-            "source": "ws",
-        }
+            return {
+                "instrument_token": token,
+                "symbol": symbol,
+                "full_symbol": full_symbol,
+                "ltp": tick.get("last_price"),
+                "bid": bid,
+                "ask": ask,
+                "timestamp": tick.get("_price_updated_at"),
+                "source": "ws",
+            }
 
     def get_quote_snapshot(self, instrument):
         cached = self._cached_quote(instrument)
@@ -164,44 +169,46 @@ class ZerodhaBroker:
         self.ticker = KiteTicker(self.api_key, self.access_token)
 
         def on_ticks(ws, ticks):
-            now_ts = time.time()
-            for tick in ticks:
-                token = tick["instrument_token"]
-                tick["_price_updated_at"] = now_ts
-                # Preserve OI from a previous FULL-mode tick when a QUOTE-mode
-                # packet arrives without the oi key. Zerodha sends mixed packet
-                # sizes (44-byte QUOTE on price changes, 184-byte FULL when OI
-                # refreshes), so overwriting unconditionally would zero out OI.
-                if token in self._last_ticks and "oi" not in tick:
-                    prev = self._last_ticks[token]
-                    for _k in ("oi", "oi_day_high", "oi_day_low"):
-                        if _k in prev:
-                            tick[_k] = prev[_k]
-                    if "_oi_updated_at" in prev:
-                        tick["_oi_updated_at"] = prev["_oi_updated_at"]
-                elif "oi" in tick:
-                    tick["_oi_updated_at"] = now_ts
-                self._last_ticks[token] = tick
-            self._last_tick_time = now_ts
+            with self._lock:
+                now_ts = time.time()
+                for tick in ticks:
+                    token = tick["instrument_token"]
+                    tick["_price_updated_at"] = now_ts
+                    # Preserve OI from a previous FULL-mode tick when a QUOTE-mode
+                    # packet arrives without the oi key. Zerodha sends mixed packet
+                    # sizes (44-byte QUOTE on price changes, 184-byte FULL when OI
+                    # refreshes), so overwriting unconditionally would zero out OI.
+                    if token in self._last_ticks and "oi" not in tick:
+                        prev = self._last_ticks[token]
+                        for _k in ("oi", "oi_day_high", "oi_day_low"):
+                            if _k in prev:
+                                tick[_k] = prev[_k]
+                        if "_oi_updated_at" in prev:
+                            tick["_oi_updated_at"] = prev["_oi_updated_at"]
+                    elif "oi" in tick:
+                        tick["_oi_updated_at"] = now_ts
+                    self._last_ticks[token] = tick
+                self._last_tick_time = now_ts
 
         def on_connect(ws, _):
-            ws.subscribe(tokens)
-            # NIFTY BANK index (token 260105) does not carry bid/ask depth.
-            # MODE_FULL on an index token either returns 0 for last_price or
-            # silently drops the tick on some Zerodha gateway versions.
-            # Use MODE_QUOTE which reliably includes last_price for indices.
-            ws.set_mode(ws.MODE_QUOTE, tokens)
-            # Restore option-chain subscriptions after any reconnect.
-            # On the first connect this list is empty; once subscribe_options()
-            # has run, every subsequent reconnect re-applies the same set so OI
-            # and option LTPs resume without restarting the engine.
-            if self._option_tokens:
-                ws.subscribe(self._option_tokens)
-                ws.set_mode(ws.MODE_FULL, self._option_tokens)  # MODE_FULL required for OI
-                print(
-                    f"[BROKER] on_connect: re-subscribed {len(self._option_tokens)}"
-                    " option tokens"
-                )
+            with self._lock:
+                ws.subscribe(tokens)
+                # NIFTY BANK index (token 260105) does not carry bid/ask depth.
+                # MODE_FULL on an index token either returns 0 for last_price or
+                # silently drops the tick on some Zerodha gateway versions.
+                # Use MODE_QUOTE which reliably includes last_price for indices.
+                ws.set_mode(ws.MODE_QUOTE, tokens)
+                # Restore option-chain subscriptions after any reconnect.
+                # On the first connect this list is empty; once subscribe_options()
+                # has run, every subsequent reconnect re-applies the same set so OI
+                # and option LTPs resume without restarting the engine.
+                if self._option_tokens:
+                    ws.subscribe(self._option_tokens)
+                    ws.set_mode(ws.MODE_FULL, self._option_tokens)  # MODE_FULL required for OI
+                    print(
+                        f"[BROKER] on_connect: re-subscribed {len(self._option_tokens)}"
+                        " option tokens"
+                    )
 
         def on_close(ws, code, reason):
             print(f"[BROKER] Feed closed: {reason}")
@@ -233,48 +240,49 @@ class ZerodhaBroker:
         Safe to call at any time after start_feed(); idempotent — re-calling
         refreshes the ATM and re-subscribes to the updated strike set.
         """
-        spot = self.ltp("NSE:NIFTY BANK")
-        if not spot:
-            print("[OPTIONS FEED] Cannot compute ATM — no BANKNIFTY spot price yet")
-            return
+        with self._lock:
+            spot = self.ltp("NSE:NIFTY BANK")
+            if not spot:
+                print("[OPTIONS FEED] Cannot compute ATM — no BANKNIFTY spot price yet")
+                return
 
-        atm = round(spot / 100) * 100
-        self._subscribed_atm = atm
+            atm = round(spot / 100) * 100
+            self._subscribed_atm = atm
 
-        tokens_to_sub:  list = []
-        symbols_to_sub: list = []
-        atm_ce_token:   int | None = None
-        atm_pe_token:   int | None = None
-        atm_ce_sym:     str = "n/a"
-        atm_pe_sym:     str = "n/a"
+            tokens_to_sub:  list = []
+            symbols_to_sub: list = []
+            atm_ce_token:   int | None = None
+            atm_pe_token:   int | None = None
+            atm_ce_sym:     str = "n/a"
+            atm_pe_sym:     str = "n/a"
 
-        for i in range(-strikes_range, strikes_range + 1):
-            strike = atm + i * 100
-            for opt_type in ("CE", "PE"):
-                opts = self.option_index.get((strike, opt_type))
-                if not opts:
-                    continue
-                # Nearest expiry first
-                inst = sorted(opts, key=lambda x: x["expiry"])[0]
-                tok  = inst["instrument_token"]
-                sym  = inst["tradingsymbol"]
-                tokens_to_sub.append(tok)
-                symbols_to_sub.append(sym)
-                if strike == atm and opt_type == "CE":
-                    atm_ce_token = tok
-                    atm_ce_sym   = sym
-                if strike == atm and opt_type == "PE":
-                    atm_pe_token = tok
-                    atm_pe_sym   = sym
+            for i in range(-strikes_range, strikes_range + 1):
+                strike = atm + i * 100
+                for opt_type in ("CE", "PE"):
+                    opts = self.option_index.get((strike, opt_type))
+                    if not opts:
+                        continue
+                    # Nearest expiry first
+                    inst = sorted(opts, key=lambda x: x["expiry"])[0]
+                    tok  = inst["instrument_token"]
+                    sym  = inst["tradingsymbol"]
+                    tokens_to_sub.append(tok)
+                    symbols_to_sub.append(sym)
+                    if strike == atm and opt_type == "CE":
+                        atm_ce_token = tok
+                        atm_ce_sym   = sym
+                    if strike == atm and opt_type == "PE":
+                        atm_pe_token = tok
+                        atm_pe_sym   = sym
 
-        if not tokens_to_sub:
-            print("[OPTIONS FEED] No option tokens found near ATM — instrument list may be stale")
-            return
+            if not tokens_to_sub:
+                print("[OPTIONS FEED] No option tokens found near ATM — instrument list may be stale")
+                return
 
-        self._option_tokens  = tokens_to_sub
-        self._option_symbols = symbols_to_sub
-        self._atm_ce_token   = atm_ce_token
-        self._atm_pe_token   = atm_pe_token
+            self._option_tokens  = tokens_to_sub
+            self._option_symbols = symbols_to_sub
+            self._atm_ce_token   = atm_ce_token
+            self._atm_pe_token   = atm_pe_token
 
         # Push subscriptions onto the live WebSocket connection (if up).
         # If the ticker is not yet connected, tokens are stored and on_connect
@@ -326,22 +334,23 @@ class ZerodhaBroker:
         Return a snapshot of live option-feed health.
         Used for periodic [OPTION FEED] log in the engine loop.
         """
-        ce_oi = (
-            self._last_ticks.get(self._atm_ce_token, {}).get("oi", 0)
-            if self._atm_ce_token else 0
-        )
-        pe_oi = (
-            self._last_ticks.get(self._atm_pe_token, {}).get("oi", 0)
-            if self._atm_pe_token else 0
-        )
-        chain_live = sum(1 for t in self._option_tokens if t in self._last_ticks)
-        return {
-            "ce_oi":             ce_oi,
-            "pe_oi":             pe_oi,
-            "chain_tokens_live": chain_live,
-            "chain_tokens_total": len(self._option_tokens),
-            "atm":               self._subscribed_atm,
-        }
+        with self._lock:
+            ce_oi = (
+                self._last_ticks.get(self._atm_ce_token, {}).get("oi", 0)
+                if self._atm_ce_token else 0
+            )
+            pe_oi = (
+                self._last_ticks.get(self._atm_pe_token, {}).get("oi", 0)
+                if self._atm_pe_token else 0
+            )
+            chain_live = sum(1 for t in self._option_tokens if t in self._last_ticks)
+            return {
+                "ce_oi":             ce_oi,
+                "pe_oi":             pe_oi,
+                "chain_tokens_live": chain_live,
+                "chain_tokens_total": len(self._option_tokens),
+                "atm":               self._subscribed_atm,
+            }
 
     # ── prices ───────────────────────────────────────────────────────────────
 
@@ -413,8 +422,9 @@ class ZerodhaBroker:
                     continue
                 ce   = sorted(ce_list, key=lambda x: x["expiry"])[0]
                 pe   = sorted(pe_list, key=lambda x: x["expiry"])[0]
-                ce_tick = self._last_ticks.get(ce["instrument_token"], {})
-                pe_tick = self._last_ticks.get(pe["instrument_token"], {})
+                with self._lock:
+                    ce_tick = self._last_ticks.get(ce["instrument_token"], {})
+                    pe_tick = self._last_ticks.get(pe["instrument_token"], {})
                 chain.append({
                     "strike": s,
                     "ce_oi":  ce_tick.get("oi", 0),

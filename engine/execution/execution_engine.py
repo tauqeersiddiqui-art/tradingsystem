@@ -187,19 +187,28 @@ class ExecutionEngine:
         """
 
         txn_type = self.broker.kite.TRANSACTION_TYPE_SELL
-        
+
         # ── Paper / DRY RUN ───────────────────────────────────────────
         if self.config.DRY_RUN or getattr(self.broker, "is_paper", False):
             price = self.broker.ltp(symbol) or 0.0
+            submit_ts = time.time()
             order_id = f"dry_exit_{int(time.time())}"
             logger.info(
                 f"[DRY EXIT] {symbol} side={side} qty={qty} price={price:.2f}"
             )
             self._active_order_id = None
-            return {"order_id": order_id, "price": price, "qty": qty, "symbol": symbol}
+            return {
+                "order_id": order_id,
+                "price": price,
+                "qty": qty,
+                "symbol": symbol,
+                "submit_ts": submit_ts,
+                "fill_ts": submit_ts,
+            }
 
         # ── Live order ────────────────────────────────────────────────
         ltp_before = self.broker.ltp(symbol) or 0.0
+        submit_ts = time.time()
 
         try:
             order_id = self.broker.kite.place_order(
@@ -215,7 +224,7 @@ class ExecutionEngine:
             logger.error(f"[EXIT] Order placement failed: {e}")
             return None
 
-        fill_price = self._get_fill_price(order_id, ltp_before)
+        fill_price, fill_ts = self._get_fill_price(order_id, ltp_before)
 
         if fill_price <= 0:
             logger.error(
@@ -223,6 +232,7 @@ class ExecutionEngine:
                 "Using last LTP as fallback."
             )
             fill_price = ltp_before
+            fill_ts = None
 
         self._active_order_id = None   # clear guard
         logger.info(
@@ -235,6 +245,8 @@ class ExecutionEngine:
             "price":    fill_price,
             "qty":      qty,
             "symbol":   symbol,
+            "submit_ts": submit_ts,
+            "fill_ts": fill_ts,
         }
 
     # ══════════════════════════════════════════════════════════════════

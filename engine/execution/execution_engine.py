@@ -17,6 +17,45 @@ logger = logging.getLogger("execution_engine")
 _FILL_POLL_ATTEMPTS = 8
 _FILL_POLL_INTERVAL = 0.4   # seconds between fill polls
 
+# ── Explicit order-state model (Phase 2 — Execution Truth Layer) ─────────
+# A position is created/removed ONLY on ST_COMPLETE.  All other states mean
+# "do NOT create / do NOT clear / do NOT re-place".  Fills are NEVER fabricated.
+ST_NEW        = "NEW"
+ST_SUBMITTED  = "SUBMITTED"
+ST_OPEN       = "OPEN"
+ST_PARTIAL    = "PARTIAL"
+ST_COMPLETE   = "COMPLETE"
+ST_REJECTED   = "REJECTED"
+ST_CANCELLED  = "CANCELLED"
+ST_TIMEOUT    = "TIMEOUT"      # order alive at broker, fill unconfirmed after wait
+ST_UNKNOWN    = "UNKNOWN"      # broker unreachable / order not resolvable
+
+# Terminal states
+_FILLED_TERMINAL     = (ST_COMPLETE,)
+_NONFILLED_TERMINAL  = (ST_REJECTED, ST_CANCELLED)
+_TERMINAL            = _FILLED_TERMINAL + _NONFILLED_TERMINAL
+
+# Max seconds a pending entry/exit order may be reconciled before the engine
+# halts (can no longer be left unresolved).
+_MAX_PENDING_RESOLVE_SECONDS = 60.0
+
+
+def _normalize_status(status: str, filled_qty: int) -> str:
+    """Map a Zerodha order status to our explicit state model."""
+    s = (status or "").upper()
+    if s == "COMPLETE":
+        return ST_COMPLETE
+    if s == "REJECTED":
+        return ST_REJECTED
+    if s in ("CANCELLED", "CANCEL_PENDING"):
+        return ST_CANCELLED
+    # Any live, non-terminal response is OPEN unless partially filled.
+    if s in ("OPEN", "PENDING", "VALIDATION PENDING", "AMO REQ RECEIVED",
+             "TRIGGER PENDING", "IMPLICIT", "SUBMITTED"):
+        return ST_PARTIAL if filled_qty > 0 else ST_OPEN
+    # Unknown response string — treat as UNKNOWN (do not guess).
+    return ST_UNKNOWN
+
 
 class ExecutionEngine:
 
@@ -26,6 +65,57 @@ class ExecutionEngine:
 
         # Duplicate order guard — cleared on exit
         self._active_order_id: str | None = None
+
+    # ══════════════════════════════════════════════════════════════════
+    # ORDER STATE RESOLUTION (never fabricates a fill)
+    # ══════════════════════════════════════════════════════════════════
+
+    def _order_status(self, order_id: str, timeout_attempts: int = _FILL_POLL_ATTEMPTS):
+        """
+        Resolve a live order to an explicit state.
+
+        Returns (state, avg_price, fill_ts, filled_qty):
+          - ST_COMPLETE          -> (ST_COMPLETE, real avg_price, timestamp, fq)
+          - ST_REJECTED/CANCELLED-> (state, avg_of_fill, None, filled_qty)
+                                     (avg>0 & fq>0 only if it partially filled first)
+          - ST_OPEN/PARTIAL/TIMEOUT/UNKNOWN -> (state, None, None, filled_qty)
+        """
+        if self._is_dry() or str(order_id).startswith("dry_"):
+            # Paper / dry-run: fills are instantly "complete" at the paper LTP.
+            return ST_COMPLETE, time.time(), time.time(), 0
+
+        order_id = str(order_id)
+        for attempt in range(max(1, timeout_attempts)):
+            try:
+                found = None
+                for o in self.broker.kite.orders():
+                    if str(o["order_id"]) == order_id:
+                        found = o
+                        break
+                if found is not None:
+                    status = found.get("status", "")
+                    avg    = float(found.get("average_price", 0) or 0)
+                    fq     = int(found.get("filled_quantity", 0) or 0)
+                    st     = _normalize_status(status, fq)
+                    if st in _TERMINAL:
+                        if st == ST_COMPLETE and avg <= 0:
+                            # A COMPLETE fill with no average price is unusable —
+                            # never guess one. Treat as UNKNOWN (halt upstream).
+                            return ST_UNKNOWN, None, None, fq
+                        return st, avg, (time.time() if st == ST_COMPLETE else None), fq
+                    # Live non-terminal: order is still at the broker, fill unconfirmed.
+                    if attempt == timeout_attempts - 1:
+                        return ST_TIMEOUT, None, None, fq
+                else:
+                    # Broker responded but our order is not in the list — we cannot
+                    # confirm it. Never fabricate.
+                    return ST_UNKNOWN, None, None, 0
+            except Exception as e:
+                logger.warning(f"[ORDER] status poll {attempt+1}/{timeout_attempts} failed: {e}")
+                if attempt == timeout_attempts - 1:
+                    return ST_UNKNOWN, None, None, 0
+            time.sleep(_FILL_POLL_INTERVAL)
+        return ST_UNKNOWN, None, None, 0
 
     # ══════════════════════════════════════════════════════════════════
     # LOT SIZE
@@ -50,46 +140,10 @@ class ExecutionEngine:
         return 30   # BANKNIFTY lot size
 
     # ══════════════════════════════════════════════════════════════════
-    # FILL VALIDATION
+    # FILL VALIDATION  →  replaced by _order_status() (explicit state model)
+    # NEVER fabricate a fill.  Position creation/removal is gated upstream on
+    # ST_COMPLETE only.
     # ══════════════════════════════════════════════════════════════════
-
-    def _get_fill_price(self, order_id: str, fallback_price: float) -> tuple[float, float | None]:
-        """
-        Poll order book until order is COMPLETE or max attempts reached.
-        Returns actual average fill price or fallback.
-        """
-        if str(order_id).startswith("dry_"):
-            return fallback_price, time.time()
-
-        for attempt in range(_FILL_POLL_ATTEMPTS):
-            try:
-                orders = self.broker.kite.orders()
-                for o in orders:
-                    if str(o["order_id"]) == str(order_id):
-                        status = o.get("status", "")
-                        avg_price = float(o.get("average_price", 0))
-                        if status == "COMPLETE" and avg_price > 0:
-                            logger.info(
-                                f"[FILL] order={order_id} "
-                                f"avg_price={avg_price:.2f} "
-                                f"attempt={attempt+1}"
-                            )
-                            return avg_price, time.time()
-                        elif status in ("REJECTED", "CANCELLED"):
-                            logger.error(
-                                f"[FILL] order={order_id} status={status}"
-                            )
-                            return 0.0, None
-            except Exception as e:
-                logger.warning(f"[FILL] Poll attempt {attempt+1} failed: {e}")
-
-            time.sleep(_FILL_POLL_INTERVAL)
-
-        logger.warning(
-            f"[FILL] order={order_id} not confirmed after "
-            f"{_FILL_POLL_ATTEMPTS} attempts — using fallback={fallback_price:.2f}"
-        )
-        return fallback_price, None
 
     # ══════════════════════════════════════════════════════════════════
     # ENTRY
@@ -128,6 +182,7 @@ class ExecutionEngine:
                 "ltp_before": quote.get("ltp", price),
                 "bid_before": quote.get("bid"),
                 "ask_before": quote.get("ask"),
+                "state": ST_COMPLETE,   # paper fills are instantly "complete"
             }
 
         # ── Live order ────────────────────────────────────────────────
@@ -147,34 +202,43 @@ class ExecutionEngine:
             )
         except Exception as e:
             logger.error(f"[ENTRY] Order placement failed: {e}")
-            return None
+            return {"state": ST_REJECTED, "reason": "placement_error",
+                    "symbol": symbol, "qty": qty, "price": None, "fill_ts": None}
 
-        fill_price, fill_ts = self._get_fill_price(order_id, ltp_before)
+        order_id = str(order_id)
+        self._active_order_id = order_id
 
-        if fill_price <= 0:
-            logger.error(
-                f"[ENTRY] Fill price invalid for order={order_id} — "
-                "position NOT tracked"
-            )
-            return None
+        # Resolve to an explicit state.  NEVER fabricate a fill.
+        state, avg, fill_ts, filled_qty = self._order_status(order_id)
 
-        self._active_order_id = str(order_id)
-        logger.info(
-            f"[ENTRY] order={order_id} symbol={symbol} "
-            f"qty={qty} fill={fill_price:.2f}"
-        )
-
-        return {
-            "order_id": str(order_id),
-            "price":    fill_price,
-            "qty":      qty,
-            "symbol":   symbol,
-            "submit_ts": submit_ts,
-            "fill_ts": fill_ts,
+        base = {
+            "order_id":   order_id,
+            "qty":        qty,
+            "symbol":     symbol,
+            "submit_ts":  submit_ts,
             "ltp_before": ltp_before,
             "bid_before": quote_before.get("bid"),
             "ask_before": quote_before.get("ask"),
+            "state":      state,
+            "filled_qty": filled_qty,
         }
+        if state == ST_COMPLETE:
+            base["price"]   = avg
+            base["fill_ts"] = fill_ts
+            logger.info(
+                f"[ENTRY] order={order_id} symbol={symbol} "
+                f"qty={qty} fill={avg:.2f}"
+            )
+        else:
+            # Position NOT created upstream (no SL, no local dict) — only the
+            # order_id is retained for reconciliation.
+            base["price"]   = None
+            base["fill_ts"] = None
+            logger.critical(
+                f"[ENTRY] order={order_id} NOT confirmed ({state}) — "
+                f"position NOT created, NO SL placed"
+            )
+        return base
 
     # ══════════════════════════════════════════════════════════════════
     # EXIT
@@ -204,6 +268,7 @@ class ExecutionEngine:
                 "symbol": symbol,
                 "submit_ts": submit_ts,
                 "fill_ts": submit_ts,
+                "state": ST_COMPLETE,   # paper fills are instantly "complete"
             }
 
         # ── Live order ────────────────────────────────────────────────
@@ -222,31 +287,45 @@ class ExecutionEngine:
             )
         except Exception as e:
             logger.error(f"[EXIT] Order placement failed: {e}")
-            return None
+            return {"state": ST_REJECTED, "reason": "placement_error",
+                    "symbol": symbol, "qty": qty, "price": None, "fill_ts": None}
 
-        fill_price, fill_ts = self._get_fill_price(order_id, ltp_before)
-
-        if fill_price <= 0:
-            logger.error(
-                f"[EXIT] Fill price invalid for order={order_id}. "
-                "Using last LTP as fallback."
-            )
-            fill_price = ltp_before
-            fill_ts = None
-
+        order_id = str(order_id)
         self._active_order_id = None   # clear guard
-        logger.info(
-            f"[EXIT] order={order_id} symbol={symbol} "
-            f"qty={qty} fill={fill_price:.2f} side={side}"
-        )
 
+        # Resolve to an explicit state.  NEVER fabricate a fill.
+        state, avg, fill_ts, filled_qty = self._order_status(order_id)
+
+        if state == ST_COMPLETE:
+            logger.info(
+                f"[EXIT] order={order_id} symbol={symbol} "
+                f"qty={qty} fill={avg:.2f} side={side}"
+            )
+            return {
+                "order_id":  order_id,
+                "price":     avg,
+                "qty":       qty,
+                "symbol":    symbol,
+                "submit_ts": submit_ts,
+                "fill_ts":   fill_ts,
+                "state":     ST_COMPLETE,
+                "filled_qty": filled_qty,
+            }
+
+        # Position is NOT cleared upstream. Only the order_id is retained for
+        # reconciliation next cycle (single-exit-order guard).
+        logger.critical(
+            f"[EXIT] order={order_id} NOT confirmed ({state}) — "
+            f"position NOT cleared, will reconcile"
+        )
         return {
-            "order_id": str(order_id),
-            "price":    fill_price,
-            "qty":      qty,
-            "symbol":   symbol,
+            "order_id":  order_id,
+            "price":     None,
+            "qty":       qty,
+            "symbol":    symbol,
             "submit_ts": submit_ts,
-            "fill_ts": fill_ts,
+            "fill_ts":   None,
+            "state":     state,
         }
 
     # ══════════════════════════════════════════════════════════════════
@@ -383,8 +462,11 @@ class ExecutionEngine:
 
     def verify_flat(self, symbol: str) -> bool:
         """
-        Confirms broker shows zero open quantity for this symbol.
-        Used after exit to ensure position is actually closed.
+        Confirms broker shows zero net quantity for this symbol.
+        Used after exit to ensure the position is actually closed.
+
+        FAIL-CLOSED: returns False (NOT flat) on any broker error, so callers
+        can never conclude the position is closed while broker state is unknown.
         """
         if self.config.DRY_RUN or getattr(self.broker, "is_paper", False):
             return True
@@ -401,5 +483,7 @@ class ExecutionEngine:
                         return False
             return True
         except Exception as e:
-            logger.warning(f"[VERIFY] Position check failed: {e}")
-            return True   # assume flat on error to avoid double-exit
+            logger.critical(f"[VERIFY] Position check failed: {e} — broker state UNKNOWN")
+            # Fail-closed: unknown broker state must HALT the exit, not guess.
+            # Callers catch this and defer the exit (keep position open).
+            raise

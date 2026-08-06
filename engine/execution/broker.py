@@ -9,6 +9,15 @@ from kiteconnect import KiteConnect, KiteTicker
 load_dotenv(os.path.join(os.getcwd(), ".env"), override=True)
 
 
+class BrokerStateError(Exception):
+    """
+    Raised when broker state (positions/orders) cannot be verified.
+
+    PRINCIPLE: unknown broker state MUST be treated as high risk and halt
+    trading.  Callers must never interpret this exception as 'flat'.
+    """
+
+
 class ZerodhaBroker:
 
     def __init__(self):
@@ -468,16 +477,43 @@ class ZerodhaBroker:
     # ── positions ────────────────────────────────────────────────────────────
 
     def get_positions(self):
+        """
+        Return the broker's net positions.
+
+        Raises BrokerStateError if the broker cannot be reached, or if the
+        response is malformed (missing 'net').  An empty list is indistinguishable
+        from 'broker unreachable', so DO NOT swallow the error into [] — that
+        fail-open behaviour has caused phantom-flat bugs.
+        """
         try:
-            return self.kite.positions().get("net", [])
+            resp = self.kite.positions()
+            net = resp.get("net")
+            if net is None:
+                raise BrokerStateError("positions response missing 'net'")
+            return net
+        except BrokerStateError:
+            raise
         except Exception as e:
-            print(f"[BROKER] get_positions: {e}"); return []
+            raise BrokerStateError(f"get_positions: {e}") from e
 
     def has_open_position(self):
+        """
+        Return True if the broker reports any net open quantity.
+
+        Raises BrokerStateError if the broker state cannot be determined.
+        'Unknown' is NOT the same as 'flat' — callers must halt on this.
+        """
         try:
-            return any(int(p.get("quantity", 0)) != 0 for p in self.get_positions())
+            resp = self.kite.positions()
+            net = resp.get("net")
+            if net is None:
+                raise BrokerStateError("positions response missing 'net'")
+            positions = net
+        except BrokerStateError:
+            raise
         except Exception as e:
-            print(f"[BROKER] has_open_position: {e}"); return True
+            raise BrokerStateError(f"has_open_position: {e}") from e
+        return any(int(p.get("quantity", 0)) != 0 for p in positions)
 
     def get_order_average_price(self, order_id):
         try:

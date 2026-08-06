@@ -23,6 +23,7 @@ _PERSIST_KEYS = (
     "symbol", "side", "qty", "lot_size", "entry", "stop_loss", "target",
     "max_pnl", "min_pnl", "ml_prob", "regime", "reason", "sl_order_id",
     "_phase55_telemetry_id", "_phase55_decision",
+    "_exit_order_id", "_pending_exit_reason",   # Phase 2: in-flight exit order
 )
 
 
@@ -45,6 +46,8 @@ def save_state(
     scalp_trades_today=0,
     scalp_pnl_today=0.0,
     daily_profit_locked=False,
+    pending_entry=None,
+    pending_scalp=None,
 ):
     """Persist pnl, trades_today, closed-pnl list, and open positions."""
     try:
@@ -59,6 +62,8 @@ def save_state(
             "positions":         list(getattr(ctx, "positions", [])),
             "open_position":     _serialize_position(position),
             "scalp_position":    _serialize_position(scalp_position),
+            "pending_entry":     pending_entry,
+            "pending_scalp":     pending_scalp,
         }
         os.makedirs(os.path.dirname(_STATE_PATH), exist_ok=True)
         # Per-process temp name + atomic os.replace => readers never observe a

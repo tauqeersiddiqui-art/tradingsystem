@@ -49,7 +49,11 @@ TEST_MODE  = os.getenv("TEST_MODE",  "0") == "1"
 HIST_CSV   = "data/historical/banknifty_1m_full.csv"
 
 # ── Imports ───────────────────────────────────────────────────────────
-from engine.execution.execution_engine import ExecutionEngine
+from engine.execution.execution_engine import (
+    ExecutionEngine, _MAX_PENDING_RESOLVE_SECONDS,
+    ST_COMPLETE, ST_REJECTED, ST_CANCELLED, ST_OPEN, ST_PARTIAL, ST_TIMEOUT, ST_UNKNOWN,
+)
+from engine.execution.broker import BrokerStateError
 from engine.core.context import TradingContext
 from engine.config.config import Config
 from engine.core.health_monitor import update_health, snapshot
@@ -176,6 +180,15 @@ def _sl_pause_entries() -> None:
         pass
 
 
+# L1-4 — idempotency guard for _finalize_entry.  Keyed by entry order_id.
+# A finalized order's position is stored here so a duplicate call (in-process
+# re-finalize after a late finalizer exception) RETURNS the existing position
+# and executes NO duplicate side effect (no second SL, no double trade count,
+# no duplicate journal/telegram).  In-memory only; the crash path is covered by
+# the broker-side SL dedup in _sl_create.
+_FINALIZED_ENTRIES: dict = {}   # entry_order_id -> (position, entry_time, entry_order_rec, journal_id)
+
+
 def _sl_failsafe(op: str, position: dict) -> None:
     sym = position.get("symbol", "")
     sl  = position.get("stop_loss", 0.0)
@@ -194,7 +207,23 @@ def _sl_failsafe(op: str, position: dict) -> None:
 
 
 def _sl_create(ctx, position: dict) -> None:
-    """Place the protective SL-M when a trade opens."""
+    """Place the protective SL-M when a trade opens.
+    L1-4 idempotency: if a protective SELL SL-M for this symbol is ALREADY
+    resting at the broker (a prior finalize, or a crash between SL-placement
+    and persistence), REUSE it — never place a second.  Exactly one protective
+    stop may exist per position; the second SELL-SL is what would fire after a
+    later exit and open a short."""
+    try:
+        found = ctx.executor.find_open_stop_order(position["symbol"])
+    except Exception:
+        found = None
+    if found:
+        position["sl_order_id"] = found["order_id"]
+        logger.info(
+            f"[BROKER SL REUSED]\n{position['symbol']}  "
+            f"trigger={position['stop_loss']:.2f}  id={found['order_id']}"
+        )
+        return
     try:
         oid = ctx.executor.place_protective_stop(
             position["symbol"], position["qty"], position["stop_loss"]
@@ -215,6 +244,12 @@ def _sl_create(ctx, position: dict) -> None:
 
 def _sl_modify(ctx, position: dict, new_stop: float) -> None:
     """Raise the broker stop when the ladder tightens. No cancel-first (atomic)."""
+    # Phase 2 — while an exit SELL is in flight, do NOT touch the SL.  sl_order_id
+    # is already None (it was cancelled before the exit), and re-creating one here
+    # would leave a resting SELL-SL that fires AFTER the exit fills → opens a short.
+    if position.get("_exit_order_id"):
+        logger.debug(f"[BROKER SL] skip modify — exit in flight")
+        return
     oid = position.get("sl_order_id")
     if not oid:
         # Broker stop missing (earlier create failed) — try to establish one now.
@@ -358,6 +393,11 @@ def _sl_cancel(ctx, position: dict) -> None:
 
 def _sl_verify_or_repair(ctx, position: dict) -> None:
     """Restart recovery: confirm broker stop matches expected stop_loss; repair if not."""
+    # Phase 2 — never re-create a broker SL while an exit SELL is in flight (a
+    # resting SELL-SL could fire after the exit fills and open a short).
+    if position.get("_exit_order_id"):
+        logger.debug(f"[BROKER SL] skip verify/repair — exit in flight")
+        return
     sym  = position.get("symbol", "")
     want = position.get("stop_loss", 0.0)
     oid  = position.get("sl_order_id")
@@ -392,6 +432,423 @@ def _sl_verify_or_repair(ctx, position: dict) -> None:
                 f"[BROKER SL REPAIRED]\n{sym}  created missing stop "
                 f"trigger={want:.2f}  id={position['sl_order_id']}"
             )
+
+# ─────────────────────────────────────────────────────────────────────
+# PHASE 2 — ENTRY FINALIZATION (Execution Truth Layer)
+# Called ONLY after the broker confirmed the entry order state == COMPLETE.
+# The same code builds the position for an immediate COMPLETE fill and for a
+# deferred entry that completed during pending-order reconciliation.
+# ─────────────────────────────────────────────────────────────────────
+
+def _finalize_entry(ctx, *, symbol, side, lot_size, order, decision, signal_ts,
+                    signal_snapshot, ts, ltp_current,
+                    scalp_position, _scalp_trades_today, _scalp_pnl_today,
+                    _daily_profit_locked):
+    """
+    Build the live position dict, place the broker SL-M, persist state and
+    notify.  Returns (position, entry_time, entry_order_rec, journal_id).
+    L1-4 idempotency: re-finalizing the SAME entry order_id executes NO side
+    effect — it returns the already-finalized position.
+    """
+    _entry_id = order.get("order_id")
+    if _entry_id and _entry_id in _FINALIZED_ENTRIES:
+        logger.warning(
+            f"[FINALIZE] entry order {_entry_id} already finalized — "
+            f"returning existing, NO duplicate side effects"
+        )
+        _fp, _ft, _fo, _fj = _FINALIZED_ENTRIES[_entry_id]
+        return _fp, _ft, _fo, _fj
+    fill_premium = order["price"]
+    atr_val      = decision.get("features", {}).get("atr", 1.0)
+    regime       = decision.get("regime", "UNKNOWN")
+    stop_loss, target, _stop_pct = compute_entry_stops(fill_premium, atr_val, regime)
+
+    _signal_opt_ltp   = ((signal_snapshot or {}).get("quote") or {}).get("ltp") or 0.0
+    _order_submit_ts  = order.get("submit_ts")
+    _fill_ts          = order.get("fill_ts")
+    _dt_mod           = __import__("datetime").datetime
+    _signal_to_order_ms = (
+        int(max(0.0, (_order_submit_ts - signal_ts.timestamp()) * 1000))
+        if _order_submit_ts is not None else 0
+    )
+    _order_to_fill_ms = (
+        int(max(0.0, (_fill_ts - _order_submit_ts) * 1000))
+        if (_fill_ts is not None and _order_submit_ts is not None) else 0
+    )
+    _first_bid  = order.get("bid_before")
+    _first_ask  = order.get("ask_before")
+    _first_ltp  = order.get("ltp_before")
+    _first_spread = (
+        float(_first_ask - _first_bid)
+        if _first_ask is not None and _first_bid is not None else ""
+    )
+    _slippage_pts = (
+        float(fill_premium - _signal_opt_ltp) if _signal_opt_ltp else ""
+    )
+
+    position = {
+        "symbol":    symbol,
+        "side":      side,
+        "qty":       order["qty"],
+        "lot_size":  lot_size,
+        "entry":     fill_premium,
+        "stop_loss": stop_loss,
+        "target":    target,
+        "max_pnl":   0.0,
+        "min_pnl":   0.0,   # tracks MAE (maximum adverse excursion)
+        "ml_prob":   decision.get("ml_prob", 0.0),
+        "features":  decision.get("features", {}),
+        "regime":    regime,
+        "reason":    decision.get("reason", ""),
+        "entry_ts":  ts,   # for held-time display in dashboard
+        "_phase55_telemetry_id": decision.get("_phase55_telemetry_id", ""),
+        "_phase55_decision":     decision.get("_phase55_decision", {}),
+        "_exec_signal_ts":       signal_ts.isoformat(),
+        "_exec_order_submit_ts": (_dt_mod.fromtimestamp(_order_submit_ts).isoformat()
+                                  if _order_submit_ts is not None else ""),
+        "_exec_fill_ts":         (_dt_mod.fromtimestamp(_fill_ts).isoformat()
+                                  if _fill_ts is not None else ""),
+        "_exec_signal_price":    float(_signal_opt_ltp or 0.0),
+        "_exec_first_bid":       _first_bid,
+        "_exec_first_ask":       _first_ask,
+        "_exec_first_ltp":       _first_ltp,
+        "_exec_spread":          _first_spread,
+        "_exec_slippage_pts":    _slippage_pts,
+        "_exec_signal_to_order_ms": _signal_to_order_ms,
+        "_exec_order_to_fill_ms":   _order_to_fill_ms,
+        "sl_order_id": None,   # broker protective SL-M id (set below)
+    }
+    ctx.live_engine.update_phase55_actual_entry(position, ts)
+    entry_time      = ts
+    entry_order_rec = order
+    # L1-4 — register BEFORE any SL/trade-count/journal/telegram side effect so
+    # a duplicate call (after a late finalizer exception) is a no-op.
+    if _entry_id:
+        _FINALIZED_ENTRIES[_entry_id] = (position, entry_time, entry_order_rec, None)
+    ctx.trades_today += 1
+
+    # ── Place broker-side protective SL-M immediately ──────────────────
+    # Only now that the broker CONFIRMED the fill — never for an unconfirmed
+    # entry (that is what would turn a phantom entry into a naked short).
+    _sl_create(ctx, position)
+
+    # Persist new open position immediately (survives restart)
+    save_state(
+        ctx,
+        position,
+        scalp_position,
+        _scalp_trades_today,
+        scalp_pnl_today=_scalp_pnl_today,
+        daily_profit_locked=_daily_profit_locked,
+    )
+
+    # Observational diagnostics (replay + journal) + Telegram notification.
+    _journal_id = None
+    try:
+        _ms_entry = ctx.live_engine.get_market_state(ts)
+        position["_replay"] = TradeReplay(position, ts, ltp_current, _ms_entry)
+        position["_signal_entry_ltp"] = _signal_opt_ltp
+    except Exception as _rep_e:
+        logger.debug(f"[REPLAY] Init failed: {_rep_e}")
+    _delay_ms = 0   # safe default so the trailing log never NameError
+    try:
+        _ms_j   = ctx.live_engine.get_market_state(ts)
+        _htf_j  = "bullish" if _ms_j.get("htf_bullish", True) else "bearish"
+        _delay_ms = int(max(0.0, (ts - signal_ts).total_seconds() * 1000))
+        _jid    = ctx.journal.on_entry(
+            position     = position,
+            market_state = _ms_j,
+            ts           = ts,
+            nifty_spot   = ltp_current,
+            ce_prob_raw  = _ms_j.get("ce_prob", 0.0),
+            pe_prob_raw  = _ms_j.get("pe_prob", 0.0),
+            htf_state    = _htf_j,
+            entry_delay_ms = _delay_ms,
+        )
+        _journal_id = _jid
+    except Exception as _je:
+        logger.debug(f"[JOURNAL] on_entry failed: {_je}")
+
+    try:
+        entry_msg = format_trade_entry({
+            "symbol":  symbol,
+            "side":    side,
+            "price":   position["entry"],
+            "qty":     order["qty"],
+            "stop":    stop_loss,
+            "target":  target,
+            "ml_prob": position["ml_prob"],
+            "regime":  position["regime"],
+        })
+        send_trade_entry_with_exit_button(entry_msg)
+    except Exception as _nt_e:
+        logger.debug(f"[ENTRY] notify failed: {_nt_e}")
+    try:
+        set_trade_quiet(True)
+    except Exception as _tq_e:
+        logger.debug(f"[ENTRY] set_trade_quiet failed: {_tq_e}")
+
+    try:
+        logger.info(
+            f"[ENTRY] {side} {symbol} "
+            f"qty={order['qty']} fill={fill_premium:.2f} "
+            f"SL={stop_loss:.2f} "
+            f"ml={position['ml_prob']:.3f} "
+            f"reason={position['reason']} "
+            f"signal_delay={_delay_ms}ms"
+        )
+    except Exception:
+        pass
+
+    # L1-4 — finalize the stored journal_id for any later duplicate call.
+    if _entry_id:
+        _FINALIZED_ENTRIES[_entry_id] = (position, entry_time, entry_order_rec, _journal_id)
+    return position, entry_time, entry_order_rec, _journal_id
+
+
+# ── PENDING ENTRY ORDER (Phase 2) ────────────────────────────────────
+# If an entry order was placed but not confirmed COMPLETE before the poll
+# window ended, the position is NOT created.  The order_id is retained and
+# reconciled each cycle; new entries are blocked until the order reaches a
+# terminal state (COMPLETE → finalize the position, REJECTED/CANCELLED →
+# abandon, unresolved past MAX age → HALT).
+
+def _reconcile_pending_entry(ctx, _pending_entry, *, ts, ltp_current,
+                             scalp_position, _scalp_trades_today,
+                             _scalp_pnl_today, _daily_profit_locked,
+                             _signal_first_ts, _signal_snapshot, _journal_id):
+    """
+    Returns (position, entry_time, entry_order_rec, journal_id,
+             pending_entry_or_None, signal_first_ts, signal_snapshot).
+    """
+    _MAX_AGE = _MAX_PENDING_RESOLVE_SECONDS
+    pend = _pending_entry
+    oid  = pend["order_id"]
+    try:
+        _p_state, _p_avg, _p_fill_ts, _p_fqty = ctx.executor._order_status(oid)
+    except Exception as _pe:
+        _p_state, _p_avg, _p_fill_ts, _p_fqty = ST_UNKNOWN, None, None, 0
+        logger.critical(f"[PENDING ENTRY] reconcile error for {oid}: {_pe}")
+
+    if _p_state == ST_COMPLETE:
+        # Phase 2.1 — broker truth must CONFIRM the position is held before we
+        # finalize.  A COMPLETE order whose fill was already closed (MIS
+        # square-off, manual close, prior flatten) must NEVER become a local
+        # position (that is the phantom that later shorts on exit).
+        _holds = None
+        try:
+            _holds = not ctx.executor.verify_flat(pend["symbol"])
+        except Exception as _vf_e:
+            _holds = None   # broker state UNKNOWN → fail-closed
+            logger.critical(f"[PENDING ENTRY] holding check failed {oid}: {_vf_e}")
+
+        if _holds is False:
+            # Broker shows FLAT but the order is terminal-COMPLETE.  The order and
+            # position feeds are eventually consistent — "flat" on ONE snapshot does
+            # NOT mean the fill is gone (the position feed commonly lags the order
+            # feed).  NEVER release the guard or drop the pending from a single read:
+            # that silent drop is what produced a broker position with no local
+            # awareness and a second BUY (double exposure).  Record the terminal
+            # state, HOLD the pending + guard, confirm on the next snapshot, and
+            # escalate to a fail-closed HALT only if the holding never appears.
+            if not pend.get("_flat_alerted"):
+                pend["_flat_alerted"] = True
+                pend["_flat_since"] = time.time()
+                logger.critical(
+                    f"[PENDING ENTRY] order={oid} COMPLETE but broker holds no "
+                    f"position on {pend['symbol']} on this snapshot — holding "
+                    f"retained for confirmation, position NOT created (no phantom, "
+                    f"guard HELD)"
+                )
+                try:
+                    tg_force(
+                        f"⚠️ PENDING ENTRY order {oid} COMPLETE but broker shows flat. "
+                        f"Retaining order — will confirm on next snapshot."
+                    )
+                except Exception:
+                    pass
+            if time.time() - pend.get("_flat_since", 0) > _MAX_AGE \
+                    and not pend.get("_flat_halt_alerted"):
+                pend["_flat_halt_alerted"] = True
+                logger.critical(
+                    f"[PENDING ENTRY] order={oid} COMPLETE but still flat after "
+                    f"{_MAX_AGE:.0f}s — engine PAUSED, manual reconcile required (no phantom)"
+                )
+                try:
+                    import telegram.notifier as _tn
+                    _tn.ENGINE_PAUSED = True
+                except Exception:
+                    pass
+                try:
+                    tg_force(
+                        f"🚨 PENDING ENTRY order {oid} COMPLETE but still flat. "
+                        f"Engine PAUSED — verify broker holdings before /resume."
+                    )
+                except Exception:
+                    pass
+            # Guard + tracker RETAINED — a second BUY stays IMPOSSIBLE.
+            return (None, None, None, _journal_id, pend, _signal_first_ts, _signal_snapshot)
+
+        if _holds is None:
+            # Cannot confirm holdings → keep pending + guard, PAUSE, alert once.
+            if not pend.get("_hold_unknown_alerted"):
+                pend["_hold_unknown_alerted"] = True
+                logger.critical(
+                    f"[PENDING ENTRY] order={oid} COMPLETE but broker holdings "
+                    f"UNKNOWN — position NOT created, engine PAUSED"
+                )
+                try:
+                    import telegram.notifier as _tn
+                    _tn.ENGINE_PAUSED = True
+                except Exception:
+                    pass
+                try:
+                    tg_force(
+                        f"🚨 PENDING ENTRY order {oid} COMPLETE but broker "
+                        f"holdings UNKNOWN — engine PAUSED. Verify before /resume."
+                    )
+                except Exception:
+                    pass
+            return (None, None, None, _journal_id, pend, _signal_first_ts, _signal_snapshot)
+
+        # _holds is True → broker confirms the position.  Finalize.
+        logger.critical(
+            f"[PENDING ENTRY] order={oid} COMPLETE fill={_p_avg:.2f} — "
+            f"broker holds position, finalizing now"
+        )
+        order = {
+            "order_id": oid, "qty": pend["qty"], "symbol": pend["symbol"],
+            "price": _p_avg, "fill_ts": _p_fill_ts, "submit_ts": pend.get("submit_ts"),
+            "state": ST_COMPLETE,
+            "ltp_before": pend.get("ltp_before"), "bid_before": pend.get("bid_before"),
+            "ask_before": pend.get("ask_before"),
+        }
+        position, entry_time, entry_order_rec, jid = _finalize_entry(
+            ctx,
+            symbol=pend["symbol"], side=pend["side"], lot_size=pend["lot_size"],
+            order=order, decision=pend["decision"], signal_ts=pend["signal_ts"],
+            signal_snapshot=pend["signal_snapshot"], ts=ts, ltp_current=ltp_current,
+            scalp_position=scalp_position, _scalp_trades_today=_scalp_trades_today,
+            _scalp_pnl_today=_scalp_pnl_today, _daily_profit_locked=_daily_profit_locked,
+        )
+        return (position, entry_time, entry_order_rec, jid, None,
+                None, None)   # pending cleared + signal reset
+
+    if _p_state in (ST_REJECTED, ST_CANCELLED):
+        if _p_fqty > 0 and _p_avg and _p_avg > 0:
+            # The entry PARTIALLY filled before a terminal non-complete.  Only
+            # finalize the CONFIRMED portion if the broker truth actually holds
+            # it (Phase 2.1 — no position without broker confirmation).
+            _holds = None
+            try:
+                _holds = not ctx.executor.verify_flat(pend["symbol"])
+            except Exception as _vf_e:
+                _holds = None
+                logger.critical(f"[PENDING ENTRY] partial holding check failed {oid}: {_vf_e}")
+            if _holds is not True:
+                # Broker flat (partial also gone) OR unknown → do NOT finalize.
+                if _holds is False:
+                    # Same eventual-consistency rule as the COMPLETE path: a
+                    # terminal-but-flat read is RETAINED, never dropped.  The
+                    # partial holding may lag the order feed; releasing the guard
+                    # here would permit a second BUY while the broker holds the
+                    # partial fill (double exposure).
+                    if not pend.get("_flat_alerted"):
+                        pend["_flat_alerted"] = True
+                        pend["_flat_since"] = time.time()
+                        logger.critical(
+                            f"[PENDING ENTRY] order={oid} {_p_state} partial fill "
+                            f"{_p_fqty} but broker flat on this snapshot — partial "
+                            f"holding retained for confirmation, position NOT "
+                            f"created (no phantom, guard HELD)"
+                        )
+                        try:
+                            tg_force(
+                                f"⚠️ PENDING ENTRY order {oid} partial but broker "
+                                f"flat — retained for confirmation."
+                            )
+                        except Exception:
+                            pass
+                    if time.time() - pend.get("_flat_since", 0) > _MAX_AGE \
+                            and not pend.get("_flat_halt_alerted"):
+                        pend["_flat_halt_alerted"] = True
+                        try:
+                            import telegram.notifier as _tn
+                            _tn.ENGINE_PAUSED = True
+                        except Exception:
+                            pass
+                        try:
+                            tg_force(
+                                f"🚨 PENDING ENTRY order {oid} partial but still "
+                                f"flat — engine PAUSED, manual reconcile required."
+                            )
+                        except Exception:
+                            pass
+                    return (None, None, None, _journal_id, pend,
+                            _signal_first_ts, _signal_snapshot)
+                # unknown → retain pending + guard + pause (alert already handled
+                # by the COMPLETE/MAX-AGE paths on later cycles).
+                return (None, None, None, _journal_id, pend,
+                        _signal_first_ts, _signal_snapshot)
+            logger.critical(
+                f"[PENDING ENTRY] order={oid} {_p_state} but filled_qty={_p_fqty} "
+                f"avg={_p_avg:.2f} — broker holds it, finalizing partial position"
+            )
+            order = {
+                "order_id": oid, "qty": _p_fqty, "symbol": pend["symbol"],
+                "price": _p_avg, "fill_ts": time.time(), "submit_ts": pend.get("submit_ts"),
+                "state": ST_COMPLETE,
+                "ltp_before": pend.get("ltp_before"), "bid_before": pend.get("bid_before"),
+                "ask_before": pend.get("ask_before"),
+            }
+            position, entry_time, entry_order_rec, jid = _finalize_entry(
+                ctx,
+                symbol=pend["symbol"], side=pend["side"], lot_size=pend["lot_size"],
+                order=order, decision=pend["decision"], signal_ts=pend["signal_ts"],
+                signal_snapshot=pend["signal_snapshot"], ts=ts, ltp_current=ltp_current,
+                scalp_position=scalp_position, _scalp_trades_today=_scalp_trades_today,
+                _scalp_pnl_today=_scalp_pnl_today, _daily_profit_locked=_daily_profit_locked,
+            )
+            return (position, entry_time, entry_order_rec, jid, None, None, None)
+        logger.warning(f"[PENDING ENTRY] order={oid} {_p_state} — entry abandoned")
+        ctx.executor._active_order_id = None
+        return (None, None, None, _journal_id, None, _signal_first_ts, _signal_snapshot)
+
+    # Phase 2.1 — TIME NEVER RELEASES THE ENTRY GUARD.  Broker truth alone may
+    # release it, and only terminal truth: COMPLETE (finalize the position),
+    # REJECTED / CANCELLED (abandon).  An order stuck OPEN/TIMEOUT/UNKNOWN keeps
+    # blocking new entries for as long as it takes, because releasing the guard
+    # while a slow BUY may still fill is precisely how double exposure appears.
+    if time.time() - pend.get("created_at", 0) > _MAX_AGE:
+        # Alert once, PAUSE, but RETAIN _pending_entry AND _active_order_id.
+        if not pend.get("_halt_alerted"):
+            pend["_halt_alerted"] = True
+            logger.critical(
+                f"[PENDING ENTRY] order={oid} unresolved for >{_MAX_AGE:.0f}s "
+                f"({_p_state}) — engine PAUSED; the entry guard is HELD. "
+                f"No new BUY until this order reaches a terminal state "
+                f"(COMPLETE/REJECTED/CANCELLED)."
+            )
+            try:
+                import telegram.notifier as _tn
+                _tn.ENGINE_PAUSED = True
+            except Exception:
+                pass
+            try:
+                tg_force(
+                    f"🚨 PENDING ENTRY order {oid} unresolved ({_p_state}). "
+                    f"Engine PAUSED. The entry guard is HELD — no new BUY until "
+                    f"this order reaches COMPLETE/REJECTED/CANCELLED."
+                )
+            except Exception:
+                pass
+        # Guard and tracker are RETAINED — broker truth is the only release.
+        return (None, None, None, _journal_id, pend, _signal_first_ts, _signal_snapshot)
+
+    # Still OPEN/PARTIAL/TIMEOUT/UNKNOWN → keep blocking new entries.
+    logger.info(f"[PENDING ENTRY] order={oid} still {_p_state} — entries blocked")
+    return (None, None, None, _journal_id, pend, _signal_first_ts, _signal_snapshot)
+
 
 _WATCHDOG_MAX_RESTARTS = int(os.getenv("WATCHDOG_MAX_RESTARTS", "5"))
 _WATCHDOG_INTERVAL_S   = 30
@@ -903,9 +1360,17 @@ def init_broker():
     # to paper trades — skip the gate to avoid blocking paper sessions.
     _is_dry = os.getenv("DRY_RUN", "0") == "1"
     _resume_ok = os.getenv("ALLOW_BROKER_POSITION_ON_START", "0") == "1" or PAPER_MODE or _is_dry
-    if not _resume_ok and hasattr(broker, "has_open_position") and broker.has_open_position():
-        tg_force("🚨 SAFETY ALERT\nOpen position detected — engine blocked.")
-        raise RuntimeError("Open broker position exists.")
+    if not _resume_ok and hasattr(broker, "has_open_position"):
+        try:
+            _broker_has_pos = broker.has_open_position()
+        except Exception as _ube:
+            # Unknown broker state is HIGH RISK — block startup (fail-closed).
+            # Never interpret 'cannot reach broker' as 'flat'.
+            logger.critical(f"[STARTUP] Broker state UNKNOWN: {_ube} — blocking start")
+            _broker_has_pos = True
+        if _broker_has_pos:
+            tg_force("🚨 SAFETY ALERT\nOpen OR unverifiable broker position — engine blocked.")
+            raise RuntimeError("Open or unverifiable broker position exists.")
 
     logger.info("Starting market feed")
     broker.start_feed(["NIFTY BANK"])
@@ -1023,6 +1488,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     position          = None    # current open position dict
     entry_time        = None    # FIX-2: defined at entry, used for held_seconds
     entry_order_rec   = None    # saved order dict for trade_logger
+    _pending_entry    = None    # Phase 2: placed-but-unconfirmed entry order (blocks re-entry)
+    _pending_scalp    = None    # Phase 2: placed-but-unconfirmed scalp order (halts until resolved)
     max_trades        = ctx.config.MAX_TRADES_PER_DAY
     consecutive_stops = 0       # auto-pause trigger
     _eod_sent         = False   # send EOD summary once at 15:30
@@ -1065,20 +1532,108 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         _restored_pos   = deserialize_position(_snap.get("open_position"))   if _snap else None
         _restored_scalp = deserialize_position(_snap.get("scalp_position"))  if _snap else None
 
+        _broker_unknown = False
+        _positions_snap = None
         try:
             # In DRY_RUN mode the live broker may hold real positions unrelated
             # to paper trades — skip reconciliation to avoid false PAUSING.
             _is_dry_run = _is_paper_or_dry_run(ctx)
             if _is_dry_run:
-                _broker_open = False
+                _positions_snap = []
                 logger.info("[RECOVERY] DRY_RUN mode — skipping live broker position check")
             else:
-                _broker_open = ctx.broker.has_open_position()
+                # L1-1: exactly ONE broker snapshot.  get_positions() is the
+                # single source of truth for open-state, held symbols AND the
+                # orphan-flatten list.  No second positions()/has_open_position()
+                # call may appear in this recovery; no state decision may depend
+                # on a fresh broker query.
+                _positions_snap = ctx.broker.get_positions()
         except Exception as _bo_e:
-            logger.warning(f"[RECOVERY] broker position check failed: {_bo_e}")
-            _broker_open = False
+            # Fail-closed: unknown broker state HALTS trading. Never treat
+            # 'cannot check' as 'flat'.
+            _broker_unknown = True
+            _positions_snap = None
+            logger.critical(
+                f"[RECOVERY] Broker state UNKNOWN ({_bo_e}) — engine PAUSED (fail-closed)"
+            )
+            try:
+                import telegram.notifier as _tn
+                _tn.ENGINE_PAUSED = True
+            except Exception:
+                pass
+            try:
+                tg_force(
+                    "🚨 BROKER STATE UNKNOWN on recovery — engine PAUSED. "
+                    "Verify broker positions before /resume."
+                )
+            except Exception:
+                pass
 
-        if _is_dry_run and _restored_pos and _restored_pos.get("symbol"):
+        # Derive EVERY holding decision from the ONE snapshot — no fresh queries.
+        # A malformed snapshot (non-dict entry, non-numeric quantity) is a
+        # BROKER_UNKNOWN — never a silent recovery skip (that would let the
+        # engine trade while the broker may hold positions).
+        try:
+            if _positions_snap is not None:
+                _broker_open = any(int(p.get("quantity", 0) or 0) != 0 for p in _positions_snap)
+                _broker_syms = {p.get("tradingsymbol") for p in _positions_snap
+                                if int(p.get("quantity", 0) or 0) != 0}
+            else:
+                _broker_open = True    # fail-closed (guarded by _broker_unknown first)
+                _broker_syms = None
+        except Exception as _mal_e:
+            _broker_unknown = True
+            _positions_snap = None
+            _broker_open = True
+            _broker_syms = None
+            logger.critical(
+                f"[RECOVERY] malformed positions snapshot ({_mal_e}) — "
+                f"BROKER_UNKNOWN, engine PAUSED (fail-closed)"
+            )
+            try:
+                import telegram.notifier as _tn
+                _tn.ENGINE_PAUSED = True
+            except Exception:
+                pass
+
+        # ── Phase 2.1 — resolve PENDING ORDERS against broker truth BEFORE any
+        # local position is created OR destroyed.  Recovery must reconcile BOTH
+        # the broker's positions AND every in-flight order, never guess.
+        _restored_pend  = dict(_snap.get("pending_entry") or {}) if _snap else {}
+        _restored_pscalp = dict(_snap.get("pending_scalp") or {}) if _snap else {}
+
+        def _resolve_one(pend):
+            """One-shot terminal resolve of a pending order (fail-closed)."""
+            if not pend or not pend.get("order_id") or _broker_unknown or _is_dry_run:
+                return ST_UNKNOWN, None, 0
+            try:
+                _s, _a, _t, _f = ctx.executor._order_status(pend["order_id"], timeout_attempts=1)
+                return _s, _a, _f
+            except Exception as _pe:
+                logger.critical(f"[RECOVERY] pending resolve error {pend.get('order_id')}: {_pe}")
+                return ST_UNKNOWN, None, 0
+
+        _pend_state,  _pend_avg,  _pend_fqty  = _resolve_one(_restored_pend)
+        _pscalp_state, _pscalp_avg, _pscalp_fqty = _resolve_one(_restored_pscalp)
+
+        # Symbols owned by an in-flight (non-terminal-failed) pending order must
+        # NEVER be orphan-flattened — the broker fill may belong to the pending.
+        _pend_owned = set()
+        if _restored_pend.get("symbol") and _pend_state not in (ST_REJECTED, ST_CANCELLED):
+            _pend_owned.add(_restored_pend["symbol"])
+        if _restored_pscalp.get("symbol") and _pscalp_state not in (ST_REJECTED, ST_CANCELLED):
+            _pend_owned.add(_restored_pscalp["symbol"])
+
+        if _broker_unknown:
+            # Unknown broker state: do NOT restore or flatten anything. The
+            # pause above blocks entries. Local position stays None until the
+            # broker is verified — fail-closed rather than guessing.
+            position        = None
+            scalp_position  = None
+            logger.critical(
+                "[RECOVERY] Broker state UNKNOWN — no position resumed, engine paused"
+            )
+        elif _is_dry_run and _restored_pos and _restored_pos.get("symbol"):
             position        = _restored_pos
             entry_time      = position.get("entry_ts")
             entry_order_rec = _entry_order_from_position(position)
@@ -1101,7 +1656,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             )
             set_trade_quiet(True)
 
-        elif _broker_open and _restored_pos and _restored_pos.get("symbol"):
+        elif (_broker_open and _restored_pos and _restored_pos.get("symbol")
+              and _broker_syms is not None
+              and _restored_pos["symbol"] in _broker_syms):
+            # Case A (main): adopt ONLY when broker truth confirms this exact
+            # symbol is held.  A saved position the broker no longer holds is
+            # already closed → it must NOT become a local phantom.
             # Case A (main): broker position + saved state → resume management.
             position        = _restored_pos
             entry_time      = position.get("entry_ts")
@@ -1128,12 +1688,18 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             except Exception as _vr_e:
                 logger.critical(f"[BROKER SL] verify/repair failed: {_vr_e}")
 
-        elif _broker_open and _restored_scalp and _restored_scalp.get("symbol"):
-            # Case A (scalp): broker position + saved scalp state → resume.
+        elif _broker_open and _restored_scalp and _restored_scalp.get("symbol") \
+                and _broker_syms is not None \
+                and _restored_scalp["symbol"] in _broker_syms:
+            # Case A (scalp): adopt ONLY when the SAME broker snapshot confirms
+            # THIS EXACT symbol is held.  Holding "any" position is not enough —
+            # adopting a saved scalp Y while the broker holds only X would
+            # create an unbacked local scalp that shorts on exit (V1).
             scalp_position = _restored_scalp
             logger.critical(
                 f"[RECOVERY] Adopted scalp position {scalp_position['symbol']} "
-                f"SL={scalp_position.get('stop_loss',0):.2f} — management resumed"
+                f"SL={scalp_position.get('stop_loss',0):.2f} — management resumed "
+                f"(broker snapshot confirms {scalp_position['symbol']})"
             )
             set_trade_quiet(True)
 
@@ -1150,11 +1716,23 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             except Exception:
                 pass
             try:
-                for _p in ctx.broker.get_positions():
+                # L1-1: flatten from the SAME snapshot taken at recovery start —
+                # never a fresh positions() read (which could disagree with the
+                # snapshot every adopt/drop decision was built from).
+                for _p in _positions_snap:
                     _q   = int(_p.get("quantity", 0))
                     if _q == 0:
                         continue
                     _sym  = _p.get("tradingsymbol", "")
+                    # Phase 2.1 — NEVER flatten a symbol owned by an in-flight
+                    # pending order; its broker fill may belong to the pending
+                    # and is adopted by the reconcile below, not orphaned.
+                    if _sym in _pend_owned:
+                        logger.critical(
+                            f"[RECOVERY] Skipping orphan-flatten of {_sym} — "
+                            f"owned by pending order, will reconcile"
+                        )
+                        continue
                     _side = "CE" if _sym.endswith("CE") else ("PE" if _sym.endswith("PE") else "CE")
                     # Cancel any dangling protective stop first so it cannot fire
                     # after we flatten (which would open a short).
@@ -1173,8 +1751,229 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         elif _restored_pos or _restored_scalp:
             # Broker is flat but state had a position → it already closed.
             logger.info("[RECOVERY] Saved position but broker flat — treated as already closed")
+    except BrokerStateError as _rec_bse:
+        # Broker state UNKNOWN escaped recovery — do NOT continue as if healthy.
+        logger.critical(
+            f"[RECOVERY] Broker state UNKNOWN ({_rec_bse}) — no position resumed, "
+            f"engine PAUSED (fail-closed)"
+        )
+        try:
+            import telegram.notifier as _tn
+            _tn.ENGINE_PAUSED = True
+        except Exception:
+            pass
     except Exception as _rec_e:
         logger.critical(f"[RECOVERY] reconciliation error (non-fatal): {_rec_e}")
+
+    # ── Reconcile pending entry/scalp orders (Phase 2.1) across restarts ──
+    # A placed-but-unconfirmed order persisted before a crash must be resolved
+    # against CURRENT broker truth, then either adopted (COMPLETE + broker
+    # holds its fill), dropped (REJECTED/CANCELLED, or COMPLETE but the fill was
+    # already closed — NO phantom), or restored HELD (still in flight) so it keeps
+    # blocking new entries.  Broker truth alone decides; time never releases.
+    try:
+        if _snap is not None:
+            _rec_ts = __import__("datetime").datetime.now()
+
+            # ── MAIN pending entry ───────────────────────────────────
+            if _restored_pend and position is None:
+                if _pend_state in (ST_REJECTED, ST_CANCELLED):
+                    # Order is dead → drop it, release the guard.
+                    ctx.executor._active_order_id = None
+                    logger.warning(
+                        f"[RECOVERY] Pending entry {_restored_pend['order_id']} "
+                        f"{_pend_state} — dropped, guard released"
+                    )
+                elif _pend_state == ST_COMPLETE and _pend_avg and _pend_avg > 0 \
+                        and _broker_syms is not None \
+                        and _restored_pend["symbol"] in _broker_syms:
+                    # Broker holds the fill this order produced → adopt it as a
+                    # managed position (with protective SL).  This is the fix to
+                    # the crash→fill→recovery-exits→recreate phantom: the broker
+                    # position is NEVER flattened (skipped in Case B) and is
+                    # adopted here instead of being re-recreated from nothing.
+                    _pending_entry_ = dict(_restored_pend)
+                    _pending_entry_["_halt_alerted"] = True
+                    _pend_order = {
+                        "order_id": _restored_pend["order_id"],
+                        "qty":      _restored_pend["qty"],
+                        "symbol":   _restored_pend["symbol"],
+                        "price":    _pend_avg,
+                        "fill_ts":  time.time(),
+                        "submit_ts": _restored_pend.get("submit_ts"),
+                        "state":    ST_COMPLETE,
+                        "ltp_before": _restored_pend.get("ltp_before"),
+                        "bid_before": _restored_pend.get("bid_before"),
+                        "ask_before": _restored_pend.get("ask_before"),
+                    }
+                    try:
+                        _pend_pos, _pend_et, _pend_eor, _pend_jid = _finalize_entry(
+                            ctx,
+                            symbol=_restored_pend["symbol"],
+                            side=_restored_pend["side"],
+                            lot_size=_restored_pend["lot_size"],
+                            order=_pend_order,
+                            decision=_restored_pend["decision"],
+                            signal_ts=_restored_pend["signal_ts"],
+                            signal_snapshot=_restored_pend["signal_snapshot"],
+                            ts=_rec_ts, ltp_current=ltp_current,
+                            scalp_position=scalp_position,
+                            _scalp_trades_today=_scalp_trades_today,
+                            _scalp_pnl_today=_scalp_pnl_today,
+                            _daily_profit_locked=_daily_profit_locked,
+                        )
+                    except Exception as _fz_e:
+                        # Finalize failed → fail-closed: HOLD the pending + guard
+                        # rather than silently dropping it (a silent drop could
+                        # allow a second BUY next cycle = double exposure).
+                        _pend_pos = None
+                        logger.critical(
+                            f"[RECOVERY] pending adoption failed {_restored_pend['order_id']}: "
+                            f"{_fz_e} — guard HELD"
+                        )
+                    if _pend_pos is not None:
+                        position = _pend_pos
+                        ctx.executor._active_order_id = _restored_pend["order_id"]
+                        logger.critical(
+                            f"[RECOVERY] Adopted COMPLETE pending entry {_restored_pend['order_id']} "
+                            f"fill={_pend_avg:.2f} into position {_restored_pend['symbol']} — "
+                            f"management resumed"
+                        )
+                    else:
+                        # Finalize did not yield a position → hold the guard.
+                        _pending_entry = _pending_entry_
+                        ctx.executor._active_order_id = _restored_pend["order_id"]
+                        try:
+                            import telegram.notifier as _tn
+                            _tn.ENGINE_PAUSED = True
+                        except Exception:
+                            pass
+                elif _broker_unknown or _broker_syms is None:
+                    # Broker holdings UNKNOWN → cannot confirm anything about the
+                    # fill → HOLD the guard (fail-closed).  Never drop a COMPLETE
+                    # pending while we cannot see the broker (that would orphan a
+                    # possible fill = broker position without local awareness).
+                    _pending_entry = dict(_restored_pend)
+                    ctx.executor._active_order_id = _restored_pend["order_id"]
+                    logger.critical(
+                        f"[RECOVERY] Pending entry {_restored_pend['order_id']} "
+                        f"{_pend_state} with broker UNKNOWN — guard HELD, engine PAUSED"
+                    )
+                    try:
+                        import telegram.notifier as _tn
+                        _tn.ENGINE_PAUSED = True
+                    except Exception:
+                        pass
+                elif _pend_state == ST_COMPLETE:
+                    # Broker is KNOWN (syms not None) and does NOT hold this
+                    # symbol on the STARTUP snapshot.  This is NOT proof the fill
+                    # is gone — the position feed can lag the order feed.  Hold
+                    # the pending + guard; the loop reconciles it each cycle and
+                    # confirms when the holding appears (L1-3: never drop a
+                    # terminal order from a single flat read).
+                    _pending_entry = dict(_restored_pend)
+                    ctx.executor._active_order_id = _restored_pend["order_id"]
+                    logger.critical(
+                        f"[RECOVERY] Pending entry {_restored_pend['order_id']} COMPLETE "
+                        f"but broker shows flat on the startup snapshot — guard HELD, "
+                        f"retained for confirmation (no phantom)"
+                    )
+                else:
+                    # Still OPEN/PARTIAL/TIMEOUT/UNKNOWN → restore HELD.
+                    _pending_entry = dict(_restored_pend)
+                    ctx.executor._active_order_id = _restored_pend["order_id"]
+                    logger.critical(
+                        f"[RECOVERY] Pending entry {_restored_pend['order_id']} "
+                        f"still {_pend_state} — guard HELD, entries blocked"
+                    )
+
+            # ── SCALP pending order ─────────────────────────────────
+            if _restored_pscalp and scalp_position is None:
+                if _pscalp_state in (ST_REJECTED, ST_CANCELLED):
+                    _pending_scalp = None
+                    logger.warning(
+                        f"[RECOVERY] Pending scalp {_restored_pscalp['order_id']} "
+                        f"{_pscalp_state} — dropped"
+                    )
+                elif _pscalp_state == ST_COMPLETE and _pscalp_avg and _pscalp_avg > 0 \
+                        and _broker_syms is not None \
+                        and _restored_pscalp["symbol"] in _broker_syms:
+                    try:
+                        scalp_position = {
+                            "symbol":         _restored_pscalp["symbol"],
+                            "side":           _restored_pscalp["side"],
+                            "qty":            _restored_pscalp["qty"],
+                            "lot_size":       ctx.config.LOT_SIZE,
+                            "entry":          _pscalp_avg,
+                            "stop_loss":      _pscalp_avg - ctx.config.SCALP_SL_PTS,
+                            "target":         _pscalp_avg + ctx.config.SCALP_TARGET_PTS,
+                            "max_pnl":        0.0,
+                            "min_pnl":        0.0,
+                            "ml_prob":        0.0,
+                            "features":       {},
+                            "regime":         "SCALP",
+                            "reason":         "SCALP_RECOVER",
+                            "entry_ts":       _rec_ts,
+                            "sl_order_id":    None,
+                            "lock_triggered": False,
+                        }
+                        _sl_create(ctx, scalp_position)
+                        logger.critical(
+                            f"[RECOVERY] Adopted COMPLETE pending scalp "
+                            f"{_restored_pscalp['order_id']} into {_restored_pscalp['symbol']}"
+                        )
+                    except Exception as _scalpf_e:
+                        # Fail-closed: hold the scalp pending + pause instead of
+                        # silently losing it (a lost scalp fill = unmanaged).
+                        _pending_scalp = dict(_restored_pscalp)
+                        logger.critical(
+                            f"[RECOVERY] scalp adoption failed "
+                            f"{_restored_pscalp['order_id']}: {_scalpf_e} — HELD, PAUSED"
+                        )
+                        try:
+                            import telegram.notifier as _tn
+                            _tn.ENGINE_PAUSED = True
+                        except Exception:
+                            pass
+                elif _broker_unknown or _broker_syms is None:
+                    _pending_scalp = dict(_restored_pscalp)
+                    logger.critical(
+                        f"[RECOVERY] Pending scalp {_restored_pscalp['order_id']} "
+                        f"{_pscalp_state} with broker UNKNOWN — engine PAUSED"
+                    )
+                    try:
+                        import telegram.notifier as _tn
+                        _tn.ENGINE_PAUSED = True
+                    except Exception:
+                        pass
+                elif _pscalp_state == ST_COMPLETE:
+                    # Terminal-but-flat on the startup snapshot is NOT proof the
+                    # fill is gone (position feed can lag).  Hold the scalp pending
+                    # (engine stays PAUSED) and let the loop confirm the holding.
+                    _pending_scalp = dict(_restored_pscalp)
+                    logger.critical(
+                        f"[RECOVERY] Pending scalp {_restored_pscalp['order_id']} COMPLETE "
+                        f"but broker shows flat — held for confirmation, engine PAUSED "
+                        f"(no phantom)"
+                    )
+                    try:
+                        import telegram.notifier as _tn
+                        _tn.ENGINE_PAUSED = True
+                    except Exception:
+                        pass
+                else:
+                    _pending_scalp = dict(_restored_pscalp)
+                    logger.critical(
+                        f"[RECOVERY] Pending scalp {_restored_pscalp['order_id']} "
+                        f"still {_pscalp_state} — engine PAUSED until resolved"
+                    )
+                    try:
+                        import telegram.notifier as _tn
+                        _tn.ENGINE_PAUSED = True
+                    except Exception:
+                        pass
+    except Exception as _pend_e:
+        logger.critical(f"[RECOVERY] pending-order restore skipped: {_pend_e}")
 
     def _status_cb():
         import telegram.notifier as _tn
@@ -1522,6 +2321,52 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if not exit_flag and position.get("stop_loss", 0.0) > _sl_before + 1e-6:
                     _sl_modify(ctx, position, position["stop_loss"])
 
+                # ── PENDING EXIT ORDER reconciliation (Phase 2) ──────────
+                # An exit SELL that was placed but not confirmed COMPLETE must be
+                # resolved BEFORE any new exit.  Never re-sell while pending and
+                # never clear the position until COMPLETE.
+                _pending_exit_fill = None
+                if position.get("_exit_order_id"):
+                    _pe_oid   = position["_exit_order_id"]
+                    _pe_state, _pe_avg, _pe_fill, _pe_fqty = ctx.executor._order_status(_pe_oid)
+                    if _pe_state == ST_COMPLETE:
+                        position["_exit_order_id"] = None
+                        exit_flag   = True
+                        exit_reason = position.pop("_pending_exit_reason", None) or "EXIT"
+                        _pending_exit_fill = _pe_avg
+                        logger.critical(
+                            f"[PENDING EXIT] order={_pe_oid} COMPLETE fill={_pe_avg:.2f} — "
+                            f"exit finalized"
+                        )
+                    elif _pe_state in (ST_REJECTED, ST_CANCELLED):
+                        position["_exit_order_id"] = None
+                        position.pop("_pending_exit_reason", None)
+                        if _pe_fqty > 0:
+                            # Partially filled before terminal. Shrink the position by
+                            # the CONFIRMED sold quantity so a fresh retry never oversells
+                            # (which would open a short).
+                            position["qty"] = max(0, position["qty"] - _pe_fqty)
+                            logger.critical(
+                                f"[PENDING EXIT] order={_pe_oid} {_pe_state} after partial "
+                                f"fill {_pe_fqty} — remaining qty {position['qty']}"
+                            )
+                            if position["qty"] <= 0:
+                                exit_flag = True
+                                exit_reason = "EXIT"
+                                _pending_exit_fill = _pe_avg
+                        else:
+                            logger.warning(
+                                f"[PENDING EXIT] order={_pe_oid} {_pe_state} — will retry fresh"
+                            )
+                    else:
+                        # Still OPEN / TIMEOUT / UNKNOWN → hold; do not evaluate
+                        # any new exit decision this cycle (would risk a double-sell).
+                        logger.info(
+                            f"[PENDING EXIT] order={_pe_oid} still {_pe_state} — holding"
+                        )
+                        exit_flag   = False
+                        exit_reason = ""
+
                 # ── Execute exit ───────────────────────────────────────
                 if exit_flag:
                     # Task 5 — audit log proving which stop was active at exit.
@@ -1534,23 +2379,78 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     # (would open a short).  Otherwise place the market exit.
                     _sl_already_filled = False
                     _sl_fill_price     = 0.0
-                    if position.get("sl_order_id"):
-                        _sl_info = ctx.executor.get_order_info(position["sl_order_id"])
-                        ctx.executor.cancel_protective_stop(position["sl_order_id"])
-                        logger.info(
-                            f"[BROKER SL CANCELLED]\n{position['symbol']}  "
-                            f"id={position['sl_order_id']}"
-                        )
-                        if (_sl_info and _sl_info.get("status") == "COMPLETE"
+                    try:
+                        if position.get("sl_order_id"):
+                            _sl_info = ctx.executor.get_order_info(position["sl_order_id"])
+                            # VERIFY FIRST, cancel only if we will market-exit.
+                            # On unknown we must NOT cancel (the SL stays as the
+                            # position's only protection during the outage).
+                            _sl_filled = (
+                                _sl_info is not None
+                                and _sl_info.get("status") == "COMPLETE"
                                 and _sl_info.get("average_price", 0) > 0
-                                and ctx.executor.verify_flat(position["symbol"])):
-                            _sl_already_filled = True
-                            _sl_fill_price     = _sl_info["average_price"]
-                            logger.critical(
-                                f"[BROKER SL FILLED] {position['symbol']} "
-                                f"fill={_sl_fill_price:.2f} — broker stop executed the exit"
+                                and ctx.executor.verify_flat(position["symbol"])
                             )
-                        position["sl_order_id"] = None
+                            if _sl_filled:
+                                _sl_already_filled = True
+                                _sl_fill_price     = _sl_info["average_price"]
+                                logger.critical(
+                                    f"[BROKER SL FILLED] {position['symbol']} "
+                                    f"fill={_sl_fill_price:.2f} — broker stop executed the exit"
+                                )
+                                position["sl_order_id"] = None
+                            else:
+                                # SL not already-filled → cancel it now, before the
+                                # market exit (a resting SL + market sell = double-sell).
+                                if not ctx.executor.cancel_protective_stop(position["sl_order_id"]):
+                                    # Cannot confirm the cancel. Re-query the real state.
+                                    _sl_recheck = ctx.executor.get_order_info(position["sl_order_id"])
+                                    _re_status = (_sl_recheck or {}).get("status", "")
+                                    if _re_status == "CANCELLED":
+                                        logger.info(
+                                            f"[BROKER SL ALREADY CANCELLED]\n{position['symbol']} "
+                                            f"id={position['sl_order_id']} — safe to market-exit"
+                                        )
+                                        position["sl_order_id"] = None
+                                    elif _re_status == "COMPLETE":
+                                        # SL actually filled meanwhile → verify flat.
+                                        if ctx.executor.verify_flat(position["symbol"]):
+                                            _sl_already_filled = True
+                                            _sl_fill_price = (_sl_recheck or {}).get("average_price", 0.0)
+                                            position["sl_order_id"] = None
+                                        else:
+                                            raise RuntimeError("SL COMPLETE but position not flat")
+                                    else:
+                                        # Still OPEN / TRIGGER PENDING / unknown — a
+                                        # market exit now could double-sell. HALT.
+                                        raise BrokerStateError(
+                                            f"SL not confirmably cancelled (status={_re_status})"
+                                        )
+                                else:
+                                    logger.info(
+                                        f"[BROKER SL CANCELLED]\n{position['symbol']}  "
+                                        f"id={position['sl_order_id']}"
+                                    )
+                                    position["sl_order_id"] = None
+                    except Exception as _sl_unknown:
+                        # Broker state UNKNOWN (network/API) — do NOT send a market
+                        # exit (risks double-sell or phantom-close).  The protective
+                        # SL is left INTACT (we did not cancel on this path).  Keep
+                        # the position OPEN, pause, alert, and retry next cycle.
+                        logger.critical(
+                            f"[EXIT] Broker state UNKNOWN — exit DEFERRED, "
+                            f"position kept open, protective SL retained: {_sl_unknown}"
+                        )
+                        try:
+                            tg_force(
+                                f"🚨 BROKER STATE UNKNOWN during exit — engine PAUSED. "
+                                f"Position NOT closed (SL retained). Manual reconciliation required."
+                            )
+                        except Exception:
+                            pass
+                        _tn.ENGINE_PAUSED = True
+                        time.sleep(2)
+                        continue
 
                     # F5: capture exit signal price before market order
                     _exit_signal_ltp = pos_ltp
@@ -1564,16 +2464,74 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         exit_price = _sl_fill_price
                         ctx.executor._active_order_id = None
                     else:
-                        exit_order = ctx.executor.execute_exit(
-                            symbol=position["symbol"],
-                            qty=position["qty"],
-                            side=position["side"],     # both CE & PE close with SELL
-                        )
+                        # Phase 2 — Execution Truth: never clear the position until
+                        # the exit SELL is broker-confirmed COMPLETE.  No guessed fill.
+                        if _pending_exit_fill is not None:
+                            # In-flight exit SELL already completed during reconciliation.
+                            exit_order = {"price": _pending_exit_fill, "state": ST_COMPLETE}
+                            _pending_exit_fill = None
+                        else:
+                            _pending_exit_oid = position.get("_exit_order_id")
+                            if _pending_exit_oid:
+                                # A pending exit exists but the reconciliation above
+                                # did not finalize it — re-resolve (guard).
+                                _po_state, _po_avg, _, _po_fqty = ctx.executor._order_status(_pending_exit_oid)
+                                if _po_state == ST_COMPLETE:
+                                    exit_order = {"price": _po_avg, "state": ST_COMPLETE}
+                                    position["_exit_order_id"] = None
+                                elif _po_state in (ST_REJECTED, ST_CANCELLED):
+                                    position["_exit_order_id"] = None
+                                    exit_order = None   # fresh exit below
+                                else:
+                                    # still open/unknown → do NOT re-sell.
+                                    logger.critical(
+                                        f"[EXIT] pending SELL {_pending_exit_oid} unresolved "
+                                        f"({_po_state}) — holding, engine PAUSED"
+                                    )
+                                    _tn.ENGINE_PAUSED = True
+                                    try:
+                                        tg_force(
+                                            f"🚨 PENDING EXIT {_pending_exit_oid} unresolved "
+                                            f"({_po_state}). Manual reconciliation required."
+                                        )
+                                    except Exception:
+                                        pass
+                                    time.sleep(2)
+                                    continue
+                            else:
+                                exit_order = None
 
-                        exit_price = (
-                            exit_order["price"] if exit_order and exit_order["price"] > 0
-                            else pos_ltp
-                        )
+                        if exit_order is None:
+                            exit_order = ctx.executor.execute_exit(
+                                symbol=position["symbol"],
+                                qty=position["qty"],
+                                side=position["side"],     # both CE & PE close with SELL
+                            )
+                            if exit_order is None:
+                                # Placement failed — nothing in flight. Keep the
+                                # position and retry next cycle (no guess).
+                                logger.critical(
+                                    f"[EXIT] SELL placement failed for {position['symbol']} — "
+                                    f"position NOT cleared, retrying"
+                                )
+                                time.sleep(2)
+                                continue
+                            if exit_order.get("state") != ST_COMPLETE:
+                                # Order in flight or broker unknown — record the
+                                # pending exit; do NOT clear, do NOT re-sell.
+                                if exit_order.get("order_id"):
+                                    position["_exit_order_id"] = exit_order["order_id"]
+                                    position["_pending_exit_reason"] = exit_reason
+                                logger.critical(
+                                    f"[EXIT] SELL {exit_order.get('order_id')} not confirmed "
+                                    f"({exit_order.get('state')}) — position NOT cleared, "
+                                    f"pending exit"
+                                )
+                                time.sleep(2)
+                                continue
+                            position["_exit_order_id"] = None
+
+                        exit_price = exit_order["price"]
 
                     # Task 7 — VIRTUAL STOP: the stop is a trigger level, not a
                     # resting broker order, so the market fill can be BELOW the
@@ -1824,6 +2782,122 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 _daily_profit_locked = True
 
             # ══════════════════════════════════════════════════════════
+            # PENDING ENTRY RECONCILIATION (Phase 2 — Execution Truth)
+            # If an entry order was placed but not confirmed COMPLETE, resolve it
+            # here BEFORE any new entry.  COMPLETE finalizes the position; others
+            # keep new entries blocked.  Checks run even if a position exists.
+            # ══════════════════════════════════════════════════════════
+            if _pending_entry is not None:
+                (_position_r, _entry_time_r, _entry_order_rec_r, _journal_id_r,
+                 _pending_entry, _signal_first_ts, _signal_snapshot) = _reconcile_pending_entry(
+                    ctx, _pending_entry,
+                    ts=ts, ltp_current=ltp_current,
+                    scalp_position=scalp_position, _scalp_trades_today=_scalp_trades_today,
+                    _scalp_pnl_today=_scalp_pnl_today, _daily_profit_locked=_daily_profit_locked,
+                    _signal_first_ts=_signal_first_ts, _signal_snapshot=_signal_snapshot,
+                    _journal_id=_journal_id,
+                )
+                if _position_r is not None:
+                    position        = _position_r
+                    entry_time      = _entry_time_r
+                    entry_order_rec = _entry_order_rec_r
+                    _journal_id     = _journal_id_r
+                if _pending_entry is not None:
+                    # Still unresolved — block any new entry this cycle.
+                    decision = None
+
+                # ── PENDING SCALP ORDER reconciliation (Phase 2) ─────────
+                # A placed-but-unconfirmed scalp entry halted the engine.  Resolve
+                # the order; when terminal, clear the tracker (the engine stays
+                # PAUSED until the operator /resume after verifying broker positions).
+                if _pending_scalp is not None:
+                    _ps_oid = _pending_scalp["order_id"]
+                    try:
+                        _ps_state, _ps_avg, _ps_fill, _ps_fqty = ctx.executor._order_status(_ps_oid)
+                    except Exception as _ps_e:
+                        _ps_state, _ps_avg, _ps_fill, _ps_fqty = ST_UNKNOWN, None, None, 0
+                        logger.critical(f"[PENDING SCALP] reconcile error {_ps_oid}: {_ps_e}")
+                    if _ps_state == ST_COMPLETE:
+                        # Phase 2.1 — adopt the fill ONLY if broker truth holds it.
+                        _ps_holds = None
+                        try:
+                            _ps_holds = not ctx.executor.verify_flat(_pending_scalp["symbol"])
+                        except Exception as _ps_vf:
+                            _ps_holds = None
+                            logger.critical(f"[PENDING SCALP] holding check failed {_ps_oid}: {_ps_vf}")
+                        if _ps_holds is True:
+                            scalp_position = {
+                                "symbol":         _pending_scalp["symbol"],
+                                "side":           _pending_scalp["side"],
+                                "qty":            _pending_scalp["qty"],
+                                "lot_size":       ctx.config.LOT_SIZE,
+                                "entry":          _ps_avg,
+                                "stop_loss":      _ps_avg - ctx.config.SCALP_SL_PTS,
+                                "target":         _ps_avg + ctx.config.SCALP_TARGET_PTS,
+                                "max_pnl":        0.0,
+                                "min_pnl":        0.0,
+                                "ml_prob":        0.0,
+                                "features":       {},
+                                "regime":         "SCALP",
+                                "reason":         "SCALP_RECONCILE",
+                                "entry_ts":       ts,
+                                "sl_order_id":    None,
+                                "lock_triggered": False,
+                            }
+                            _sl_create(ctx, scalp_position)
+                            _pending_scalp = None
+                            logger.critical(
+                                f"[PENDING SCALP] order={_ps_oid} COMPLETE fill={_ps_avg:.2f} — "
+                                f"broker holds it, adopted as managed scalp"
+                            )
+                        elif _ps_holds is False:
+                            # Terminal-but-flat on ONE snapshot is NOT proof the
+                            # fill is gone (order/position feed skew).  Retain the
+                            # tracker + guard; confirm on a later snapshot; halt
+                            # only if it stays flat past the window.
+                            if not _pending_scalp.get("_flat_alerted"):
+                                _pending_scalp["_flat_alerted"] = True
+                                _pending_scalp["_flat_since"] = time.time()
+                                logger.critical(
+                                    f"[PENDING SCALP] order={_ps_oid} COMPLETE but broker "
+                                    f"flat on this snapshot — retained for confirmation, "
+                                    f"NO scalp created (no phantom)"
+                                )
+                                try:
+                                    tg_force(
+                                        f"⚠️ PENDING SCALP order {_ps_oid} COMPLETE but flat — "
+                                        f"retained for confirmation."
+                                    )
+                                except Exception:
+                                    pass
+                            if time.time() - _pending_scalp.get("_flat_since", 0) > _MAX_PENDING_RESOLVE_SECONDS \
+                                    and not _pending_scalp.get("_flat_halt_alerted"):
+                                _pending_scalp["_flat_halt_alerted"] = True
+                                logger.critical(
+                                    f"[PENDING SCALP] order={_ps_oid} COMPLETE but still flat — "
+                                    f"engine stays PAUSED, manual reconcile required"
+                                )
+                            decision = None
+                        else:
+                            logger.critical(
+                                f"[PENDING SCALP] order={_ps_oid} COMPLETE but holdings "
+                                f"UNKNOWN — scalp NOT created, stays PAUSED"
+                            )
+                            decision = None
+                    elif _ps_state in (ST_REJECTED, ST_CANCELLED):
+                        logger.critical(
+                            f"[PENDING SCALP] order={_ps_oid} terminal ({_ps_state}) — "
+                            f"tracker cleared, engine remains PAUSED for manual verify"
+                        )
+                        _pending_scalp = None
+                    else:
+                        logger.info(
+                            f"[PENDING SCALP] order={_ps_oid} still {_ps_state} — "
+                            f"engine stays PAUSED"
+                        )
+                        decision = None
+
+            # ══════════════════════════════════════════════════════════
             # ENTRY — only if no open position
             # ══════════════════════════════════════════════════════════
 
@@ -1986,154 +3060,69 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     if decision is not None else None
                 )
 
-                if order and order.get("price", 0) > 0:
+                if order and order.get("state") == ST_COMPLETE:
+                    # Broker confirmed the fill → build the position, place the
+                    # broker SL-M, persist and notify via the shared finalizer.
                     _signal_ts = (_signal_snapshot or {}).get("ts") or ts
-                    _order_submit_ts = order.get("submit_ts")
-                    _fill_ts = order.get("fill_ts")
-                    _dt_mod = __import__("datetime").datetime
-                    _signal_to_order_ms = (
-                        int(max(0.0, (_order_submit_ts - _signal_ts.timestamp()) * 1000))
-                        if _order_submit_ts is not None else 0
-                    )
-                    _order_to_fill_ms = (
-                        int(max(0.0, (_fill_ts - _order_submit_ts) * 1000))
-                        if (_fill_ts is not None and _order_submit_ts is not None) else 0
-                    )
-                    _first_bid = order.get("bid_before")
-                    _first_ask = order.get("ask_before")
-                    _first_ltp = order.get("ltp_before")
-                    _first_spread = (
-                        float(_first_ask - _first_bid)
-                        if _first_ask is not None and _first_bid is not None
-                        else ""
-                    )
-                    _slippage_pts = (
-                        float(order["price"] - _signal_opt_ltp)
-                        if _signal_opt_ltp else ""
-                    )
-
-                    # Premium-space stops computed from the ACTUAL fill premium.
-                    # (The signal's spot-based stop is unusable here: position
-                    #  entry/LTP are option premiums, not spot — mixing them
-                    #  made every trade instant-stop.)
-                    fill_premium = order["price"]
-                    atr_val = decision.get("features", {}).get("atr", 1.0)
-                    regime  = decision.get("regime", "UNKNOWN")
-                    stop_loss, target, _stop_pct = compute_entry_stops(
-                        fill_premium, atr_val, regime
-                    )
-
-                    position = {
-                        "symbol":   symbol,
-                        "side":     side,
-                        "qty":      order["qty"],
-                        "lot_size": lot_size,
-                        "entry":    order["price"],
-                        "stop_loss": stop_loss,
-                        "target":   target,
-                        "max_pnl":  0.0,
-                        "min_pnl":  0.0,   # tracks MAE (maximum adverse excursion)
-                        "ml_prob":  decision.get("ml_prob", 0.0),
-                        "features": decision.get("features", {}),
-                        "regime":   decision.get("regime", "UNKNOWN"),
-                        "reason":   decision.get("reason", ""),
-                        "entry_ts": ts,   # for held-time display in dashboard
-                        "_phase55_telemetry_id": decision.get("_phase55_telemetry_id", ""),
-                        "_phase55_decision": decision.get("_phase55_decision", {}),
-                        "_exec_signal_ts": _signal_ts.isoformat(),
-                        "_exec_order_submit_ts": _dt_mod.fromtimestamp(_order_submit_ts).isoformat() if _order_submit_ts is not None else "",
-                        "_exec_fill_ts": _dt_mod.fromtimestamp(_fill_ts).isoformat() if _fill_ts is not None else "",
-                        "_exec_signal_price": float(_signal_opt_ltp or 0.0),
-                        "_exec_first_bid": _first_bid,
-                        "_exec_first_ask": _first_ask,
-                        "_exec_first_ltp": _first_ltp,
-                        "_exec_spread": _first_spread,
-                        "_exec_slippage_pts": _slippage_pts,
-                        "_exec_signal_to_order_ms": _signal_to_order_ms,
-                        "_exec_order_to_fill_ms": _order_to_fill_ms,
-                        "sl_order_id": None,   # broker protective SL-M id (set below)
-                    }
-                    ctx.live_engine.update_phase55_actual_entry(position, ts)
-                    entry_time      = ts    # FIX-2
-                    entry_order_rec = order
-                    ctx.trades_today += 1
-
-                    # ── Place broker-side protective SL-M immediately ──────
-                    # True stop enforcement — no longer depends on the polling
-                    # loop seeing the price (eliminates virtual-stop gap risk).
-                    _sl_create(ctx, position)
-
-                    # Persist new open position immediately (survives restart)
-                    save_state(
+                    (position, entry_time, entry_order_rec, _journal_id) = _finalize_entry(
                         ctx,
-                        position,
-                        scalp_position,
-                        _scalp_trades_today,
-                        scalp_pnl_today=_scalp_pnl_today,
-                        daily_profit_locked=_daily_profit_locked,
+                        symbol=symbol, side=side, lot_size=lot_size,
+                        order=order, decision=decision, signal_ts=_signal_ts,
+                        signal_snapshot=_signal_snapshot, ts=ts, ltp_current=ltp_current,
+                        scalp_position=scalp_position,
+                        _scalp_trades_today=_scalp_trades_today,
+                        _scalp_pnl_today=_scalp_pnl_today,
+                        _daily_profit_locked=_daily_profit_locked,
                     )
                     _signal_first_ts = None   # reset for next trade
                     _signal_snapshot = None
-
-                    # F1: start replay timeline (observational)
-                    try:
-                        _ms_entry = ctx.live_engine.get_market_state(ts)
-                        position["_replay"] = TradeReplay(
-                            position, ts, ltp_current, _ms_entry
+                elif order and order.get("order_id"):
+                    # Order placed but NOT confirmed COMPLETE.  NEVER create a
+                    # position or SL on an unconfirmed fill (that is the phantom
+                    # entry).  Retain the order_id as a pending entry; new entries
+                    # are blocked until it reaches a terminal state.
+                    _order_state = order.get("state")
+                    if _order_state in (ST_REJECTED, ST_CANCELLED):
+                        logger.warning(
+                            f"[ENTRY] order={order['order_id']} {_order_state} — "
+                            f"entry abandoned, no position opened"
                         )
-                        # also store signal price for slippage (F5)
-                        position["_signal_entry_ltp"] = _signal_opt_ltp
-                    except Exception as _rep_e:
-                        logger.debug(f"[REPLAY] Init failed: {_rep_e}")
-
-                    # Fix empty journal: wire on_entry so diagnostics CSV populates
-                    try:
-                        _ms_j   = ctx.live_engine.get_market_state(ts)
-                        _htf_j  = "bullish" if _ms_j.get("htf_bullish", True) else "bearish"
-                        _delay_ms = int(max(0.0, (ts - _signal_ts).total_seconds() * 1000))
-                        _jid    = ctx.journal.on_entry(
-                            position    = position,
-                            market_state= _ms_j,
-                            ts          = ts,
-                            nifty_spot  = ltp_current,
-                            ce_prob_raw = _ms_j.get("ce_prob", 0.0),
-                            pe_prob_raw = _ms_j.get("pe_prob", 0.0),
-                            htf_state   = _htf_j,
-                            entry_delay_ms = _delay_ms,
+                        ctx.executor._active_order_id = None
+                    else:
+                        _pend_ts = (_signal_snapshot or {}).get("ts") or ts
+                        _pending_entry = {
+                            "order_id":        order["order_id"],
+                            "symbol":          symbol,
+                            "side":            side,
+                            "qty":             order["qty"],
+                            "lot_size":        lot_size,
+                            "decision":        decision,
+                            "signal_ts":       _pend_ts,
+                            "signal_snapshot": _signal_snapshot,
+                            "submit_ts":       order.get("submit_ts"),
+                            "ltp_before":      order.get("ltp_before"),
+                            "bid_before":      order.get("bid_before"),
+                            "ask_before":      order.get("ask_before"),
+                            "created_at":      time.time(),
+                            "state":           _order_state,
+                        }
+                        logger.critical(
+                            f"[ENTRY] order={order['order_id']} {_order_state} — "
+                            f"position NOT created, entry PENDING (blocking re-entry)"
                         )
-                        _journal_id = _jid
-                    except Exception as _je:
-                        logger.debug(f"[JOURNAL] on_entry failed: {_je}")
-
-                    entry_msg = format_trade_entry({
-                        "symbol":  symbol,
-                        "side":    side,
-                        "price":   position["entry"],
-                        "qty":     order["qty"],
-                        "stop":    stop_loss,
-                        "target":  target,
-                        "ml_prob": position["ml_prob"],
-                        "regime":  position["regime"],
-                    })
-                    send_trade_entry_with_exit_button(entry_msg)
-                    set_trade_quiet(True)
-
-                    logger.info(
-                        f"[ENTRY] {side} {symbol} "
-                        f"qty={order['qty']} fill={order['price']:.2f} "
-                        f"SL={stop_loss:.2f} "
-                        f"ml={position['ml_prob']:.3f} "
-                        f"reason={position['reason']} "
-                        f"signal_delay={_delay_ms}ms"
-                    )
+                        _signal_first_ts = None
+                        _signal_snapshot = None
                 else:
-                    logger.warning("[ENTRY] Order returned invalid fill — position not opened")
+                    logger.warning("[ENTRY] No order or placement failure — position not opened")
 
             # ══════════════════════════════════════════════════════════
             # SCALP ENGINE — momentum layer (only when main is flat)
             # ══════════════════════════════════════════════════════════
 
-            if ctx.scalp_engine and position is None:
+            # Phase 2: scalp is only managed/entered when no main position AND no
+            # pending entry/scalp order is in flight (else a late main fill could
+            # orphan the scalp, or a duplicate scalp order could be placed).
+            if ctx.scalp_engine and position is None and _pending_entry is None and _pending_scalp is None:
                 # Append spot LTP to rolling 120-second history
                 if ltp_current > 0:
                     _scalp_ltp_history.append((ts, ltp_current))
@@ -2256,39 +3245,152 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _daily_profit_locked = True
                     if not _s_exit and _s_ltp <= scalp_position["stop_loss"]:
                         _s_exit, _s_reason = True, "STOP"
+
+                    # ── SCALP PENDING EXIT reconciliation (Phase 2) ──────
+                    # Resolve an in-flight scalp SELL before any new exit; never
+                    # re-sell while pending, never clear until COMPLETE.
+                    _s_pending_exit_fill = None
+                    if scalp_position.get("_exit_order_id"):
+                        _s_pe_oid   = scalp_position["_exit_order_id"]
+                        _s_pe_state, _s_pe_avg, _s_pe_fill, _s_pe_fqty = ctx.executor._order_status(_s_pe_oid)
+                        if _s_pe_state == ST_COMPLETE:
+                            scalp_position["_exit_order_id"] = None
+                            _s_exit, _s_reason = True, "EXIT"
+                            _s_pending_exit_fill = _s_pe_avg
+                            logger.critical(
+                                f"[SCALP PENDING EXIT] order={_s_pe_oid} COMPLETE "
+                                f"fill={_s_pe_avg:.2f} — exit finalized"
+                            )
+                        elif _s_pe_state in (ST_REJECTED, ST_CANCELLED):
+                            scalp_position["_exit_order_id"] = None
+                            if _s_pe_fqty > 0:
+                                # Partial scalp fill — shrink qty, never oversell.
+                                scalp_position["qty"] = max(0, scalp_position["qty"] - _s_pe_fqty)
+                                logger.critical(
+                                    f"[SCALP PENDING EXIT] order={_s_pe_oid} {_s_pe_state} "
+                                    f"after partial fill {_s_pe_fqty} — remaining "
+                                    f"qty {scalp_position['qty']}"
+                                )
+                                if scalp_position["qty"] <= 0:
+                                    _s_exit = True
+                                    _s_reason = "EXIT"
+                                    _s_pending_exit_fill = _s_pe_avg
+                            else:
+                                logger.warning(
+                                    f"[SCALP PENDING EXIT] order={_s_pe_oid} {_s_pe_state} — "
+                                    f"will retry fresh"
+                                )
+                        else:
+                            # Still open/unknown → hold; do not exit this cycle.
+                            logger.info(
+                                f"[SCALP PENDING EXIT] order={_s_pe_oid} still "
+                                f"{_s_pe_state} — holding"
+                            )
+                            _s_exit   = False
+                            _s_reason = ""
+
                     if _s_exit:
                         if _s_reason in ("STOP",):
                             _log_stop_audit("SCALP STOP HIT", _s_ltp, scalp_position)
                         _sl_already_filled = False
                         _sl_fill_price     = 0.0
-                        if scalp_position.get("sl_order_id"):
-                            _sl_info = ctx.executor.get_order_info(scalp_position["sl_order_id"])
-                            ctx.executor.cancel_protective_stop(scalp_position["sl_order_id"])
-                            logger.info(
-                                f"[BROKER SL CANCELLED]\n{scalp_position['symbol']}  "
-                                f"id={scalp_position['sl_order_id']}"
-                            )
-                            if (_sl_info and _sl_info.get("status") == "COMPLETE"
+                        try:
+                            if scalp_position.get("sl_order_id"):
+                                _sl_info = ctx.executor.get_order_info(scalp_position["sl_order_id"])
+                                # VERIFY FIRST, cancel only if we will market-exit.
+                                _sl_filled = (
+                                    _sl_info is not None
+                                    and _sl_info.get("status") == "COMPLETE"
                                     and _sl_info.get("average_price", 0) > 0
-                                    and ctx.executor.verify_flat(scalp_position["symbol"])):
-                                _sl_already_filled = True
-                                _sl_fill_price     = _sl_info["average_price"]
-                                logger.critical(
-                                    f"[BROKER SL FILLED] {scalp_position['symbol']} "
-                                    f"fill={_sl_fill_price:.2f} - scalp broker stop executed the exit"
+                                    and ctx.executor.verify_flat(scalp_position["symbol"])
                                 )
-                            scalp_position["sl_order_id"] = None
+                                if _sl_filled:
+                                    _sl_already_filled = True
+                                    _sl_fill_price     = _sl_info["average_price"]
+                                    logger.critical(
+                                        f"[BROKER SL FILLED] {scalp_position['symbol']} "
+                                        f"fill={_sl_fill_price:.2f} - scalp broker stop executed the exit"
+                                    )
+                                    scalp_position["sl_order_id"] = None
+                                else:
+                                    if not ctx.executor.cancel_protective_stop(scalp_position["sl_order_id"]):
+                                        _sl_recheck = ctx.executor.get_order_info(scalp_position["sl_order_id"])
+                                        _re_status = (_sl_recheck or {}).get("status", "")
+                                        if _re_status == "CANCELLED":
+                                            logger.info(
+                                                f"[BROKER SL ALREADY CANCELLED]\n{scalp_position['symbol']} "
+                                                f"id={scalp_position['sl_order_id']} — safe to market-exit"
+                                            )
+                                            scalp_position["sl_order_id"] = None
+                                        elif _re_status == "COMPLETE":
+                                            if ctx.executor.verify_flat(scalp_position["symbol"]):
+                                                _sl_already_filled = True
+                                                _sl_fill_price = (_sl_recheck or {}).get("average_price", 0.0)
+                                                scalp_position["sl_order_id"] = None
+                                            else:
+                                                raise RuntimeError("SL COMPLETE but scalp position not flat")
+                                        else:
+                                            raise BrokerStateError(
+                                                f"scalp SL not confirmably cancelled (status={_re_status})"
+                                            )
+                                    else:
+                                        logger.info(
+                                            f"[BROKER SL CANCELLED]\n{scalp_position['symbol']}  "
+                                            f"id={scalp_position['sl_order_id']}"
+                                        )
+                                        scalp_position["sl_order_id"] = None
+                        except Exception as _s_sl_unknown:
+                            # Broker state UNKNOWN — do NOT send a market scalp
+                            # exit.  Keep the scalp position OPEN, pause, alert.
+                            import telegram.notifier as _tn
+                            logger.critical(
+                                f"[SCALP EXIT] Broker state UNKNOWN — exit DEFERRED, "
+                                f"scalp position kept open: {_s_sl_unknown}"
+                            )
+                            try:
+                                tg_force(
+                                    f"🚨 BROKER STATE UNKNOWN during scalp exit — "
+                                    f"engine PAUSED. Position NOT closed."
+                                )
+                            except Exception:
+                                pass
+                            _tn.ENGINE_PAUSED = True
+                            time.sleep(2)
+                            continue
                         if _sl_already_filled:
                             _s_exit_order = None
                             _s_fill = _sl_fill_price
                             ctx.executor._active_order_id = None
                         else:
-                            _s_exit_order = ctx.executor.execute_exit(
-                                scalp_position["symbol"],
-                                scalp_position["qty"],
-                                side=scalp_position["side"],
-                            )
-                            _s_fill = _s_exit_order["price"] if _s_exit_order else _s_ltp
+                            # Phase 2 — Execution Truth: never clear the scalp until
+                            # the exit SELL is broker-confirmed COMPLETE.
+                            if _s_pending_exit_fill is not None:
+                                _s_exit_order = {"price": _s_pending_exit_fill, "state": ST_COMPLETE}
+                                _s_pending_exit_fill = None
+                            else:
+                                _s_exit_order = ctx.executor.execute_exit(
+                                    scalp_position["symbol"],
+                                    scalp_position["qty"],
+                                    side=scalp_position["side"],
+                                )
+                                if _s_exit_order is None:
+                                    # Placement failed — nothing in flight.
+                                    logger.critical(
+                                        f"[SCALP EXIT] SELL placement failed — position NOT cleared, retrying"
+                                    )
+                                    time.sleep(2)
+                                    continue
+                                if _s_exit_order.get("state") != ST_COMPLETE:
+                                    if _s_exit_order.get("order_id"):
+                                        scalp_position["_exit_order_id"] = _s_exit_order["order_id"]
+                                    logger.critical(
+                                        f"[SCALP EXIT] SELL {_s_exit_order.get('order_id')} not confirmed "
+                                        f"({_s_exit_order.get('state')}) — scalp NOT cleared, pending exit"
+                                    )
+                                    time.sleep(2)
+                                    continue
+                                scalp_position["_exit_order_id"] = None
+                            _s_fill = _s_exit_order["price"]
                         _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
                         ctx.pnl          += _s_pnl
                         ctx.trades_today += 1
@@ -2500,7 +3602,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                             )
                                     else:
                                         _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
-                                        if _s_order:
+                                        if _s_order and _s_order.get("state") == ST_COMPLETE:
                                             _s_submit_ts = _s_order.get("submit_ts")
                                             _s_fill_ts = _s_order.get("fill_ts")
                                             _s_dt_mod = __import__("datetime").datetime
@@ -2575,6 +3677,43 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                             send_scalp_entry(_scalp_entry_msg)
                                             send_trade_channel(_scalp_entry_msg)
                                             set_trade_quiet(True)
+
+                                        elif _s_order and _s_order.get("order_id"):
+                                            _s_o_state = _s_order.get("state")
+                                            if _s_o_state in (ST_REJECTED, ST_CANCELLED):
+                                                logger.warning(
+                                                    f"[SCALP ENTRY] order={_s_order['order_id']} "
+                                                    f"{_s_o_state} — scalp abandoned, no position opened"
+                                                )
+                                            else:
+                                                # Placed but unconfirmed → HALT. Do NOT enter a
+                                                # stale scalp and do NOT leave an unmanaged fill.
+                                                _pending_scalp = {
+                                                    "order_id":   _s_order["order_id"],
+                                                    "symbol":     _s_symbol,
+                                                    "side":       _s_side,
+                                                    "qty":        _scalp_entry_qty,
+                                                    "created_at": time.time(),
+                                                    "state":      _s_o_state,
+                                                }
+                                                import telegram.notifier as _tn_s
+                                                _tn_s.ENGINE_PAUSED = True
+                                                logger.critical(
+                                                    f"[SCALP ENTRY] order={_s_order['order_id']} "
+                                                    f"{_s_o_state} — scalp NOT entered, engine PAUSED"
+                                                )
+                                                try:
+                                                    tg_force(
+                                                        f"🚨 SCALP ENTRY order {_s_order['order_id']} "
+                                                        f"unconfirmed ({_s_o_state}) — engine PAUSED. "
+                                                        f"Manual reconciliation required."
+                                                    )
+                                                except Exception:
+                                                    pass
+                                        else:
+                                            logger.warning(
+                                                "[SCALP ENTRY] No order / placement failure — scalp not opened"
+                                            )
 
             # ══════════════════════════════════════════════════════════
             # DUAL DASHBOARD (two persistent edit-in-place messages)
@@ -2834,6 +3973,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _scalp_trades_today,
                     scalp_pnl_today=_scalp_pnl_today,
                     daily_profit_locked=_daily_profit_locked,
+                    pending_entry=_pending_entry,
+                    pending_scalp=_pending_scalp,
                 )
             except Exception:
                 pass
@@ -2844,6 +3985,17 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         except KeyboardInterrupt:
             logger.info("KeyboardInterrupt in engine loop")
             break
+
+        except BrokerStateError as _bse:
+            # Broker state UNKNOWN escaped the loop body — do NOT keep guessing.
+            # Pause trading; a later reconciliation / restart re-verifies.
+            logger.critical(f"[ENGINE LOOP] BrokerStateError ({_bse}) — PAUSING")
+            try:
+                import telegram.notifier as _tn
+                _tn.ENGINE_PAUSED = True
+            except Exception:
+                pass
+            time.sleep(2)
 
         except Exception as e:
             logger.error(f"[ENGINE LOOP ERROR] {e}", exc_info=True)

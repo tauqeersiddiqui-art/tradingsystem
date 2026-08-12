@@ -7,6 +7,8 @@ import csv
 import threading
 from datetime import datetime, date
 
+from engine.execution.cost_model import net_pnl   # R6: authoritative net PnL
+
 _TRADE_DIR  = os.path.join(os.path.dirname(__file__), "..", "..", "data", "trades")
 _lock       = threading.Lock()
 _trade_seq  = 0   # increments each session; will re-read on load
@@ -87,7 +89,7 @@ def log_trade(
     signal_to_order_ms = position.get("_exec_signal_to_order_ms", "")
     order_to_fill_ms   = position.get("_exec_order_to_fill_ms", "")
 
-    pnl          = (exit_price - entry_price) * qty
+    pnl          = net_pnl((exit_price - entry_price) * qty, qty)   # R6: NET PnL
     holding_s    = (exit_time - entry_time).total_seconds() if entry_time else 0
     stop_pts     = entry_price - stop_loss
     risk_rs      = stop_pts * qty

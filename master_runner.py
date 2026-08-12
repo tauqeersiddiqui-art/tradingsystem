@@ -42,9 +42,9 @@ _fh.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(mess
 logging.getLogger().addHandler(_fh)
 logger = logging.getLogger("master")
 
-# ── ENV flags ─────────────────────────────────────────────────────────
-PAPER_MODE = os.getenv("PAPER_MODE", "0") == "1"
-TEST_MODE  = os.getenv("TEST_MODE",  "0") == "1"
+# ── R5: SINGLE SOURCE OF TRUTH ────────────────────────────────────────
+# All mode flags now live in ctx.config (engine/config/config.py).
+# No more _STARTUP_ENV or os.getenv("PAPER_MODE") in master_runner.
 
 HIST_CSV   = "data/historical/banknifty_1m_full.csv"
 
@@ -53,6 +53,7 @@ from engine.execution.execution_engine import (
     ExecutionEngine, _MAX_PENDING_RESOLVE_SECONDS,
     ST_COMPLETE, ST_REJECTED, ST_CANCELLED, ST_OPEN, ST_PARTIAL, ST_TIMEOUT, ST_UNKNOWN,
 )
+from engine.execution import cost_model   # R6: authoritative net-PnL / cost
 from engine.execution.broker import BrokerStateError
 from engine.core.context import TradingContext
 from engine.config.config import Config
@@ -279,11 +280,11 @@ def _raise_stop(ctx, position: dict, new_stop: float, min_step: float = 0.0) -> 
 
 
 def _position_cost_rs(ctx, qty: int) -> float:
-    """Round-trip cost for the actual position quantity."""
-    lot_units = max(int(getattr(ctx.config, "LOT_SIZE", 30) or 30), 1)
-    cost_per_lot = float(getattr(ctx.config, "COST_PER_LOT", 66.0) or 66.0)
-    lots = _position_lots(ctx, qty)
-    return lots * cost_per_lot
+    """Round-trip cost for the actual position quantity.
+
+    Delegates to the authoritative cost model (single source of truth)."""
+    from engine.execution.cost_model import round_trip_cost
+    return round_trip_cost(qty)
 
 
 def _position_lots(ctx, qty: int) -> int:
@@ -321,11 +322,10 @@ def _daily_bank_reached(ctx, open_pnl: float = 0.0) -> bool:
 
 
 def _is_paper_or_dry_run(ctx) -> bool:
+    # R5: Single source of truth — ctx.config only
     return bool(
-        PAPER_MODE
-        or os.getenv("DRY_RUN", "0") == "1"
-        or getattr(ctx.config, "PAPER_MODE", False)
-        or getattr(ctx.config, "DRY_RUN", False)
+        ctx.config.PAPER_MODE
+        or ctx.config.DRY_RUN
         or getattr(ctx.broker, "is_paper", False)
         or (hasattr(ctx.executor, "_is_dry") and ctx.executor._is_dry())
     )
@@ -570,15 +570,27 @@ def _finalize_entry(ctx, *, symbol, side, lot_size, order, decision, signal_ts,
         logger.debug(f"[JOURNAL] on_entry failed: {_je}")
 
     try:
+        # Extract decision intelligence context from the decision dict
+        # (the live_engine entry signal is passed here as `decision`).
+        _decision_score = decision.get("decision_score")
+        _global_state = None
+        try:
+            _gm = getattr(ctx, "global_market", None)
+            if _gm is not None:
+                _global_state = _gm.get_state()
+        except Exception:
+            pass
         entry_msg = format_trade_entry({
-            "symbol":  symbol,
-            "side":    side,
-            "price":   position["entry"],
-            "qty":     order["qty"],
-            "stop":    stop_loss,
-            "target":  target,
-            "ml_prob": position["ml_prob"],
-            "regime":  position["regime"],
+            "symbol":              symbol,
+            "side":                side,
+            "price":               position["entry"],
+            "qty":                 order["qty"],
+            "stop":                stop_loss,
+            "target":              target,
+            "ml_prob":             position["ml_prob"],
+            "regime":              position.get("regime", "TREND"),
+            "decision_score":      _decision_score,
+            "global_market_state": _global_state,
         })
         send_trade_entry_with_exit_button(entry_msg)
     except Exception as _nt_e:
@@ -1354,12 +1366,18 @@ def init_broker():
 
     broker = ZerodhaBroker()
 
+    # R5: Hard startup gate (fail-closed, no ambiguity).
     # ALLOW_BROKER_POSITION_ON_START=1 skips this gate for lunch-break resume
     # (engine_loop reconciliation then adopts the position safely).
     # In DRY_RUN/PAPER mode the live broker may hold real positions unrelated
     # to paper trades — skip the gate to avoid blocking paper sessions.
+    #
+    # NOTE: ctx.config is not yet available here, so we read directly from env.
+    # This will be passed to Config() below, ensuring single source of truth.
     _is_dry = os.getenv("DRY_RUN", "0") == "1"
-    _resume_ok = os.getenv("ALLOW_BROKER_POSITION_ON_START", "0") == "1" or PAPER_MODE or _is_dry
+    _is_paper = os.getenv("PAPER_MODE", "0") == "1"
+    _allow_resume = os.getenv("ALLOW_BROKER_POSITION_ON_START", "0") == "1"
+    _resume_ok = _allow_resume or _is_paper or _is_dry
     if not _resume_ok and hasattr(broker, "has_open_position"):
         try:
             _broker_has_pos = broker.has_open_position()
@@ -1415,13 +1433,43 @@ def build_context(broker) -> TradingContext:
     ctx = TradingContext()
 
     ctx.broker    = broker
-    ctx.config    = Config()
+    ctx.config    = Config()  # R5: Config reads from os.getenv() directly (single source)
     ctx.executor  = ExecutionEngine(broker, ctx.config)
 
     ctx.ml_learner = IntradayMLLearner()
     ctx._last_daily_reset = None
     ctx.live_engine = LiveEngine(ctx)
     ctx.allocator   = CapitalAllocator(ctx.config)
+
+    # ── Decision Intelligence Layer ──────────────────────────────────────
+    # Global market context (Yahoo Finance, cached 5min)
+    try:
+        from engine.intelligence.global_market_engine import get_global_market_engine
+        ctx.global_market = get_global_market_engine(
+            enabled=os.getenv("ENABLE_GLOBAL_CONTEXT", "1") == "1"
+        )
+        logger.info("[GLOBAL] Global market engine initialized")
+    except Exception as e:
+        logger.warning(f"[GLOBAL] Failed to initialize global market engine: {e}")
+        ctx.global_market = None
+
+    # Decision Intelligence (weighted scoring)
+    try:
+        from engine.intelligence.decision_intelligence import get_decision_intelligence
+        ctx.decision_intelligence = get_decision_intelligence(config=ctx.config)
+        logger.info("[DECISION] Decision intelligence initialized")
+    except Exception as e:
+        logger.warning(f"[DECISION] Failed to initialize decision intelligence: {e}")
+        ctx.decision_intelligence = None
+
+    # Strategy Tracker (observation only, no auto-kill)
+    try:
+        from engine.analytics.strategy_tracker import get_strategy_tracker
+        ctx.strategy_tracker = get_strategy_tracker()
+        logger.info("[STRATEGY] Strategy tracker initialized")
+    except Exception as e:
+        logger.warning(f"[STRATEGY] Failed to initialize strategy tracker: {e}")
+        ctx.strategy_tracker = None
 
     # ── Restore prior same-day runtime state (else start fresh) ───────
     # A snapshot from a previous day is ignored by load_state(), so PnL and
@@ -1430,6 +1478,7 @@ def build_context(broker) -> TradingContext:
     # dashboards and the daily-loss / max-trades gates are correct from cycle 1.
     _snap = load_state()
     ctx.pnl          = float(_snap.get("pnl", 0.0))
+    ctx.gross_pnl    = float(_snap.get("gross_pnl", 0.0))
     ctx.positions    = list(_snap.get("positions", []))
     ctx.cycle_count  = 0
     ctx.trades_today = int(_snap.get("trades_today", 0))
@@ -1462,12 +1511,12 @@ def build_context(broker) -> TradingContext:
 # CANDLE BUILDER INIT
 # ══════════════════════════════════════════════════════════════════════
 
-def init_candle_builder(broker) -> CandleBuilder:
+def init_candle_builder(broker, ctx: TradingContext) -> CandleBuilder:
     token = CandleBuilder.nifty_token()   # 260105 (NSE:NIFTY BANK)
 
     builder = CandleBuilder(broker, instrument_token=token, max_candles=300)
 
-    if PAPER_MODE:
+    if ctx.config.PAPER_MODE:
         builder.seed_paper_mode(HIST_CSV, n=200)
     else:
         # Warm buffer with recent historical data so ML features are
@@ -1521,6 +1570,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         _snap = load_state()
         if _snap:
             ctx.pnl             = float(_snap.get("pnl", ctx.pnl))
+            ctx.gross_pnl       = float(_snap.get("gross_pnl", ctx.gross_pnl))
             ctx.trades_today    = int(_snap.get("trades_today", ctx.trades_today))
             ctx.positions       = list(_snap.get("positions", ctx.positions))
             _scalp_trades_today = int(_snap.get("scalp_trades_today", 0))
@@ -1988,7 +2038,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             f"<b>Engine: {paused}{stop_req}</b>\n"
             f"BANKNIFTY LTP: {ltp:.1f}\n"
             f"{pos_str}\n"
-            f"PnL: {ctx.pnl:.0f} | Trades: {ctx.trades_today}\n"
+            f"Net PnL: {ctx.pnl:.0f} | Gross: {ctx.gross_pnl:.0f} | Trades: {ctx.trades_today}\n"
             f"CE thr: {ce_thr}  PE thr: {pe_thr}"
         )
 
@@ -2060,7 +2110,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 _hb_paused = " | PAUSED" if _tn.ENGINE_PAUSED else ""
                 tg_force(
                     f"💓 Engine alive — {ts.strftime('%H:%M')}\n"
-                    f"BANKNIFTY {ltp_current:,.1f} | PnL ₹{ctx.pnl:+.0f}\n"
+                    f"BANKNIFTY {ltp_current:,.1f} | Net ₹{ctx.pnl:+.0f} "
+                    f"(Gross ₹{ctx.gross_pnl:+.0f})\n"
                     f"{_hb_pos}{_hb_paused}"
                 )
 
@@ -2546,9 +2597,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 f"fill={exit_price:.2f} SL={position.get('stop_loss',0):.2f})"
                             )
 
-                    pnl = (exit_price - position["entry"]) * position["qty"]
+                    _gross_pnl = (exit_price - position["entry"]) * position["qty"]
+                    # R6: realized PnL is NET (gross minus broker round-trip cost).
+                    # All risk gates read ctx.pnl, so they now compare Net PnL.
+                    pnl = cost_model.net_pnl(_gross_pnl, position["qty"])
 
-                    ctx.pnl         += pnl
+                    ctx.pnl          += pnl
+                    ctx.gross_pnl    += _gross_pnl
                     ctx.positions.append(pnl)
                     try:
                         ctx.live_engine.record_phase55_actual_outcome(
@@ -2592,6 +2647,21 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         features=position.get("features", {}),
                         reason=exit_reason,
                     )
+
+                    # ── Strategy Performance Tracking (observation only) ──
+                    try:
+                        st = getattr(ctx, "strategy_tracker", None)
+                        if st is not None:
+                            # Strategy detection: ML-only or ORB+ML
+                            _is_orb = position.get("reason", "").upper().startswith("ORB_")
+                            strategy_name = "ORB" if _is_orb else "ML"
+                            st.record_trade(
+                                strategy=strategy_name,
+                                pnl=pnl,
+                                side=position["side"],
+                            )
+                    except Exception as e:
+                        logger.debug(f"[STRATEGY] tracker failed (non-fatal): {e}")
 
                     # ── AI BRAIN review (advisory) after 2+ consecutive losses ──
                     # OpenAI-compatible LLM analyses recent trades and trims the
@@ -3391,8 +3461,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                     continue
                                 scalp_position["_exit_order_id"] = None
                             _s_fill = _s_exit_order["price"]
-                        _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
+                        _s_gross = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
+                        # R6: scalp realized PnL is NET (gross minus round-trip cost).
+                        _s_pnl   = cost_model.net_pnl(_s_gross, scalp_position["qty"])
                         ctx.pnl          += _s_pnl
+                        ctx.gross_pnl    += _s_gross
                         ctx.trades_today += 1
                         _scalp_pnl_today += _s_pnl
                         _scalp_exit_pos = scalp_position
@@ -4098,9 +4171,12 @@ def main():
     logger.info("MASTER STARTED")
 
     # ── Startup Telegram ──────────────────────────────────────────────
+    # R5: Read mode directly from env (ctx not yet created)
+    _is_paper = os.getenv("PAPER_MODE", "0") == "1"
+    _is_dry = os.getenv("DRY_RUN", "0") == "1"
     from datetime import time as _dtime
     _now_t       = datetime.now().time()
-    mode_str     = "PAPER MODE" if PAPER_MODE else "LIVE MODE (DRY_RUN)"
+    mode_str     = "PAPER MODE" if _is_paper else ("DRY_RUN MODE" if _is_dry else "LIVE MODE")
     _is_early    = _now_t < _dtime(9, 15)
     _mid_orb     = _dtime(9, 15) <= _now_t < _dtime(9, 30)
     _after_orb   = _now_t >= _dtime(9, 30)
@@ -4146,20 +4222,23 @@ def main():
     # today's intraday candles warm up indicators from the first tick.
     update_historical_data(broker, HIST_CSV)
 
-    # ── Candle builder ────────────────────────────────────────────────
+    # ── Context ───────────────────────────────────────────────────────
     try:
-        builder = init_candle_builder(broker)
+        ctx = build_context(broker)
+        logger.info("Context built")
+    except Exception as e:
+        logger.critical(f"Context build failed: {e}")
+        return
+
+    # ── Candle builder (needs ctx.config for PAPER_MODE) ──────────────
+    try:
+        builder = init_candle_builder(broker, ctx)
         logger.info(
             f"CandleBuilder ready | seeded={builder.candle_count()} candles"
         )
     except Exception as e:
         logger.critical(f"CandleBuilder init failed: {e}")
         return
-
-    # ── Context ───────────────────────────────────────────────────────
-    try:
-        ctx = build_context(broker)
-        logger.info("Context built")
     except Exception as e:
         logger.critical(f"Context build failed: {e}")
         return

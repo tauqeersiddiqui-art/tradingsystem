@@ -18,6 +18,8 @@ class TradingContext:
         # Intelligence
         self.strategies = None    # StrategyHub
         self.meta_ai = None       # MetaAI (RF/XGB)
+        self.global_market = None # Global Market Context
+        self.decision_intelligence = None  # Decision Intelligence
 
         # Trading Infra
         self.broker = None
@@ -34,7 +36,8 @@ class TradingContext:
         self.last_trade = None
         self.cycle_count = 0
 
-        self.pnl = 0.0
+        self.pnl = 0.0            # NET realized PnL (risk gates read this)
+        self.gross_pnl = 0.0      # GROSS realized PnL (dual reporting only)
         self.positions = []
         self.trades_today = 0
         self.exit_analytics = {}

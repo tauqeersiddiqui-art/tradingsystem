@@ -59,9 +59,10 @@ _MIN_EXPECTED_PNL = 150.0
 _MIN_ML_FLOOR      = 0.55   # PE floor (model threshold=0.64; learner adaptive adds ~0.02)
 _CE_ML_FLOOR       = 0.65   # CE floor (model threshold=0.72; learner adaptive adds ~0.02)
 _CE_RANGE_DAY_FLOOR = float(os.getenv("CE_ML_RANGE_FLOOR", "0.75"))  # stricter CE floor on RANGE days
+# Edge margin for predict-first path
+_ML_EDGE_MARGIN    = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
 # Re-entry cooldown is config-driven (Config.REENTRY_COOLDOWN, default 300s);
 # see LiveEngine.__init__ self._reentry_cooldown.
-_CE_ORB_ENABLED  = True   # CE allowed but gated by _CE_ML_FLOOR
 
 # ── Try importing DayClassifier (model may not exist yet) ─────────────
 try:
@@ -94,6 +95,15 @@ class LiveEngine:
         self.orb_done: bool = False
         self.orb_ce_fired: bool = False   # one-shot per day per side
         self.orb_pe_fired: bool = False
+        # ORB reconstruction fault-tolerance (Phase 7 hardening).
+        # Status: NONE (never attempted) / VALID / RETRYING / FAILED / UNAVAILABLE.
+        self.orb_status: str = "NONE"
+        self.orb_reconstruct_attempts: int = 0
+        self.orb_last_error: str = ""
+        _orb_cfg = getattr(ctx, "config", None)
+        self._orb_retries: int = max(1, int(getattr(_orb_cfg, "ORB_RECONSTRUCT_RETRIES", 3)))
+        self._orb_backoff_base: float = max(1.0, float(getattr(_orb_cfg, "ORB_RECONSTRUCT_BACKOFF", 5.0)))
+        self._orb_min_candles: int = max(1, int(getattr(_orb_cfg, "ORB_MIN_CANDLES", 10)))
 
         # ── VWAP accumulator (reset at session open) ──────────────────
         self._vwap = VWAPAccumulator()
@@ -127,11 +137,11 @@ class LiveEngine:
         # Higher-timeframe (5m) SuperTrend direction — anti-noise entry gate.
         self._htf5_dir: int = 0
         # ── PREDICT-FIRST direction selection ─────────────────────────
-        # When True, the ML models CHOOSE the direction (argmax of ce/pe
-        # probability) and structure (5m trend + VWAP) only CONFIRMS it —
-        # instead of 1m SuperTrend choosing and ML rubber-stamping. Requires
-        # the v3 directional models (both sides trained on all bars).
-        self._predict_first: bool = (os.getenv("PREDICT_FIRST", "1") == "1")
+        # ML models CHOOSE the direction (argmax of ce/pe probability) and structure
+        # (5m trend + VWAP) only CONFIRMS it — instead of 1m SuperTrend choosing
+        # and ML rubber-stamping. Requires the v3 directional models (both sides
+        # trained on all bars).
+        self._predict_first: bool = True
         # Minimum gap between the two sides' probs to claim a directional
         # edge. If |ce - pe| < margin, conviction is too low → no trade.
         self._ml_edge_margin: float = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
@@ -211,6 +221,15 @@ class LiveEngine:
         populate orb_high / orb_low so ORB breakout signals work even when
         the engine starts after the window has closed.
 
+        Fault-tolerant (Phase 7):
+        - exponential backoff retries on every transient failure
+        - validates candle count, timestamps and window boundaries
+        - rejects malformed candle dicts (never fabricates values)
+        - sets orb_status to VALID / RETRYING / FAILED / UNAVAILABLE so the
+          dashboard and telemetry can observe ORB health
+        - On final failure (exhausted retries) ORB remains empty and entry
+          is safely blocked from ORB-style breakouts; ML-only entries still work.
+
         Safe to call at any time:
         - No-op if before market open (9:15).
         - No-op if ORB was already built from live ticks.
@@ -218,8 +237,6 @@ class LiveEngine:
           candles are already complete and lets the live feed add the rest.
         - If startup is *after* the window (≥9:30), fetches the full range
           and locks orb_done so no further accumulation occurs.
-        - On any API failure, logs a warning and leaves ORB empty rather
-          than crashing — ML-only entries still work in that case.
         """
         if ts is None:
             ts = datetime.now()
@@ -227,10 +244,12 @@ class LiveEngine:
 
         # Nothing to do before the market opens
         if now < _MARKET_OPEN:
+            self.orb_status = "NONE"
             return
 
         # ORB already populated by live ticks — nothing to reconstruct
         if self.orb_high is not None and self.orb_low is not None:
+            self.orb_status = "VALID"
             return
 
         today        = ts.date()
@@ -239,66 +258,149 @@ class LiveEngine:
         # we filter strictly to <9:30 below.
         orb_end_dt   = datetime.combine(today, _ORB_END)
 
-        try:
-            raw = broker.kite.historical_data(
-                _BANKNIFTY_INDEX_TOKEN, orb_start_dt, orb_end_dt,
-                "minute", oi=False,
-            )
-        except Exception as exc:
-            logger.warning(
-                f"[ORB RECONSTRUCT] Zerodha API call failed: {exc} "
-                "— ORB unavailable; ML-only entries still active."
-            )
-            if now >= _ORB_END:
-                self.orb_done = True
+        # On a non-trading day (weekend/holiday) there is nothing to fetch;
+        # skip straight to UNAVAILABLE instead of retrying pointlessly.
+        if today.weekday() >= 5:
+            self.orb_status = "UNAVAILABLE"
+            self.orb_last_error = "non-trading day (weekend)"
+            logger.info("[ORB RECONSTRUCT] Weekend — ORB unavailable, skipping retries")
             return
 
-        if not raw:
-            logger.warning(
-                "[ORB RECONSTRUCT] API returned no candles for today's "
-                "9:15–9:29 window — ORB unavailable."
-            )
-            if now >= _ORB_END:
-                self.orb_done = True
-            return
+        max_attempts = self._orb_retries
+        for attempt in range(1, max_attempts + 1):
+            self.orb_reconstruct_attempts = attempt
+            raw = None
+            exc = None
+            try:
+                raw = broker.kite.historical_data(
+                    _BANKNIFTY_INDEX_TOKEN, orb_start_dt, orb_end_dt,
+                    "minute", oi=False,
+                )
+            except Exception as e:  # noqa: BLE001 — broker/network failures are logged & retried
+                exc = e
 
-        # Strip timezone and filter strictly to 9:15:00–9:29:59
-        orb_candles = []
-        for c in raw:
-            dt = c["date"]
-            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+            if exc is not None:
+                self.orb_status = "RETRYING" if attempt < max_attempts else "FAILED"
+                self.orb_last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    f"[ORB RECONSTRUCT] attempt {attempt}/{max_attempts} "
+                    f"API call failed: {exc}"
+                )
+                if attempt < max_attempts:
+                    import time as _time
+                    _delay = self._orb_backoff_base * (2 ** (attempt - 1))
+                    logger.info(f"[ORB RECONSTRUCT] retrying in {_delay:.0f}s")
+                    _time.sleep(_delay)
+                else:
+                    logger.error(
+                        f"[ORB RECONSTRUCT] FAILED after {max_attempts} attempts "
+                        f"({self.orb_last_error}) — ORB unavailable; "
+                        f"ORB breakouts remain blocked."
+                    )
+                continue
+
+            # ── Validate the raw response ──────────────────────────────
+            if not raw:
+                self.orb_last_error = "empty response"
+                logger.warning(
+                    f"[ORB RECONSTRUCT] attempt {attempt}/{max_attempts} "
+                    "API returned no candles — ORB unavailable."
+                )
+                self.orb_status = "RETRYING" if attempt < max_attempts else "FAILED"
+                if attempt < max_attempts:
+                    import time as _time
+                    _delay = self._orb_backoff_base * (2 ** (attempt - 1))
+                    _time.sleep(_delay)
+                    continue
+                if now >= _ORB_END:
+                    self.orb_done = True
+                return
+
+            # Strip timezone, validate fields and filter strictly to
+            # 9:15:00–9:29:59 of *today*.
+            orb_candles = []
+            for c in raw:
                 try:
-                    import pytz as _tz
-                    dt = dt.astimezone(_tz.timezone("Asia/Kolkata")).replace(tzinfo=None)
-                except Exception:
-                    dt = dt.replace(tzinfo=None)
-            t = dt.time() if hasattr(dt, "time") else None
-            if t and _MARKET_OPEN <= t < _ORB_END:
-                orb_candles.append(c)
+                    cdate    = c["date"]
+                    c_high   = float(c["high"])
+                    c_low    = float(c["low"])
+                    c_open   = float(c.get("open", c_high))
+                    c_close  = float(c.get("close", c_high))
+                except Exception as _bad:  # malformed candle — reject, never fabricate
+                    self.orb_last_error = f"malformed candle: {_bad}"
+                    logger.warning(
+                        f"[ORB RECONSTRUCT] Rejecting malformed candle: {_bad}"
+                    )
+                    continue
 
-        if not orb_candles:
-            logger.warning(
-                "[ORB RECONSTRUCT] No candles found in 9:15–9:29 range "
-                "(market may have been closed or data unavailable) — ORB unavailable."
-            )
+                if c_high < c_low or c_open <= 0 or c_close <= 0:
+                    self.orb_last_error = "invalid OHLC (high<low or non-positive)"
+                    logger.warning(
+                        "[ORB RECONSTRUCT] Rejecting invalid OHLC candle "
+                        f"(high={c_high} low={c_low})"
+                    )
+                    continue
+
+                if hasattr(cdate, "tzinfo") and cdate.tzinfo is not None:
+                    try:
+                        import pytz as _tz
+                        cdate = cdate.astimezone(_tz.timezone("Asia/Kolkata")).replace(tzinfo=None)
+                    except Exception:
+                        cdate = cdate.replace(tzinfo=None)
+                d = cdate.date() if hasattr(cdate, "date") else today
+                t = cdate.time() if hasattr(cdate, "time") else None
+                # Strict trading-day boundary: only *today's* candles qualify.
+                if d == today and t and _MARKET_OPEN <= t < _ORB_END:
+                    orb_candles.append(c)
+
+            expected_end = (datetime.combine(today, _ORB_END) - datetime.combine(today, _MARKET_OPEN)).total_seconds() / 60.0
+
+            # A partial window (still accumulating) is acceptable only while
+            # we are inside the window; once past 9:30 the fetched set must
+            # cover the full 15-candle window (with tolerance for an
+            # incomplete first candle at 9:15).
+            too_little = len(orb_candles) < self._orb_min_candles
+            if too_little and now >= _ORB_END:
+                self.orb_last_error = (
+                    f"incomplete ORB window: got {len(orb_candles)} "
+                    f"of ~{int(expected_end):.0f} candles (min {self._orb_min_candles})"
+                )
+                logger.warning(
+                    f"[ORB RECONSTRUCT] {self.orb_last_error} — ORB unavailable."
+                )
+                self.orb_status = "RETRYING" if attempt < max_attempts else "FAILED"
+                if attempt < max_attempts:
+                    import time as _time
+                    _delay = self._orb_backoff_base * (2 ** (attempt - 1))
+                    _time.sleep(_delay)
+                    continue
+                if now >= _ORB_END:
+                    self.orb_done = True
+                return
+
+            highs = [float(c["high"]) for c in orb_candles]
+            lows  = [float(c["low"])  for c in orb_candles]
+            self.orb_high = max(highs)
+            self.orb_low  = min(lows)
+
+            # Lock ORB only when the full window has passed; if we are still
+            # inside the window the live update_orb() loop will keep adding.
             if now >= _ORB_END:
                 self.orb_done = True
+
+            self.orb_status = "VALID"
+            self.orb_last_error = ""
+            logger.info(
+                f"[ORB RECONSTRUCTED] High={self.orb_high:.2f}  Low={self.orb_low:.2f}"
+                f"  (candles={len(orb_candles)}, window=9:15-9:29, "
+                f"attempts={self.orb_reconstruct_attempts})"
+            )
             return
 
-        highs = [float(c["high"]) for c in orb_candles]
-        lows  = [float(c["low"])  for c in orb_candles]
-        self.orb_high = max(highs)
-        self.orb_low  = min(lows)
-
-        # Lock ORB only when the full window has passed; if we are still
-        # inside the window the live update_orb() loop will keep adding.
+        # Reached only if all attempts failed with exceptions.
+        self.orb_status = "FAILED"
         if now >= _ORB_END:
             self.orb_done = True
-
-        logger.info(
-            f"[ORB RECONSTRUCTED] High={self.orb_high:.2f}  Low={self.orb_low:.2f}"
-            f"  (candles={len(orb_candles)}, window=9:15-9:29)"
-        )
 
     # ══════════════════════════════════════════════════════════════════
     # DAY CLASSIFIER  (runs once at 9:45)
@@ -576,7 +678,7 @@ class LiveEngine:
             self._last_block_reason = "INSUFFICIENT_DATA (<26 candles)"
             return None
 
-        # ── Re-entry cooldown ────────────────────────────────────────────
+# ── Re-entry cooldown ────────────────────────────────────────────
         _secs_since_exit = time.time() - self._last_exit_ts
         if self._last_exit_ts > 0 and _secs_since_exit < self._reentry_cooldown:
             _wait = int(self._reentry_cooldown - _secs_since_exit)
@@ -584,196 +686,29 @@ class LiveEngine:
             self._last_block_reason = f"COOLDOWN ({_wait}s remaining)"
             return None
 
-        # ══ PREDICT-FIRST PATH ═══════════════════════════════════════════
-        # ML chooses direction; structure confirms. Replaces the legacy
-        # "1m SuperTrend decides, ML rubber-stamps" path below. Toggle with
-        # PREDICT_FIRST=0 to fall back to the legacy gate (e.g. if reverting
-        # to the old saturated models).
-        if self._predict_first:
-            return self._check_entry_predict_first(df_window, features, ts)
-
-        # ══ STEP 3: Direction gate (LEGACY — PREDICT_FIRST=0) ════════════
-        direction_bias = self._direction_bias
-        vwap_confirms  = getattr(self, "_vwap_confirms", False)
-        _dir_str = "BULL" if direction_bias == 1 else ("BEAR" if direction_bias == -1 else "NONE")
-        _vwap_str = "VWAP✓" if vwap_confirms else "VWAP✗"
-        logger.info(f"[DIRECTION] dir={_dir_str} ST={features.get('supertrend_dir',0):.0f} {_vwap_str} pvwap={features.get('price_vs_vwap',0):.4f} CE={self._last_ce_adj:.3f} PE={self._last_pe_adj:.3f}")
-        if direction_bias == 0:
-            self._count_block("NO_DIRECTION")
-            self._last_block_reason = "NO_DIRECTION (ST=0)"
-            return None
-
-        # ── Higher-timeframe (5m) confirmation — anti-noise entry gate ───
-        # Block when the slow 5m SuperTrend OPPOSES the 1m direction (we are
-        # about to trade against the prevailing trend = the main reason trades
-        # go negative on entry). htf5_dir==0 means not enough data → allow.
-        htf5 = self._htf5_dir
-        if (direction_bias == 1 and htf5 == -1) or (direction_bias == -1 and htf5 == 1):
-            self._count_block("HTF5_OPPOSES")
-            self._last_block_reason = f"HTF5_OPPOSES (1m={direction_bias} 5m={htf5})"
-            return None
-
-        # ══ STEP 4: Signal thresholds + ORB breakout ════════════════════
-        orb_ok = bool(
-            self._day_clf and self._day_classified and self._day_clf.should_trade_orb()
+        # ══ PREDICT-FIRST PATH (canonical) ════════════════════════════════
+        # ML chooses direction (argmax of ce_adj/pe_adj); structure confirms.
+        # This replaces the legacy "1m SuperTrend decides, ML rubber-stamps" path.
+        # ── Decision-intelligence inputs (all fail-safe / optional) ──
+        global_market_state = None
+        conf_mult = 1.0
+        try:
+            gm = getattr(self.ctx, "global_market", None)
+            if gm is not None:
+                global_market_state = gm.get_state()
+        except Exception as e:
+            logger.debug(f"[DECISION] global_market fetch failed: {e}")
+        try:
+            st = getattr(self.ctx, "strategy_tracker", None)
+            if st is not None:
+                conf_mult = st.get_confidence_adjustment("ML")
+        except Exception as e:
+            logger.debug(f"[DECISION] strategy_tracker fetch failed: {e}")
+        return self._check_entry_predict_first(
+            df_window, features, ts,
+            global_market_state=global_market_state,
+            ml_confidence_adjustment=conf_mult,
         )
-
-        price      = df_window["close"].iloc[-1]
-        threshold  = max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR)
-        # CE uses a higher independent floor — weaker CE signals skipped
-        ce_floor   = max(threshold, _CE_ML_FLOOR)
-
-        ce_breakout = (
-            self.orb_done and self.orb_high is not None and
-            price > self.orb_high and not self.orb_ce_fired
-        )
-        pe_breakout = (
-            self.orb_done and self.orb_low is not None and
-            price < self.orb_low and not self.orb_pe_fired
-        )
-        if ce_breakout: self.orb_ce_fired = True
-        if pe_breakout: self.orb_pe_fired = True
-
-        # Pull from cached adjusted probs (set in Step 1)
-        ce_adj = self._last_ce_adj
-        pe_adj = self._last_pe_adj
-
-        # Hard direction gate — zero out opposite side
-        if direction_bias != 1:
-            ce_adj = 0.0
-        if direction_bias != -1:
-            pe_adj = 0.0
-
-        logger.debug(
-            f"[ML] CE={ce_adj:.3f}({self._last_ce_prob:.3f}) "
-            f"PE={pe_adj:.3f}({self._last_pe_prob:.3f}) "
-            f"thr={threshold:.3f} ORB_CE={ce_breakout} ORB_PE={pe_breakout}"
-        )
-
-        # ══ STEP 5: Side selection ═══════════════════════════════════════
-        signal  = None
-        dir_str = "BULL" if direction_bias == 1 else "BEAR"
-        self._last_block_reason = (
-            f"ML_BELOW_THR ({dir_str} | CE={ce_adj:.2f} PE={pe_adj:.2f} thr={threshold:.2f})"
-        )
-
-        # CE entry — requires BULL direction + VWAP confirmation.
-        # VWAP✗ on a BULL ST signal = false bounce, not a real uptrend.
-        # On RANGE days, pure ML_CE floor rises to 0.85 (model fires too freely on chop).
-        if not _CE_ORB_ENABLED:
-            ce_adj = 0.0
-        else:
-            # Block CE if price is more than 0.15% below VWAP (tight proximity allowed).
-            # pvwap = (close - vwap) / close; -0.0015 ≈ 1.5 pts on NIFTY at 24000.
-            _pvwap_now = features.get("price_vs_vwap", 0.0)
-            _VWAP_TOLERANCE = -0.0015
-            if direction_bias == 1 and not vwap_confirms and _pvwap_now < _VWAP_TOLERANCE:
-                self._count_block("VWAP_FAIL")
-                self._last_block_reason = f"CE_VWAP_FAIL (pvwap={_pvwap_now:.4f} < {_VWAP_TOLERANCE})"
-                ce_adj = 0.0
-            elif direction_bias == 1 and not vwap_confirms and _pvwap_now >= _VWAP_TOLERANCE:
-                # Price is within tolerance — allow entry only if CE is high conviction
-                if ce_adj < 0.70:
-                    self._count_block("VWAP_NEAR_MISS")
-                    self._last_block_reason = f"CE_VWAP_NEAR (pvwap={_pvwap_now:.4f}, CE={ce_adj:.3f}<0.70)"
-                    ce_adj = 0.0
-            else:
-                # ── Higher-timeframe CE confirmation (30m EMA gate) ───────
-                # 75% of CE losses entered when NIFTY was in a sustained downtrend
-                # on longer timeframes despite a brief 1m SuperTrend=+1 signal.
-                # Gate: require the 30-candle EMA (≈30m on 1m data) to be above
-                # the 60-candle EMA. This confirms the bounce is part of a real
-                # uptrend, not a dead-cat bounce inside a falling market.
-                _htf_bullish = True  # default: pass if insufficient data
-                _closes = df_window["close"].values
-                if len(_closes) >= 60:
-                    import numpy as np
-                    _ema30 = float(np.mean(_closes[-30:]))   # simple mean as fast EMA proxy
-                    _ema60 = float(np.mean(_closes[-60:]))
-                    _htf_bullish = _ema30 > _ema60
-                self._last_htf_bullish = _htf_bullish   # expose for journal / market_state
-                # High-conviction override: CE ≥ 0.73 with sustained BULL can bypass HTF gate.
-                # FIX 2026-07-03: Old threshold was 0.93 — unreachable with de-saturated
-                # model outputs (max ~0.75). Lowered to 0.73 so genuine high-prob signals
-                # can bypass EMA gate when model strongly disagrees with slow EMA slope.
-                _htf_override = ce_adj >= 0.73
-                if not _htf_bullish and not _htf_override:
-                    self._count_block("HTF_FAIL")
-                    self._last_block_reason = "CE_HTF_FAIL (30m EMA bearish vs 60m)"
-                    _ema30_v = float(np.mean(_closes[-30:])) if len(_closes) >= 60 else 0
-                    _ema60_v = float(np.mean(_closes[-60:])) if len(_closes) >= 60 else 0
-                    logger.info(f"[BLOCK] CE_HTF_FAIL — ema30={_ema30_v:.1f} ema60={_ema60_v:.1f} (bearish slope, CE skipped)")
-                    ce_adj = 0.0
-                elif not _htf_bullish and _htf_override:
-                    logger.info(f"[HTF OVERRIDE] CE={ce_adj:.3f}≥0.73 — bypassing HTF gate (EMA bearish but high-conviction signal)")
-                else:
-                    _pure_ml_ce = not ce_breakout
-                    # On RANGE days, use a slightly higher CE floor — but not
-                    # the old 0.85 which was tuned for saturated model outputs
-                    # (0.80-0.96). De-saturated model tops out at ~0.75.
-                    _regime_str = str(self.learner.get_day_type()).upper()
-                    _is_range   = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
-                    _ce_floor   = _CE_RANGE_DAY_FLOOR if (_pure_ml_ce and _is_range) else _CE_ML_FLOOR
-                    ce_thr = max(threshold - 0.03 if (ce_breakout and orb_ok) else threshold, _ce_floor)
-                    # ── CE relative-strength gate (model is CE-saturated) ──
-                    # The CE model outputs 0.80-0.96 nearly all day, so the
-                    # absolute floor barely discriminates. Require the current
-                    # CE prob to rank in the top 30% of today's own CE
-                    # distribution before firing a pure-ML CE. Needs >=50
-                    # samples; otherwise it is skipped (no over-restriction
-                    # early in the session).
-                    _ce_pctile = self._ml_percentile(self._last_ce_prob)
-                    if (_pure_ml_ce and len(self._ml_history) >= 50
-                            and _ce_pctile < 70):
-                        self._count_block("CE_WEAK_RANK")
-                        self._last_block_reason = (
-                            f"CE_WEAK_RANK (pctile={_ce_pctile}<70)"
-                        )
-                        ce_adj = 0.0
-                    if ce_adj >= ce_thr:
-                        blocked, reason_block = self.learner.is_side_blocked("CE")
-                        if blocked:
-                            self._count_block("ML_BLOCKED")
-                            self._last_block_reason = f"CE_BLOCKED ({reason_block})"
-                        else:
-                            reason = "ML_CE" if _pure_ml_ce else "ORB+ML_CE"
-                            self._last_block_reason = f"SIGNAL_FIRE ({reason})"
-                            signal = {"side": "CE", "ml_prob": ce_adj,
-                                      "features": features, "reason": reason}
-                    else:
-                        self._count_block("CE_WEAK")
-                        self._last_block_reason = (
-                            f"CE_WEAK (ce_adj={ce_adj:.2f} < floor={ce_thr:.2f})"
-                        )
-
-        # PE (only if CE not triggered)
-        if signal is None:
-            pe_thr = threshold - 0.03 if (pe_breakout and orb_ok) else threshold
-            if pe_adj >= pe_thr:
-                blocked, reason_block = self.learner.is_side_blocked("PE")
-                if blocked:
-                    self._count_block("ML_BLOCKED")
-                    self._last_block_reason = f"PE_BLOCKED ({reason_block})"
-                else:
-                    reason = "ORB+ML_PE" if pe_breakout else "ML_PE"
-                    self._last_block_reason = f"SIGNAL_FIRE ({reason})"
-                    signal = {"side": "PE", "ml_prob": pe_adj,
-                              "features": features, "reason": reason}
-
-        if signal is None:
-            # F3: count final block reason (signal evaluated but nothing fired)
-            _br = self._last_block_reason
-            if   "VWAP"    in _br: _bk = "VWAP_FAIL"
-            elif "HTF"     in _br: _bk = "HTF_FAIL"
-            elif "BLOCKED" in _br: _bk = "ML_BLOCKED"
-            elif "WEAK"    in _br: _bk = "ML_BELOW_THR"
-            elif "ML_BELOW" in _br: _bk = "ML_BELOW_THR"
-            else:                  _bk = "ML_BELOW_THR"
-            self._count_block(_bk)
-            return None
-
-        # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
-        return self._finalize_signal(signal, features, price)
 
     def evaluate_phase55_candidate(
         self,
@@ -930,7 +865,9 @@ class LiveEngine:
         )
         return signal
 
-    def _check_entry_predict_first(self, df_window, features, ts):
+    def _check_entry_predict_first(self, df_window, features, ts,
+                                   global_market_state=None,
+                                   ml_confidence_adjustment: float = 1.0):
         """
         PREDICT-FIRST decision: the ML models choose the direction, structure
         confirms it. This is the fix for "trade goes negative on entry" —
@@ -943,7 +880,12 @@ class LiveEngine:
           4. CONFIRM — 5m SuperTrend must AGREE (not just 'not oppose'), and
                        VWAP side must agree. This is the AI+ML+structure
                        confirmation the trade direction is real.
-          5. learner side-block + finalize (risk/PnL guard).
+          5. DECISION-INTELLIGENCE — weighted FINAL_SCORE gate (ML/ORB/Global/
+                       Volatility). Fail-open: skipped when layer absent.
+          6. learner side-block + finalize (risk/PnL guard).
+
+        All new inputs (global_market_state, ml_confidence_adjustment) are
+        optional and fail-safe — None/1.0 keep prior behavior untouched.
         """
         price  = df_window["close"].iloc[-1]
         ce_adj = self._last_ce_adj
@@ -1028,9 +970,58 @@ class LiveEngine:
             self._last_block_reason = f"{side}_BLOCKED ({reason_block})"
             return None
 
+        # 5b. DECISION-INTELLIGENCE — weighted FINAL_SCORE gate.
+        #     FINAL_SCORE = ML*0.5 + ORB*0.2 + GLOBAL*0.2 + VOL*0.1.
+        #     Optional & fail-open: layer absent or throws → trade proceeds.
+        decision_score = None
+        di = getattr(self.ctx, "decision_intelligence", None)
+        if di is not None:
+            try:
+                # Real ORB breakout state (same test as legacy path)
+                _ce_brk = (self.orb_done and self.orb_high is not None and
+                           price > self.orb_high and not self.orb_ce_fired)
+                _pe_brk = (self.orb_done and self.orb_low is not None and
+                           price < self.orb_low and not self.orb_pe_fired)
+                _vol = "NORMAL"
+                if global_market_state is not None:
+                    _vol = getattr(global_market_state, "volatility", "NORMAL")
+                # Strategy confidence adjustment caps ML contribution (streak guard)
+                _ml_adj = max(0.0, min(1.0, prob * ml_confidence_adjustment))
+                decision_score = di.evaluate(
+                    ml_probability=_ml_adj,
+                    side=side,
+                    global_market_state=global_market_state,
+                    volatility_state=_vol,
+                    orb_breakout=(_ce_brk or _pe_brk),
+                    orb_direction=1 if side == "CE" else -1,
+                )
+                if decision_score.decision == "SKIP":
+                    self._count_block("DECISION_SKIP")
+                    self._last_block_reason = (
+                        f"DECISION_SKIP (score={decision_score.final_score:.2f} "
+                        f"< thr={decision_score.threshold:.2f} | "
+                        f"{decision_score.skip_reason})"
+                    )
+                    logger.info(
+                        f"[DECISION] {side} SKIP — FINAL_SCORE={decision_score.final_score:.3f} "
+                        f"thr={decision_score.threshold:.3f} "
+                        f"reason={decision_score.skip_reason}"
+                    )
+                    return None
+                logger.info(
+                    f"[DECISION] {side} ALLOW — FINAL_SCORE={decision_score.final_score:.3f} "
+                    f"thr={decision_score.threshold:.3f}"
+                )
+            except Exception as e:
+                logger.debug(f"[DECISION] scoring failed (fail-open): {e}")
+                decision_score = None
+        self._last_decision_score = decision_score
+
         self._last_block_reason = f"SIGNAL_FIRE (ML_{side})"
         signal = {"side": side, "ml_prob": prob,
                   "features": features, "reason": f"ML_{side}"}
+        if decision_score is not None:
+            signal["decision_score"] = decision_score
         return self._finalize_signal(signal, features, price)
 
     def _ml_percentile(self, prob: float) -> int:
@@ -1117,6 +1108,9 @@ class LiveEngine:
             "orb_high":        self.orb_high,
             "orb_low":         self.orb_low,
             "orb_done":        self.orb_done,
+            "orb_status":      getattr(self, "orb_status", "NONE"),
+            "orb_reconstruct_attempts": getattr(self, "orb_reconstruct_attempts", 0),
+            "orb_last_error":  getattr(self, "orb_last_error", ""),
             "ce_prob":         self._last_ce_prob,
             "pe_prob":         self._last_pe_prob,
             "htf_bullish":     getattr(self, "_last_htf_bullish", True),

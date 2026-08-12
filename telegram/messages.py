@@ -1,5 +1,6 @@
 # telegram/messages.py
 # Human-readable trade messages with live in-place updates.
+# Enhanced with Decision Intelligence context for trade filtering.
 
 import re
 from datetime import datetime
@@ -181,6 +182,39 @@ def format_trade_entry(data: dict) -> str:
     tgt_pts  = round(target - price, 2)
     now_str  = datetime.now().strftime("%H:%M:%S")
 
+    # ── Decision Intelligence Context (if available) ──
+    decision_info = ""
+    ds = data.get("decision_score")
+    if ds is not None:
+        # DecisionScore dataclass from decision_intelligence
+        try:
+            final_score = getattr(ds, "final_score", 0.0)
+            threshold = getattr(ds, "threshold", 0.0)
+            ml_contrib = getattr(ds, "ml_contribution", 0.0)
+            global_state = getattr(ds, "global_state", 0.0)
+            vol_factor = getattr(ds, "volatility_factor", 1.0)
+
+            # Global market state emoji
+            gm_state = data.get("global_market_state")
+            gm_emoji = "🟢"
+            if gm_state is not None:
+                risk_state = getattr(gm_state, "risk_state", "NEUTRAL")
+                if risk_state == "RISK_ON":
+                    gm_emoji = "🟢"
+                elif risk_state == "RISK_OFF":
+                    gm_emoji = "🔴"
+                else:
+                    gm_emoji = "🟡"
+
+            decision_info = (
+                f"\n"
+                f"🎯 DI Score     : {final_score:.2f}/{threshold:.2f}\n"
+                f"   ML contrib   : {ml_contrib:.2f} | Global: {global_state:+.1f}\n"
+                f"   {gm_emoji} Risk State : {gm_state.risk_state if gm_state else 'N/A'} | Vol: {vol_factor:.1f}x"
+            )
+        except Exception:
+            pass  # Fail-safe: if parsing fails, skip the extra info
+
     return (
         f"{side_e} <b>TRADE OPEN — {side}</b>\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
@@ -193,7 +227,7 @@ def format_trade_entry(data: dict) -> str:
         f"🎯 Target        : {target:.1f}  <i>(+{tgt_pts:.1f} pts)</i>\n"
         f"\n"
         f"🧠 ML Signal     : {ml_prob:.0%}  confidence\n"
-        f"{reg_e} Market Regime : {regime}\n"
+        f"{reg_e} Market Regime : {regime}{decision_info}\n"
         f"\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
         f"⏱️ Opened at {now_str}\n"
@@ -684,4 +718,122 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
         + _section_exit_breakdown(ctx)
         + _section_feed_health(ms)
         + f"\n<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# DECISION INTELLIGENCE — Enhanced trade filtering messages
+# ─────────────────────────────────────────────────────────────────────
+
+def format_decision_skip(
+    symbol: str,
+    side: str,
+    ml_confidence: float,
+    global_state: str,
+    volatility: str,
+    final_score: float,
+    threshold: float,
+    skip_reason: str,
+    entry_price: float = 0.0,
+) -> str:
+    """
+    Format a skipped trade message showing decision intelligence breakdown.
+    """
+    side_e = "📈" if side.upper() == "CE" else "📉"
+    risk_e = {"RISK_ON": "🚀", "RISK_OFF": "🛑", "NEUTRAL": "🟡"}.get(global_state, "📊")
+    vol_e = {"LOW": "平静", "NORMAL": "温和", "HIGH": "动荡"}.get(volatility, "📊")
+
+    return (
+        f"{side_e} <b>TRADE SKIPPED — {side}</b>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"📌 <b>{symbol}</b>\n"
+        f"\n"
+        f"🧠 ML Confidence  : {ml_confidence:.0%}\n"
+        f"{risk_e} Global State   : <b>{global_state}</b>\n"
+        f"{vol_e} Volatility     : <b>{volatility}</b>\n"
+        f"\n"
+        f"📊 Final Score    : <b>{final_score:.3f}</b>\n"
+        f"门槛 Threshold    : <b>{threshold:.3f}</b>\n"
+        f"\n"
+        f"❌ Decision: <b>SKIP</b>\n"
+        f"Reason: <code>{skip_reason}</code>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
+    )
+
+
+def format_decision_allow(
+    symbol: str,
+    side: str,
+    entry_price: float,
+    qty: int,
+    stop_loss: float,
+    ml_confidence: float,
+    global_state: str,
+    volatility: str,
+    final_score: float,
+    threshold: float,
+    lots: int = None,
+) -> str:
+    """
+    Format an allowed trade message with decision intelligence context.
+    """
+    side_e = "📈" if side.upper() == "CE" else "📉"
+    risk_e = {"RISK_ON": "🚀", "RISK_OFF": "🛑", "NEUTRAL": "🟡"}.get(global_state, "📊")
+    vol_e = {"LOW": "平静", "NORMAL": "温和", "HIGH": "动荡"}.get(volatility, "📊")
+    lots = lots or (qty // 30)
+
+    return (
+        f"{side_e} <b>TRADE OPEN — {side}</b>  ✅\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"📌 <b>{symbol}</b>\n"
+        f"\n"
+        f"💵 Entry Price   : <b>{entry_price:.1f}</b>\n"
+        f"📦 Quantity      : {qty}  ({lots} lot{'s' if lots != 1 else ''})\n"
+        f"\n"
+        f"🛑 Stop Loss     : {stop_loss:.1f}\n"
+        f"\n"
+        f"🧠 ML Confidence  : {ml_confidence:.0%}\n"
+        f"{risk_e} Global State   : <b>{global_state}</b>\n"
+        f"{vol_e} Volatility     : <b>{volatility}</b>\n"
+        f"\n"
+        f"📊 Final Score    : <b>{final_score:.3f}</b>\n"
+        f"门槛 Threshold    : <b>{threshold:.3f}</b>\n"
+        f"\n"
+        f"✅ Decision: <b>ALLOW</b>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
+    )
+
+
+def format_decision_with_scores(
+    symbol: str,
+    side: str,
+    ml_confidence: float,
+    orb_signal: float,
+    global_state: float,
+    volatility_factor: float,
+    final_score: float,
+    threshold: float,
+    decision: str,
+) -> str:
+    """
+    Detailed decision breakdown showing all score components.
+    """
+    side_e = "📈" if side.upper() == "CE" else "📉"
+    risk_e = "🚀" if global_state > 0 else ("🛑" if global_state < 0 else "🟡")
+
+    return (
+        f"{side_e} <b>DECISION BREAKDOWN — {side}</b>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
+        f"📌 <b>{symbol}</b>\n"
+        f"\n"
+        f"<b>SCORE BREAKDOWN</b>\n"
+        f"ML Confidence ({ml_confidence:.2f})  × 0.50  = {ml_confidence * 0.5:.3f}\n"
+        f"ORB Signal    ({orb_signal:.2f})    × 0.20  = {orb_signal * 0.2:.3f}\n"
+        f"Global State  ({global_state:+.1f})   × 0.20  = {global_state * 0.2:.3f}\n"
+        f"Volatility    ({volatility_factor:.1f})   × 0.10  = {(volatility_factor - 1) * 0.1:.3f}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>FINAL SCORE</b>: <b>{final_score:.3f}</b>\n"
+        f"Threshold: <b>{threshold:.3f}</b>\n"
+        f"Decision: <b>{decision}</b>\n"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
     )

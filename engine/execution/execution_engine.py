@@ -124,10 +124,12 @@ class ExecutionEngine:
     def get_lot_size(self, symbol: str) -> int:
         """
         Fetch actual lot size from instrument map.
-        Falls back to 30 (BANKNIFTY default) if not found.
+        Falls back to config.LOT_SIZE if not found.
         """
+        # Use config as single source of truth
+        configured_lot = int(getattr(self.config, "LOT_SIZE", 30) or 30)
+        
         if str(symbol).upper().startswith("BANKNIFTY"):
-            configured_lot = int(getattr(self.config, "LOT_SIZE", 30) or 30)
             return configured_lot
 
         try:
@@ -136,8 +138,9 @@ class ExecutionEngine:
                 return int(inst["lot_size"])
         except Exception as e:
             logger.warning(f"[LOT SIZE] Could not fetch for {symbol}: {e}")
-        logger.warning(f"[LOT SIZE] Falling back to 30 for {symbol}")
-        return 30   # BANKNIFTY lot size
+        
+        logger.warning(f"[LOT SIZE] Falling back to config.LOT_SIZE={configured_lot} for {symbol}")
+        return configured_lot
 
     # ══════════════════════════════════════════════════════════════════
     # FILL VALIDATION  →  replaced by _order_status() (explicit state model)

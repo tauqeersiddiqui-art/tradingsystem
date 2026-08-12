@@ -36,7 +36,6 @@ import os
 logger = logging.getLogger("profit_manager")
 
 # Retained for backward-compat (telegram.messages imports LOCK_PTS).
-_LOT_QTY = 30
 _TRAIL_ARM_PTS_DEFAULT = 10.0
 _TRAIL_GAP_PTS_DEFAULT = 5.0
 LOCK_PTS = _TRAIL_GAP_PTS_DEFAULT
@@ -82,30 +81,36 @@ def trail_settings() -> tuple[float, float]:
 # the initial risk_manager stop. The ladder only ever TIGHTENS the stop.
 # ─────────────────────────────────────────────────────────────────────────
 
-_COST_PER_LOT = 66.0     # round-trip cost per 30-qty BANKNIFTY lot (overridable via env)
-_LOT_UNITS    = 30
+_COST_PER_LOT = 66.0     # round-trip cost per lot (overridable via env)
 # Fraction of peak profit retained once cost recovered. Raised 0.62 -> 0.72 on
 # 2026-06-29: an 18pt MFE (Rs540) was booking only Rs222 (59% give-back). At 0.72
 # the same peak locks ~Rs389, so fast reversals surrender far less of the move.
 _TRAIL_PCT    = 0.72
 
 
-def _cost_rs(qty: int) -> float:
-    """Round-trip cost in Rs for a given position qty (scales by lots)."""
-    cost_per_lot = float(os.getenv("COST_PER_LOT", _COST_PER_LOT))
-    lots = max(1, round(qty / _LOT_UNITS))
-    return lots * cost_per_lot
+def _lot_units(config) -> int:
+    """Get lot size from Config (single source of truth)."""
+    from engine.execution.cost_model import lot_qty
+    return lot_qty(config)
 
 
-def _profit_lock_floor_rs(qty: int) -> float:
+def _cost_rs(qty: int, config=None) -> float:
+    """Round-trip cost in Rs for a given position qty (scales by lots).
+
+    Delegates to the authoritative cost model (single source of truth)."""
+    from engine.execution.cost_model import round_trip_cost
+    return round_trip_cost(qty, config)
+
+
+def _profit_lock_floor_rs(qty: int, config=None) -> float:
     """
     Minimum gross profit the ladder should try to protect.
 
     Default behavior is the user's requested gross-cost floor: Rs66 per lot.
     Extra buffer / net-profit requirements are opt-in via env.
     """
-    cost = _cost_rs(qty)
-    lots = max(1, round(qty / _LOT_UNITS))
+    cost = _cost_rs(qty, config)
+    lots = max(1, round(qty / _lot_units(config)))
     slip_buffer = max(0.0, _env_float("PROFIT_LOCK_SLIPPAGE_BUFFER_RS", 0.0)) * lots
     min_net = max(0.0, _env_float("PROFIT_LOCK_MIN_NET_PROFIT_RS", 0.0))
     return cost + slip_buffer + min_net
@@ -154,8 +159,8 @@ def _dynamic_lock_profile(ml_prob, regime):
             "ret_hi": ret_hi, "ret_lo": ret_lo, "label": label}
 
 
-def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS,
-                     ml_prob=None, regime=None):
+def ladder_locked_rs(max_pnl: float, qty: int = None,
+                     ml_prob=None, regime=None, config=None):
     """
     Return (locked_profit_rs, stage_label) for the current peak PnL in Rs.
 
@@ -165,8 +170,8 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS,
     more room while weak / choppy trades lock fast.
     """
     qty = max(int(qty or 0), 1)
-    cost = _cost_rs(qty)
-    floor = _profit_lock_floor_rs(qty)
+    cost = _cost_rs(qty, config)
+    floor = _profit_lock_floor_rs(qty, config)
     prof = _dynamic_lock_profile(ml_prob, regime)
     arm_threshold = max(floor, cost * prof["arm_mult"])
 
@@ -194,7 +199,7 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS,
     return locked, stage
 
 
-def ladder_stop(entry_price, qty, max_pnl, current_stop, ml_prob=None, regime=None):
+def ladder_stop(entry_price, qty, max_pnl, current_stop, ml_prob=None, regime=None, config=None):
     """
     Convert the rupee profit-lock to a premium stop level and ratchet UP only.
 
@@ -202,7 +207,7 @@ def ladder_stop(entry_price, qty, max_pnl, current_stop, ml_prob=None, regime=No
     Used by BOTH manage_position (normal trades) and the scalp loop.
     ml_prob / regime drive the dynamic tight-vs-loose trail.
     """
-    locked_rs, stage = ladder_locked_rs(max_pnl, qty, ml_prob, regime)
+    locked_rs, stage = ladder_locked_rs(max_pnl, qty, ml_prob, regime, config)
     if locked_rs <= 0:
         return current_stop, stage, 0.0
     stop_floor = entry_price + locked_rs / max(qty, 1)
@@ -211,7 +216,7 @@ def ladder_stop(entry_price, qty, max_pnl, current_stop, ml_prob=None, regime=No
 
 
 def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob,
-                    target=None, regime=None):
+                    target=None, regime=None, config=None):
     """
     Args:
         entry_price : option premium at entry
@@ -224,6 +229,7 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob,
         max_pnl     : peak PnL seen so far (Rs)
         ml_prob     : ML probability at entry
         target      : fixed target premium (optional)
+        config      : Config object for lot size and cost parameters
 
     Returns:
         (updated_stop_loss, updated_max_pnl, exit_reason | None)
@@ -239,7 +245,7 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob,
 
     # ── 1  Centralized profit-lock ladder (single source of truth) ────
     new_stop, stage, locked_rs = ladder_stop(
-        entry_price, qty, max_pnl, stop_loss, ml_prob, regime
+        entry_price, qty, max_pnl, stop_loss, ml_prob, regime, config
     )
     if new_stop > stop_loss + 1e-6:
         logger.info(

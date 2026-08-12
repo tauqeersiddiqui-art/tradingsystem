@@ -55,6 +55,7 @@ def save_state(
             "session_date":      date.today().isoformat(),
             "saved_at":          datetime.now().isoformat(),
             "pnl":               float(getattr(ctx, "pnl", 0.0)),
+            "gross_pnl":         float(getattr(ctx, "gross_pnl", 0.0)),
             "trades_today":      int(getattr(ctx, "trades_today", 0)),
             "scalp_trades_today": int(scalp_trades_today),
             "scalp_pnl_today":   float(scalp_pnl_today),

@@ -48,12 +48,14 @@ _MIN_EXPECTED_PNL = 150.0
 # Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
 _MIN_ML_FLOOR = 0.65
 
-BANKNIFTY_LOT_SIZE = 30      # BANKNIFTY lot size
+BANKNIFTY_LOT_SIZE = 30      # BANKNIFTY lot size (default, overridden by config)
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
 
 
-def _lot_size_for_date(d) -> int:
-    """BANKNIFTY lot size (fixed at 30)."""
+def _lot_size_for_date(d, config: dict = None) -> int:
+    """BANKNIFTY lot size from config or default."""
+    if config and "LOT_SIZE" in config:
+        return int(config["LOT_SIZE"])
     return BANKNIFTY_LOT_SIZE
 
 
@@ -930,7 +932,7 @@ class BacktestEngine:
         daily_limit       = self.config["DAILY_LOSS_LIMIT"]
         max_trades        = self.config["MAX_TRADES_PER_DAY"]
         cooldown          = self.config["COOLDOWN_SECONDS"]
-        lot_size          = _lot_size_for_date(day_df["date"].iloc[0])   # BANKNIFTY = 30
+        lot_size          = _lot_size_for_date(day_df["date"].iloc[0], self.config)   # BANKNIFTY = 30
         qty               = lot_size * self.config["LOTS_PER_TRADE"]
         entry_on          = self.config["ENTRY_ON"]
 

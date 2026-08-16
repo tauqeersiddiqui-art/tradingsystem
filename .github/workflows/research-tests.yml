@@ -1,0 +1,33 @@
+name: research-tests
+
+on:
+  pull_request:
+    paths:
+      - 'research/**'
+      - 'utils/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  parity-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run parity tests
+        run: python -m pytest research/backtest/tests -q
+
+      - name: Run obsidian smoke
+        run: python scripts/test_obsidian_logger.py

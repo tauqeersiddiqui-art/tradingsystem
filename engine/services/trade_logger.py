@@ -182,3 +182,43 @@ def today_summary(trade_date: date | None = None) -> dict:
         "worst":    round(min(trades), 2),
         "win_rate": round(len(wins) / len(trades) * 100, 1),
     }
+
+
+def get_trades_for_day(trade_date: date | None = None) -> list:
+    """
+    Read full trade details for a given day from CSV.
+    Returns list of dicts with: pnl, mfe_rs (MFE), side, exit_reason, qty, entry_price, exit_price, ml_prob, regime.
+    """
+    if trade_date is None:
+        trade_date = date.today()
+
+    path = _week_path(trade_date)
+    if not os.path.exists(path):
+        return []
+
+    trades = []
+    target_date_str = trade_date.isoformat()
+    try:
+        with open(path, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("date") != target_date_str:
+                    continue
+                try:
+                    trades.append({
+                        "pnl": float(row.get("pnl", 0)),
+                        "mfe_rs": float(row.get("MFE", 0)),
+                        "side": row.get("side", ""),
+                        "exit_reason": row.get("exit_reason", ""),
+                        "qty": int(row.get("quantity", 1)),
+                        "entry_price": float(row.get("entry_price", 0)),
+                        "exit_price": float(row.get("exit_price", 0)),
+                        "ml_prob": float(row.get("ml_prob", 0)),
+                        "regime": row.get("regime", "UNKNOWN"),
+                    })
+                except (ValueError, KeyError):
+                    continue
+    except Exception:
+        return []
+
+    return trades

@@ -64,8 +64,14 @@ from engine.execution.filters import has_oi_wall
 from engine.risk.risk_manager import compute_entry_stops
 from engine.execution.profit_manager import ladder_stop
 from engine.core.state_store import save_state, load_state, deserialize_position
-from engine.services.trade_logger import log_trade, today_summary
+from engine.services.trade_logger import log_trade, today_summary, get_trades_for_day
 from engine.diagnostics import TradeJournal, generate_eod_report
+from utils.obsidian_logger import (
+    log_trade as log_obsidian_trade,
+    log_daily_summary,
+    check_and_log_patterns,
+    initialize_vault,
+)
 from engine.scalping.scalp_engine import ScalpEngine
 
 # Analytics suite (Features 1–8) — observational only, no trading logic
@@ -1273,23 +1279,74 @@ def update_historical_data(broker, csv_path: str, lookback_days: int = 5):
     """
     Pull recent BANKNIFTY 1-minute candles from Zerodha historical API and
     append to the local CSV.  Called at startup and can be called any time.
+
+    If CSV doesn't exist or is outdated (no data in last 5 days), fetches
+    full historical data using YEARS_BACK from env (default ~30 days).
     """
-    try:
-        to_dt   = datetime.now()
+    import os
+    from datetime import datetime, timedelta
+
+    # Determine how much history to fetch
+    # Use YEARS_BACK from env (same as download_banknifty.py), default to ~30 days if not set
+    years_back = float(os.getenv("YEARS_BACK", "0.08"))  # ~30 days default
+    # Use full YEARS_BACK (no cap) - download_banknifty.py does the same
+    max_years = years_back
+
+    to_dt = datetime.now()
+
+    # Check if CSV exists and has recent data
+    csv_exists = os.path.exists(csv_path)
+    csv_has_recent = False
+
+    if csv_exists:
+        try:
+            existing = pd.read_csv(csv_path)
+            if not existing.empty and "date" in existing.columns:
+                existing["date"] = pd.to_datetime(existing["date"], format="mixed", dayfirst=False)
+                latest_date = existing["date"].max()
+                # Check if latest data is within last 5 days (market days)
+                days_old = (to_dt - latest_date).days
+                csv_has_recent = days_old <= 5
+                logger.info(f"[HIST] Existing CSV: {len(existing):,} rows, latest={latest_date.date()}, {days_old} days old")
+        except Exception as e:
+            logger.warning(f"[HIST] Could not read existing CSV: {e}")
+            csv_has_recent = False
+
+    # Determine fetch range
+    if csv_has_recent:
+        # Only fetch recent gap (last 5 days)
         from_dt = to_dt - timedelta(days=lookback_days)
+        logger.info(f"[HIST] CSV is fresh, fetching recent {lookback_days} days: {from_dt.date()} -> {to_dt.date()}")
+    else:
+        # Full historical fetch using YEARS_BACK
+        from_dt = to_dt - timedelta(days=int(max_years * 365))
+        logger.info(f"[HIST] CSV missing or outdated, fetching {max_years:.1f} years: {from_dt.date()} -> {to_dt.date()}")
 
-        logger.info(
-            f"[HIST] Fetching BANKNIFTY 1m  {from_dt.date()} -> {to_dt.date()} ..."
-        )
-        raw = broker.kite.historical_data(
-            _BANKNIFTY_INDEX_TOKEN, from_dt, to_dt, "minute", oi=False
-        )
+    try:
+        # Fetch in chunks to avoid API limits (max ~60 days per request for 1-minute data)
+        CHUNK_DAYS = 60
+        frames = []
+        cur = from_dt
 
-        if not raw:
-            logger.warning("[HIST] Zerodha returned no data — using existing CSV")
+        while cur < to_dt:
+            chunk_end = min(cur + timedelta(days=CHUNK_DAYS), to_dt)
+            logger.info(f"[HIST] Fetching chunk {cur.date()} .. {chunk_end.date()}")
+            raw = broker.kite.historical_data(
+                _BANKNIFTY_INDEX_TOKEN, cur, chunk_end, "minute", oi=False
+            )
+            if raw:
+                frames.append(pd.DataFrame(raw))
+                logger.info(f"  Got {len(raw):,} candles")
+            else:
+                logger.warning(f"  No data returned for {cur.date()} .. {chunk_end.date()}")
+            cur = chunk_end
+            time.sleep(0.3)  # Rate limit
+
+        if not frames:
+            logger.warning("[HIST] Zerodha returned no data — using existing CSV if available")
             return
 
-        new_df = pd.DataFrame(raw)
+        new_df = pd.concat(frames, ignore_index=True)
         # Zerodha timestamps may be tz-aware (Asia/Kolkata) — strip tz
         col = pd.to_datetime(new_df["date"])
         if col.dt.tz is not None:
@@ -1299,10 +1356,13 @@ def update_historical_data(broker, csv_path: str, lookback_days: int = 5):
 
         os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
 
-        if os.path.exists(csv_path):
-            existing = pd.read_csv(csv_path)
-            existing["date"] = pd.to_datetime(existing["date"], format="mixed", dayfirst=False)
-            combined = pd.concat([existing, new_df], ignore_index=True)
+        if csv_exists:
+            try:
+                existing = pd.read_csv(csv_path)
+                existing["date"] = pd.to_datetime(existing["date"], format="mixed", dayfirst=False)
+                combined = pd.concat([existing, new_df], ignore_index=True)
+            except Exception:
+                combined = new_df
         else:
             combined = new_df
 
@@ -1503,6 +1563,12 @@ def build_context(broker) -> TradingContext:
     # Diagnostics journal — observability only, zero strategy impact
     ctx.journal = TradeJournal()
     ctx.journal.log_startup(ctx.config)
+
+    # Initialize Obsidian vault for trade logging
+    try:
+        initialize_vault()
+    except Exception as _e:
+        logger.warning(f"[OBSIDIAN] Vault init failed (non-fatal): {_e}")
 
     return ctx
 
@@ -2773,6 +2839,25 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             logger.warning(f"[JOURNAL] on_exit failed (non-fatal): {_je}")
                         _journal_id = None
 
+                    # ── Obsidian: log closed trade ───────────────────────────
+                    try:
+                        log_obsidian_trade(
+                            entry_price  = position.get("entry", 0.0),
+                            exit_price   = exit_price,
+                            pnl          = pnl,
+                            mfe          = position.get("max_pnl", 0.0),
+                            ml_score     = position.get("ml_prob", 0.0),
+                            strategy     = position.get("regime", "UNKNOWN"),
+                            side         = position.get("side", ""),
+                            symbol       = position.get("symbol", ""),
+                            entry_ts     = entry_time,
+                            exit_ts      = ts,
+                            exit_reason  = exit_reason,
+                            held_seconds = held_seconds,
+                        )
+                    except Exception as _oe:
+                        logger.debug(f"[OBSIDIAN] Trade log failed (non-fatal): {_oe}")
+
                     # F1: finalize replay timeline + send to Telegram
                     if position is not None and position.get("_replay"):
                         try:
@@ -3864,6 +3949,49 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     f"[EOD] Trades={summary['trades']} PnL=₹{summary['pnl']:.0f} "
                     f"WR={summary.get('win_rate',0):.0f}%"
                 )
+
+                # ── Obsidian: daily summary & pattern detection ─────────────
+                try:
+                    # Get full trade details from CSV for accurate summary & patterns
+                    full_trades = get_trades_for_day(session_date)
+                    ea = getattr(ctx, "exit_analytics", {})
+
+                    # Compute CE/PE breakdown from full trades
+                    ce_trades = [t for t in full_trades if t.get("side") == "CE"]
+                    pe_trades = [t for t in full_trades if t.get("side") == "PE"]
+                    ce_wins = [t for t in ce_trades if t.get("pnl", 0) > 0]
+                    pe_wins = [t for t in pe_trades if t.get("pnl", 0) > 0]
+                    ce_wr = (len(ce_wins) / len(ce_trades) * 100) if ce_trades else 0
+                    pe_wr = (len(pe_wins) / len(pe_trades) * 100) if pe_trades else 0
+                    gross_profit = sum(t["pnl"] for t in full_trades if t.get("pnl", 0) > 0)
+                    gross_loss = sum(t["pnl"] for t in full_trades if t.get("pnl", 0) < 0)
+
+                    # Avg MFE from exit_analytics (more accurate)
+                    mfe_list = ea.get("mfe_rs_list", [])
+                    avg_mfe = sum(mfe_list) / len(mfe_list) if mfe_list else 0
+
+                    log_daily_summary(
+                        total_trades   = summary.get("trades", 0),
+                        net_pnl        = summary.get("pnl", 0.0),
+                        win_rate       = summary.get("win_rate", 0.0),
+                        avg_mfe        = avg_mfe,
+                        gross_profit   = gross_profit,
+                        gross_loss     = abs(gross_loss),
+                        max_drawdown   = 0,  # could compute from equity curve
+                        ce_trades      = len(ce_trades),
+                        ce_wr          = ce_wr,
+                        pe_trades      = len(pe_trades),
+                        pe_wr          = pe_wr,
+                        observations   = "",
+                        action_next_day = "",
+                        trade_date     = session_date,
+                    )
+                    check_and_log_patterns(
+                        trades_today = full_trades,
+                        trade_date   = session_date,
+                    )
+                except Exception as _od_e:
+                    logger.warning(f"[OBSIDIAN] EOD logging failed (non-fatal): {_od_e}")
 
                 # ── F2: comprehensive daily review ─────────────────────
                 try:

@@ -6,6 +6,9 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # Ensure repo root is in path FIRST, before any engine imports
 sys.path.insert(0, repo_root)
 
+# Import engine.config FIRST to establish the namespace package correctly
+from engine.config.config import Config
+
 import pandas as pd
 from research.backtest.engine.research_engine import ResearchEngine
 

@@ -7,12 +7,12 @@ from pathlib import Path
 
 def test_qty_multiples_of_lot():
     """Verify that all trade quantities in backtest results are multiples of 30 (Bank Nifty lot size)."""
-    trade_log_path = Path("backtest/results/trade_log.csv")
+    trade_log_path = Path("research/backtest/results/trade_log.csv")
 
     # If the file doesn't exist, skip the test (no backtest run yet)
     if not trade_log_path.exists():
         import pytest
-        pytest.skip("backtest/results/trade_log.csv not found - run a backtest first")
+        pytest.skip("research/backtest/results/trade_log.csv not found - run a backtest first")
 
     with open(trade_log_path, newline="") as f:
         reader = csv.DictReader(f)

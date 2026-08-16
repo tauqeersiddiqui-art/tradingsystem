@@ -7,10 +7,16 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, repo_root)
 
 # Import engine.config FIRST to establish the namespace package correctly
+import engine.config.config
 from engine.config.config import Config
 
 import pandas as pd
-from research.backtest.engine.research_engine import ResearchEngine
+# Import ResearchEngine directly to avoid namespace package conflicts
+import importlib.util
+spec = importlib.util.spec_from_file_location("research_engine", os.path.join(repo_root, "research", "backtest", "engine", "research_engine.py"))
+research_engine_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(research_engine_module)
+ResearchEngine = research_engine_module.ResearchEngine
 
 
 def find_csv_candidate():

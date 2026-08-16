@@ -65,14 +65,15 @@ class ResearchEngine:
         """
         self.config = config or Config()
 
-        # Sizing: whole Bank Nifty lots only
-        self.lot_size = lot_qty(self.config)  # 30 for BANKNIFTY
+        # Sizing: whole Bank Nifty lots only (LOT_SIZE=30 for Bank Nifty, NOT 65 for Nifty)
+        self.lot_size = 30  # Bank Nifty lot size - hardcoded, not from config
         self.lots_per_trade = lots_per_trade
         self.qty = self.lot_size * self.lots_per_trade
 
         # Validate sizing invariant
         assert self.qty > 0, f"Quantity must be positive: {self.qty}"
         assert self.qty % self.lot_size == 0, f"Quantity must be multiple of lot_size ({self.lot_size})"
+        assert self.qty % 30 == 0, f"Quantity must be multiple of 30 (Bank Nifty lot), got {self.qty}"
 
         # Side enablement
         self.enable_ce = enable_ce

@@ -58,8 +58,8 @@ class ResearchBacktestEngine:
         """
         self.config = config or Config()
 
-        # Authoritative sizing from live config
-        self.lot_size = lot_qty(self.config)  # Always 30 for BANKNIFTY
+        # Authoritative sizing: Bank Nifty lot size = 30 (hardcoded, not from config which has 65 for Nifty)
+        self.lot_size = 30  # Bank Nifty lot size
         self.lots_per_trade = lots_per_trade
         self.qty = self.lot_size * self.lots_per_trade
 

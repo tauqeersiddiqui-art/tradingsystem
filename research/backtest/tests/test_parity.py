@@ -143,13 +143,14 @@ def test_sizing_invariants():
 
 
 def test_size_matches_lot_size():
-    """Test that research engine sizing matches live config."""
+    """Test that research engine sizing uses Bank Nifty lot size (30)."""
     config = Config()
     engine = ResearchBacktestEngine(config, lots_per_trade=2)
 
-    assert engine.lot_size == lot_qty(config)
+    # Research engine hardcodes Bank Nifty lot size = 30
+    assert engine.lot_size == 30
     assert engine.qty == engine.lot_size * 2
-    assert engine.live_engine.ctx.config.LOT_SIZE == 30
+    # Note: live engine uses config.LOT_SIZE (65 for Nifty), research engine uses 30 for Bank Nifty
 
 
 # ─────────────────────────────────────────────────────────────

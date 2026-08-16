@@ -22,6 +22,10 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# ── TRADING_BRAIN_ENABLED: kill-switch for Obsidian logging ────────────
+# Set TRADING_BRAIN_ENABLED=0 in env to disable all obsidian logging instantly
+TRADING_BRAIN_ENABLED = os.getenv("TRADING_BRAIN_ENABLED", "1") == "1"
+
 import time
 import atexit
 import logging
@@ -1565,10 +1569,11 @@ def build_context(broker) -> TradingContext:
     ctx.journal.log_startup(ctx.config)
 
     # Initialize Obsidian vault for trade logging
-    try:
-        initialize_vault()
-    except Exception as _e:
-        logger.warning(f"[OBSIDIAN] Vault init failed (non-fatal): {_e}")
+    if TRADING_BRAIN_ENABLED:
+        try:
+            initialize_vault()
+        except Exception as _e:
+            logger.warning(f"[OBSIDIAN] Vault init failed (non-fatal): {_e}")
 
     return ctx
 
@@ -2840,23 +2845,24 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _journal_id = None
 
                     # ── Obsidian: log closed trade ───────────────────────────
-                    try:
-                        log_obsidian_trade(
-                            entry_price  = position.get("entry", 0.0),
-                            exit_price   = exit_price,
-                            pnl          = pnl,
-                            mfe          = position.get("max_pnl", 0.0),
-                            ml_score     = position.get("ml_prob", 0.0),
-                            strategy     = position.get("regime", "UNKNOWN"),
-                            side         = position.get("side", ""),
-                            symbol       = position.get("symbol", ""),
-                            entry_ts     = entry_time,
-                            exit_ts      = ts,
-                            exit_reason  = exit_reason,
-                            held_seconds = held_seconds,
-                        )
-                    except Exception as _oe:
-                        logger.debug(f"[OBSIDIAN] Trade log failed (non-fatal): {_oe}")
+                    if TRADING_BRAIN_ENABLED:
+                        try:
+                            log_obsidian_trade(
+                                entry_price  = position.get("entry", 0.0),
+                                exit_price   = exit_price,
+                                pnl          = pnl,
+                                mfe          = position.get("max_pnl", 0.0),
+                                ml_score     = position.get("ml_prob", 0.0),
+                                strategy     = position.get("regime", "UNKNOWN"),
+                                side         = position.get("side", ""),
+                                symbol       = position.get("symbol", ""),
+                                entry_ts     = entry_time,
+                                exit_ts      = ts,
+                                exit_reason  = exit_reason,
+                                held_seconds = held_seconds,
+                            )
+                        except Exception as _oe:
+                            logger.debug(f"[OBSIDIAN] Trade log failed (non-fatal): {_oe}")
 
                     # F1: finalize replay timeline + send to Telegram
                     if position is not None and position.get("_replay"):
@@ -3951,47 +3957,48 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 )
 
                 # ── Obsidian: daily summary & pattern detection ─────────────
-                try:
-                    # Get full trade details from CSV for accurate summary & patterns
-                    full_trades = get_trades_for_day(session_date)
-                    ea = getattr(ctx, "exit_analytics", {})
+                if TRADING_BRAIN_ENABLED:
+                    try:
+                        # Get full trade details from CSV for accurate summary & patterns
+                        full_trades = get_trades_for_day(session_date)
+                        ea = getattr(ctx, "exit_analytics", {})
 
-                    # Compute CE/PE breakdown from full trades
-                    ce_trades = [t for t in full_trades if t.get("side") == "CE"]
-                    pe_trades = [t for t in full_trades if t.get("side") == "PE"]
-                    ce_wins = [t for t in ce_trades if t.get("pnl", 0) > 0]
-                    pe_wins = [t for t in pe_trades if t.get("pnl", 0) > 0]
-                    ce_wr = (len(ce_wins) / len(ce_trades) * 100) if ce_trades else 0
-                    pe_wr = (len(pe_wins) / len(pe_trades) * 100) if pe_trades else 0
-                    gross_profit = sum(t["pnl"] for t in full_trades if t.get("pnl", 0) > 0)
-                    gross_loss = sum(t["pnl"] for t in full_trades if t.get("pnl", 0) < 0)
+                        # Compute CE/PE breakdown from full trades
+                        ce_trades = [t for t in full_trades if t.get("side") == "CE"]
+                        pe_trades = [t for t in full_trades if t.get("side") == "PE"]
+                        ce_wins = [t for t in ce_trades if t.get("pnl", 0) > 0]
+                        pe_wins = [t for t in pe_trades if t.get("pnl", 0) > 0]
+                        ce_wr = (len(ce_wins) / len(ce_trades) * 100) if ce_trades else 0
+                        pe_wr = (len(pe_wins) / len(pe_trades) * 100) if pe_trades else 0
+                        gross_profit = sum(t["pnl"] for t in full_trades if t.get("pnl", 0) > 0)
+                        gross_loss = sum(t["pnl"] for t in full_trades if t.get("pnl", 0) < 0)
 
-                    # Avg MFE from exit_analytics (more accurate)
-                    mfe_list = ea.get("mfe_rs_list", [])
-                    avg_mfe = sum(mfe_list) / len(mfe_list) if mfe_list else 0
+                        # Avg MFE from exit_analytics (more accurate)
+                        mfe_list = ea.get("mfe_rs_list", [])
+                        avg_mfe = sum(mfe_list) / len(mfe_list) if mfe_list else 0
 
-                    log_daily_summary(
-                        total_trades   = summary.get("trades", 0),
-                        net_pnl        = summary.get("pnl", 0.0),
-                        win_rate       = summary.get("win_rate", 0.0),
-                        avg_mfe        = avg_mfe,
-                        gross_profit   = gross_profit,
-                        gross_loss     = abs(gross_loss),
-                        max_drawdown   = 0,  # could compute from equity curve
-                        ce_trades      = len(ce_trades),
-                        ce_wr          = ce_wr,
-                        pe_trades      = len(pe_trades),
-                        pe_wr          = pe_wr,
-                        observations   = "",
-                        action_next_day = "",
-                        trade_date     = session_date,
-                    )
-                    check_and_log_patterns(
-                        trades_today = full_trades,
-                        trade_date   = session_date,
-                    )
-                except Exception as _od_e:
-                    logger.warning(f"[OBSIDIAN] EOD logging failed (non-fatal): {_od_e}")
+                        log_daily_summary(
+                            total_trades   = summary.get("trades", 0),
+                            net_pnl        = summary.get("pnl", 0.0),
+                            win_rate       = summary.get("win_rate", 0.0),
+                            avg_mfe        = avg_mfe,
+                            gross_profit   = gross_profit,
+                            gross_loss     = abs(gross_loss),
+                            max_drawdown   = 0,  # could compute from equity curve
+                            ce_trades      = len(ce_trades),
+                            ce_wr          = ce_wr,
+                            pe_trades      = len(pe_trades),
+                            pe_wr          = pe_wr,
+                            observations   = "",
+                            action_next_day = "",
+                            trade_date     = session_date,
+                        )
+                        check_and_log_patterns(
+                            trades_today = full_trades,
+                            trade_date   = session_date,
+                        )
+                    except Exception as _od_e:
+                        logger.warning(f"[OBSIDIAN] EOD logging failed (non-fatal): {_od_e}")
 
                 # ── F2: comprehensive daily review ─────────────────────
                 try:

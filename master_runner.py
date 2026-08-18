@@ -43,7 +43,7 @@ logging.getLogger().addHandler(_fh)
 logger = logging.getLogger("master")
 
 # ── ENV flags ─────────────────────────────────────────────────────────
-PAPER_MODE = os.getenv("PAPER_MODE", "0") == "1"
+PAPER_MODE = os.getenv("PAPER_MODE", "0") == "1"   # set in .env MODES block
 TEST_MODE  = os.getenv("TEST_MODE",  "0") == "1"
 
 HIST_CSV   = "data/historical/nifty_1m_full.csv"
@@ -80,6 +80,7 @@ from ml.ml_intraday_learner import IntradayMLLearner
 from engine.services.dashboard import render_engine, render_market
 
 from telegram.messages import (
+    fmt_symbol,
     format_trade_entry,
     format_trade_exit,
     format_trade_live,
@@ -112,6 +113,19 @@ from telegram.notifier import (
 from engine.data.candle_builder import CandleBuilder
 
 _engine_thread = None
+
+# Global variables for entry confirmation logic
+_signal_price = 0.0
+_signal_side = ""
+_signal_timestamp = None
+_confirmation_active = False
+_consecutive_losses = 0
+_signal_ml_prob = 0.0
+_breakout_level = 0.0
+_adverse_move = 0.0   # track worst adverse move since signal
+_last_ml_signal_epoch = 0.0   # epoch of last ML decision (SAFE_SCALP tracker)
+_scalp_consecutive_losses = 0  # scalp-specific consecutive loss counter (circuit breaker)
+_scalp_trades_today = 0        # scalp trades executed today (daily cap)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -529,7 +543,7 @@ def _log_feed_health(broker, ctx, builder) -> None:
         datetime.fromtimestamp(broker._last_tick_time).strftime("%H:%M:%S")
         if broker._last_ticks else "none"
     )
-    subscribed_cnt  = len(broker._option_tokens) + 1   # +1 NIFTY 50
+    subscribed_cnt  = len(broker._option_tokens) + 1   # +1 BANK NIFTY index
     orb_status      = (
         "RECONSTRUCTED" if (ctx.live_engine.orb_done and
                             ctx.live_engine.orb_high is not None)
@@ -558,7 +572,7 @@ def _log_feed_health(broker, ctx, builder) -> None:
 # HISTORICAL DATA — fetch from Zerodha + append live candles
 # ══════════════════════════════════════════════════════════════════════
 
-_NIFTY_INDEX_TOKEN = 256265   # NSE:NIFTY 50 instrument token (fixed)
+_NIFTY_INDEX_TOKEN = 260105   # NSE:BANKNIFTY index token (fixed)
 _csv_write_lock    = threading.Lock()
 _last_appended_ts  = None     # guard against double-append
 
@@ -671,7 +685,7 @@ def init_broker():
         raise RuntimeError("Open broker position exists.")
 
     logger.info("Starting market feed")
-    broker.start_feed(["NIFTY 50"])
+    broker.start_feed(["NIFTY BANK"])
 
     # Wait up to 10 s for the first tick so the engine doesn't start
     # with a stale/flat REST price in the candle buffer.
@@ -748,6 +762,8 @@ def build_context(broker) -> TradingContext:
     }
     # F6 — exit type counts
     ctx.exit_type_counts: dict = {}
+    # Last completed trade — shown on the human-readable dashboard
+    ctx.last_trade: dict = {}
 
     # Diagnostics journal — observability only, zero strategy impact
     ctx.journal = TradeJournal()
@@ -761,7 +777,7 @@ def build_context(broker) -> TradingContext:
 # ══════════════════════════════════════════════════════════════════════
 
 def init_candle_builder(broker) -> CandleBuilder:
-    token = CandleBuilder.nifty_token()   # 256265
+    token = CandleBuilder.nifty_token()   # 260105 (BANKNIFTY)
 
     builder = CandleBuilder(broker, instrument_token=token, max_candles=300)
 
@@ -778,6 +794,118 @@ def init_candle_builder(broker) -> CandleBuilder:
 # ══════════════════════════════════════════════════════════════════════
 # MAIN ENGINE LOOP
 # ══════════════════════════════════════════════════════════════════════
+
+
+def should_confirm_entry(decision, ts, ltp_history, ctx):
+    """
+    Entry confirmation - 4 mandatory structure gates applied AFTER an ML
+    signal fires but BEFORE market order placement. Fixes trades that go
+    negative immediately on entry (bad timing / no confirmation).
+
+    A. STRUCTURE CONFIRMATION - enter only on continuation (HH for CE /
+       LL for PE) over the recent window, not on a single spike.
+    B. PULLBACK ENTRY - no breakout chasing: price must have retraced a
+       dynamic 10-50% of the recent range before we enter.
+    B2. MOMENTUM - the last ticks must still be pushing the direction.
+    C. HTF RULE - 5m SuperTrend must agree with the side; neutral (0) or
+       opposing blocks the trade.
+    D. TRAP FILTER - failed breakout (ORB snap-back, >65% give-back) and
+       micro reversals are skipped.
+
+    Returns (confirmed: bool, reason: str).
+    """
+    side   = decision.get("side", "CE")
+
+    # ---- tick history (NIFTY spot, 1s cadence, maxlen 120) ------------
+    prices = [float(p) for _, p in ltp_history] if ltp_history else []
+    if len(prices) < 40:
+        return False, "CONFIRM_NO_HISTORY"
+
+    # ---- window split: 40s past vs 20s recent (no half-split) ---------
+    recent        = prices[-20:]
+    past          = prices[-40:-20]
+    h1, l1        = max(past), min(past)
+    h2, l2        = max(recent), min(recent)
+    cur           = prices[-1]
+    rng           = h2 - l2
+    if rng <= 0:
+        rng = max(h1 - l1, 1e-9)
+
+    # ---- A. STRUCTURE CONFIRMATION (HH/LL continuation) ---------------
+    # cur is always inside the recent window, so a "broke below the recent
+    # low" check must use the window low BEFORE the last tick (l2_prev) or
+    # the past-window low (l1 = full reversal of the move).
+    if side == "CE":
+        if h2 <= h1:
+            return False, "CONFIRM_NO_HH"          # no higher high
+        if cur < l1:
+            return False, "CONFIRM_STRUCT_BREAK"   # gave back the whole move
+    else:
+        if l2 >= l1:
+            return False, "CONFIRM_NO_LL"          # no lower low
+        if cur > h1:
+            return False, "CONFIRM_STRUCT_BREAK"
+
+    # ---- B. PULLBACK ENTRY (dynamic, no breakout chasing) -------------
+    # Price must be off the recent extreme by 10-50% of the range: not
+    # chasing the spike, but the pullback must not have failed either.
+    # The band scales with volatility (rng), so it adapts to fast vs slow
+    # markets instead of a fixed 15% retrace.
+    l2_prev     = min(recent[:-1])   # window low before the last tick
+    h2_prev     = max(recent[:-1])   # window high before the last tick
+    retrace_min = 0.10 * rng
+    retrace_max = 0.50 * rng
+    pullback    = abs(h2 - cur) if side == "CE" else abs(cur - l2)
+    if not (retrace_min <= pullback <= retrace_max):
+        return False, "CONFIRM_BAD_PULLBACK"
+    # noise tolerance: only fail if the pullback low is broken by >2% of range
+    if side == "CE":
+        if cur < l2_prev - 0.02 * rng:
+            return False, "CONFIRM_PULLBACK_FAIL"  # broke the pullback low
+    else:
+        if cur > h2_prev + 0.02 * rng:
+            return False, "CONFIRM_PULLBACK_FAIL"  # broke the pullback high
+
+    # ---- B2. MOMENTUM CONFIRMATION (last 5 ticks must push direction) --
+    last_moves = prices[-5:]
+    if side == "CE" and not all(x <= y for x, y in zip(last_moves, last_moves[1:])):
+        return False, "CONFIRM_NO_MOMENTUM"
+    if side == "PE" and not all(x >= y for x, y in zip(last_moves, last_moves[1:])):
+        return False, "CONFIRM_NO_MOMENTUM"
+
+    # ---- C. HTF RULE - 5m SuperTrend must agree -----------------------
+    htf5 = getattr(ctx.live_engine, "_htf5_dir", 0)
+    if htf5 == 0:
+        return False, "CONFIRM_HTF_NEUTRAL"
+    if side == "CE" and htf5 == -1:
+        return False, "CONFIRM_HTF_OPPOSES"
+    if side == "PE" and htf5 == 1:
+        return False, "CONFIRM_HTF_OPPOSES"
+
+    # ---- D. TRAP FILTER - failed breakout = skip ----------------------
+    le       = ctx.live_engine
+    orb_done = getattr(le, "orb_done", False)
+    orb_high = getattr(le, "orb_high", None)
+    orb_low  = getattr(le, "orb_low",  None)
+    if orb_done and orb_high is not None and orb_low is not None:
+        if side == "CE" and h2 > orb_high and cur < orb_high:
+            return False, "CONFIRM_BREAKOUT_TRAP"  # broke out then snapped back
+        if side == "PE" and l2 < orb_low and cur > orb_low:
+            return False, "CONFIRM_BREAKOUT_TRAP"
+    # generic spike-and-reverse: gave back >65% of the range
+    if side == "CE" and cur < h2 - 0.65 * rng:
+        return False, "CONFIRM_SPIKE_TRAP"
+    if side == "PE" and cur > l2 + 0.65 * rng:
+        return False, "CONFIRM_SPIKE_TRAP"
+    # micro trap: last-3-tick V-reversal right at the decision point
+    if side == "CE" and prices[-3] > prices[-2] < prices[-1]:
+        return False, "CONFIRM_MICRO_REVERSAL"
+    if side == "PE" and prices[-3] < prices[-2] > prices[-1]:
+        return False, "CONFIRM_MICRO_REVERSAL"
+
+    return True, "CONFIRMED"
+
+
 
 def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     logger.info("Engine loop started")
@@ -800,6 +928,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     _last_exit_epoch  = 0.0     # epoch time of that exit (for same-symbol cooldown)
     scalp_position        = None                              # active scalp trade dict (flat when main trades)
     _scalp_ltp_history    = collections.deque(maxlen=120)    # (datetime, float) pairs — 120s of NIFTY spot
+    _s_sig_log_once       = True   # gate log dedup: only log once per cooldown cycle
+    _ltp_history          = collections.deque(maxlen=120)    # (datetime, float) pairs — recent LTP for entry confirmation
 
     # ══════════════════════════════════════════════════════════════════
     # RESTART RECOVERY + BROKER RECONCILIATION  (Tasks 3, 4, 8)
@@ -909,7 +1039,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
         paused   = "PAUSED" if _tn.ENGINE_PAUSED else "ACTIVE"
         stop_req = " | STOP REQUESTED" if _tn.ENGINE_STOP_REQUESTED else ""
         ltp      = builder.ltp() or 0
-        pos_str  = (f"IN TRADE: {position['symbol']} @ {position['entry']:.1f}"
+        pos_str  = (f"IN TRADE: {fmt_symbol(position['symbol'])} @ {position['entry']:.1f}"
                     if position else "NO POSITION")
         ce_thr   = f"{_tn.CE_THRESHOLD_OVERRIDE:.2f}" if _tn.CE_THRESHOLD_OVERRIDE else "model"
         pe_thr   = f"{_tn.PE_THRESHOLD_OVERRIDE:.2f}" if _tn.PE_THRESHOLD_OVERRIDE else "model"
@@ -953,7 +1083,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             key="watchdog", interval=120.0
                         )
                         try:
-                            ctx.broker.start_feed(["NIFTY 50"])
+                            ctx.broker.start_feed(["NIFTY BANK"])
                         except Exception as _wde:
                             logger.error(f"[WATCHDOG] Reconnect failed: {_wde}")
 
@@ -980,7 +1110,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 _last_heartbeat = time.time()
                 import telegram.notifier as _tn
                 _hb_pos = (
-                    f"IN TRADE: {position['symbol']} @ {position['entry']:.1f}"
+                    f"IN TRADE: {fmt_symbol(position['symbol'])} @ {position['entry']:.1f}"
                     if position else "No open position"
                 )
                 _hb_paused = " | PAUSED" if _tn.ENGINE_PAUSED else ""
@@ -1021,6 +1151,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             # dataset grows continuously during the trading session.
             if new_candle_ready:
                 _append_candle_to_csv(builder.latest_candle(), HIST_CSV)
+
+            # Update LTP history for entry confirmation
+            if ltp_current > 0:
+                _ltp_history.append((ts, ltp_current))
 
             df_window = builder.get_window(120)
 
@@ -1067,8 +1201,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             decision = ctx.live_engine.step(market_data, ts)
 
             # Track when this signal was first generated (for entry-delay logging)
+            global _last_ml_signal_epoch
             if decision is not None and _signal_first_ts is None:
                 _signal_first_ts = ts
+                _last_ml_signal_epoch = time.time()
             elif decision is None:
                 _signal_first_ts = None
 
@@ -1079,7 +1215,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if position is not None:
                 # CRITICAL FIX: use option premium LTP, NOT NIFTY spot.
-                # builder.ltp() returns NIFTY 50 spot (~23500) which is always
+                # builder.ltp() returns BANK NIFTY spot (~50000) which is always
                 # above the option target (~42), causing TARGET_HIT every cycle.
                 _opt_ltp = ctx.broker.ltp(position["symbol"])
 
@@ -1220,8 +1356,24 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     pnl = (exit_price - position["entry"]) * position["qty"]
 
+                    # Update consecutive losses for adaptive threshold
+                    global _consecutive_losses
+                    if pnl < 0:
+                        _consecutive_losses += 1
+                    else:
+                        _consecutive_losses = 0
+
                     ctx.pnl         += pnl
                     ctx.positions.append(pnl)
+                    ctx.last_trade = {
+                        "symbol":  position.get("symbol", ""),
+                        "side":    position.get("side", ""),
+                        "entry":   position.get("entry", 0.0),
+                        "exit":    exit_price,
+                        "pnl":     pnl,
+                        "reason":  exit_reason,
+                        "ts":      ts.strftime("%H:%M:%S"),
+                    }
 
                     # ── Persist trade to CSV ───────────────────────────
                     try:
@@ -1514,7 +1666,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # ── OI wall filter ────────────────────────────────────
                 # FIX-10: was never called
                 try:
-                    atm_strike = round(current_price / 50) * 50
+                    atm_strike = round(current_price / 100) * 100
                     option_chain = ctx.broker.get_option_chain_near_atm(strikes_range=5)
                     
                     if has_oi_wall(option_chain, atm_strike, side):
@@ -1573,7 +1725,14 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     decision = None  # fall through cleanly
 
                 if decision is not None:
-                    pass  # proceed to execute below
+                    # Entry confirmation logic implementing 8 mandatory checks
+                    should_confirm, block_reason = should_confirm_entry(decision, ts, _ltp_history, ctx)
+                    if not should_confirm:
+                        logger.info(f"[ENTRY CONFIRM] Trade blocked: {block_reason}")
+                        ctx.live_engine.record_block(block_reason)
+                        decision = None
+                    else:
+                        logger.info(f"[ENTRY CONFIRM] Trade confirmed: {block_reason}")
 
                 # F5: capture option LTP just before market order (slippage baseline)
                 _signal_opt_ltp = 0.0
@@ -1713,48 +1872,56 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         (_s_ltp - scalp_position["entry"]) * scalp_position["qty"],
                     )
 
-                    # Centralized profit-lock ladder also governs scalp trades
-                    # (single source of truth — identical to normal trades).
-                    _sc_new_stop, _sc_stage, _sc_lock = ladder_stop(
-                        scalp_position["entry"],
-                        scalp_position["qty"],
-                        scalp_position["max_pnl"],
-                        scalp_position["stop_loss"],
-                    )
-                    if _sc_new_stop > scalp_position["stop_loss"] + 1e-6:
-                        logger.info(
-                            f"[LADDER]\nMFE={scalp_position['max_pnl']:.0f}\n"
-                            f"LOCK={_sc_lock:.0f}\nstage={_sc_stage} (scalp)  "
-                            f"SL {scalp_position['stop_loss']:.2f}->{_sc_new_stop:.2f}"
-                        )
-                        scalp_position["stop_loss"] = _sc_new_stop
-
-                    # ── Lock at +2pt then trail 2pt behind peak (all lots held) ──
+                    # ── Scalp profit management (staged) ────────────────
+                    # Stage 1 (0 → +BE_PTS):       initial SL only (room to breathe).
+                    # Stage 2 (+BE_PTS → +TRAIL):  SL → breakeven — once the trade is
+                    #                              meaningfully in profit it can never
+                    #                              become a loss (kills the old
+                    #                              "tiny win / full-SL loss" asymmetry).
+                    # Stage 3 (≥ +TRAIL_START):    trailing starts — SL trails
+                    #                              SCALP_TRAIL_PTS below the peak,
+                    #                              ratchet up only (winners run).
+                    # NOTE: the old lock-at-+1.5pt/trail-2pt behaviour locked tiny
+                    # +0.5pt profits while losses ran the full 3pt SL. Removed.
                     _s_move = _s_ltp - scalp_position["entry"]
-                    if _s_move >= ctx.config.SCALP_LOCK_PTS:
-                        if not scalp_position.get("lock_triggered"):
-                            scalp_position["stop_loss"]      = scalp_position["entry"] + 1.0
-                            scalp_position["lock_triggered"] = True
+                    if _s_move >= ctx.config.SCALP_TRAIL_START_PTS:
+                        if not scalp_position.get("trail_triggered"):
+                            scalp_position["trail_triggered"] = True
                             logger.info(
-                                f"[SCALP LOCK] +{ctx.config.SCALP_LOCK_PTS:.0f}pt → "
-                                f"SL locked at entry+1={scalp_position['entry'] + 1.0:.1f} | "
+                                f"[SCALP TRAIL ON] +{_s_move:.1f}pt >= "
+                                f"{ctx.config.SCALP_TRAIL_START_PTS:.0f}pt -> "
                                 f"trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt below peak"
                             )
                             import telegram.notifier as _tgn
                             _tgn.send_bot(
-                                f"🔒 <b>SCALP LOCK</b> +{ctx.config.SCALP_LOCK_PTS:.0f}pt\n"
-                                f"SL → entry+1pt  |  trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt  |  riding all lots"
+                                f"<b>SCALP TRAIL ON</b> +{_s_move:.1f}pt\n"
+                                f"trailing {ctx.config.SCALP_TRAIL_PTS:.0f}pt below peak | riding all lots"
                             )
-                        # Trail SL 2pt below current ltp — ratchet up only, never down
                         _trail_sl = _s_ltp - ctx.config.SCALP_TRAIL_PTS
                         if _trail_sl > scalp_position["stop_loss"]:
                             scalp_position["stop_loss"] = _trail_sl
-
+                    elif _s_move >= ctx.config.SCALP_BE_PTS:
+                        if not scalp_position.get("be_triggered"):
+                            scalp_position["be_triggered"] = True
+                            scalp_position["stop_loss"] = max(
+                                scalp_position["stop_loss"],
+                                scalp_position["entry"] + 0.25,
+                            )
+                            logger.info(
+                                f"[SCALP BE] +{_s_move:.1f}pt -> "
+                                f"SL to breakeven (entry+0.25="
+                                f"{scalp_position['entry'] + 0.25:.2f})"
+                            )
                     _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
                     # Honor the ladder-raised stop (virtual trigger) in addition
                     # to the scalp engine's fixed initial stop / target / time.
                     if not _s_exit and _s_ltp <= scalp_position["stop_loss"]:
                         _s_exit, _s_reason = True, "STOP"
+                    # ── Manual exit from Telegram EXIT NOW button ──
+                    import telegram.notifier as _tn
+                    if _tn.MANUAL_EXIT_REQUESTED:
+                        _s_exit, _s_reason = True, "MANUAL"
+                        _tn.MANUAL_EXIT_REQUESTED = False
                     if _s_exit:
                         if _s_reason in ("STOP",):
                             _log_stop_audit("SCALP STOP HIT", _s_ltp, scalp_position)
@@ -1767,6 +1934,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
                         ctx.pnl          += _s_pnl
                         ctx.trades_today += 1
+                        ctx.last_trade = {
+                            "symbol":  scalp_position.get("symbol", ""),
+                            "side":    scalp_position.get("side", ""),
+                            "entry":   scalp_position.get("entry", 0.0),
+                            "exit":    _s_fill,
+                            "pnl":     _s_pnl,
+                            "reason":  f"SCALP_{_s_reason}",
+                            "ts":      ts.strftime("%H:%M:%S"),
+                        }
                         try:
                             log_trade(
                                 entry_order  = {"symbol": scalp_position["symbol"],
@@ -1794,14 +1970,71 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         send_trade_channel(_scalp_exit_msg)
                         scalp_position = None
                         ctx.scalp_engine.on_exit()
+                        # Track scalp-specific consecutive losses (circuit breaker)
+                        global _scalp_consecutive_losses, _scalp_trades_today
+                        _scalp_trades_today += 1
+                        if _s_pnl < 0:
+                            _scalp_consecutive_losses += 1
+                            logger.info(
+                                f"[SCALP GATE] Consecutive scalp losses: "
+                                f"{_scalp_consecutive_losses}"
+                            )
+                        else:
+                            _scalp_consecutive_losses = 0
 
                 # ── Scalp entry ───────────────────────────────────────
-                if (scalp_position is None
+                # -- Scalp entry -- circuit breaker + daily cap + ML validation (Aug-18)
+                _max_consec = getattr(ctx.config, "SCALP_MAX_CONSEC_LOSSES", 3)
+                _scalp_day_cap = getattr(ctx.config, "SCALP_MAX_TRADES_PER_DAY", 6)
+                if _scalp_consecutive_losses >= _max_consec:
+                    if _s_sig_log_once:
+                        logger.info(
+                            f"[SCALP GATE] Circuit breaker: {_scalp_consecutive_losses} "
+                            f"consecutive losses >= {_max_consec} -- entries blocked"
+                        )
+                        _s_sig_log_once = False
+                elif _scalp_trades_today >= _scalp_day_cap:
+                    if _s_sig_log_once:
+                        logger.info(
+                            f"[SCALP GATE] Daily limit: {_scalp_trades_today} "
+                            f">= {_scalp_day_cap} -- entries blocked"
+                        )
+                        _s_sig_log_once = False
+                elif (scalp_position is None
                         and ctx.trades_today < max_trades
                         and ctx.pnl > ctx.config.DAILY_LOSS_LIMIT):
-                    _s_sig = ctx.scalp_engine.check_entry(
-                        ltp_current, _scalp_ltp_history, ts
+                    _s_sig_log_once = True
+                    # SAFE_SCALP: if ML has been silent for ML_INACTIVITY_MINUTES,
+                    # scalp trades need stricter filters (HTF agreement, tighter
+                    # pullback, 25% higher momentum bar).
+                    _ml_inactive = (
+                        _last_ml_signal_epoch > 0
+                        and (time.time() - _last_ml_signal_epoch)
+                        > ctx.config.ML_INACTIVITY_MINUTES * 60
                     )
+                    _s_sig = ctx.scalp_engine.check_entry(
+                        ltp_current, _scalp_ltp_history, ts,
+                        htf5=getattr(ctx.live_engine, "_htf5_dir", 0),
+                        safe_mode=_ml_inactive,
+                    )
+                    # ML validation for scalp entries (Aug-18 fix):
+                    # All 11 scalp trades had ml_prob=0.0 -- no ML gate.
+                    # Now require ML prob >= SCALP_ML_MIN_PROB unless ML is inactive.
+                    if _s_sig and not _ml_inactive:
+                        _scalp_ml_prob = max(
+                            getattr(ctx.live_engine, "_last_ce_prob", 0.0),
+                            getattr(ctx.live_engine, "_last_pe_prob", 0.0),
+                        )
+                        _scalp_ml_min = getattr(ctx.config, "SCALP_ML_MIN_PROB", 0.42)
+                        if _scalp_ml_prob < _scalp_ml_min:
+                            logger.info(
+                                f"[SCALP SKIP] ML prob={_scalp_ml_prob:.3f} < "
+                                f"{_scalp_ml_min:.3f} -- insufficient conviction"
+                            )
+                            _s_sig = None
+                        else:
+                            # Attach ML prob to the signal for logging
+                            _s_sig["ml_prob"] = _scalp_ml_prob
                     if _s_sig:
                         _s_side   = _s_sig["side"]
                         _s_symbol, _s_opt_ltp = ctx.broker.get_atm_option(_s_side)
@@ -1813,6 +2046,18 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 )
                             else:
                                 _scalp_entry_qty = ctx.config.SCALP_LOTS * ctx.config.LOT_SIZE
+                                # ── Adaptive SL by movement conviction ──
+                                # If the system expects NO follow-through (weak
+                                # move, no HTF/VWAP support, ML silent) -> strict
+                                # 3pt stop. If it expects movement -> 5pt / 8pt so
+                                # real moves get room (kills first-30s noise stops).
+                                _sl_pts = ctx.scalp_engine.adaptive_sl_pts(
+                                    side=_s_side,
+                                    move_pts=_s_sig["move_pts"],
+                                    htf5=getattr(ctx.live_engine, "_htf5_dir", 0),
+                                    vwap_confirms=bool(getattr(ctx.live_engine, "_vwap_confirms", False)),
+                                    ml_active=not _ml_inactive,
+                                )
                                 _s_order = ctx.executor.execute_entry(_s_symbol, _s_side, _scalp_entry_qty)
                                 if _s_order:
                                     scalp_position = {
@@ -1821,20 +2066,22 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         "qty":            _scalp_entry_qty,
                                         "lot_size":       ctx.config.LOT_SIZE,
                                         "entry":          _s_order["price"],
-                                        "stop_loss":      _s_order["price"] - ctx.config.SCALP_SL_PTS,
+                                        "stop_loss":      _s_order["price"] - _sl_pts,
                                         "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
                                         "max_pnl":        0.0,
                                         "min_pnl":        0.0,
-                                        "ml_prob":        0.0,
+                                        "ml_prob":        _s_sig.get("ml_prob", 0.0),
                                         "regime":         "SCALP",
                                         "reason":         _s_sig["reason"],
                                         "entry_ts":       ts,
                                         "lock_triggered": False,
+                                        "sl_mode":        "STRICT" if _sl_pts <= ctx.config.SCALP_SL_PTS + 1e-6 else ("WIDE" if _sl_pts >= ctx.config.SCALP_SL_WIDE_PTS - 1e-6 else "MED"),
                                     }
                                     logger.info(
                                         f"[SCALP ENTRY] {_s_side} {_s_symbol} "
                                         f"@ {_s_order['price']:.1f} "
                                         f"| NIFTY move={_s_sig['move_pts']:+.1f}pt"
+                                        f" | SL={_sl_pts:.0f}pt ({scalp_position['sl_mode']})"
                                     )
                                     _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
                                     send_scalp_entry(_scalp_entry_msg)

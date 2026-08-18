@@ -37,3 +37,22 @@ access_token.txt
 Thumbs.db
 # Added by code-review-graph
 .code-review-graph/
+
+# Temp/cache files
+.pytest_cache/
+catboost_info/
+test_artifacts/
+*.tmp
+*.bak
+
+# Generated backtest results (regenerable)
+backtest/results/
+
+# Data analysis outputs (regenerable)
+data/analysis/
+
+# IDE configs
+.cursorrules
+.windsurfrules
+.mcp.json
+.claude/

@@ -15,7 +15,7 @@ class Config:
         self.DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", -2000))
         # Overtrading guard: was 10 (today fired 10 trades = Rs1320 cost drag).
         # 4 keeps cost bounded; scalp + ML share this counter.
-        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 4))
+        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 8))
 
         # Round-trip cost per 65-qty lot (buy+sell). Drives the cost-aware
         # profit ladder so it never locks a profit below the trade's own cost.
@@ -31,7 +31,7 @@ class Config:
         self.REENTRY_COOLDOWN = int(os.getenv("REENTRY_COOLDOWN", 300))
         self.SAME_SYMBOL_COOLDOWN = int(os.getenv("SAME_SYMBOL_COOLDOWN", 300))
 
-        # ── TIER 1: Session & Regime Filters ────────────────────────────
+        # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ TIER 1: Session & Regime Filters ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
         # Warmup block: no entries until 90 min after market open (11:00)
         self.WARMUP_MINUTES = int(os.getenv("WARMUP_MINUTES", "90"))
         # Skip RANGE regime days (historically 31% WR, negative expectancy)
@@ -49,17 +49,17 @@ class Config:
         # ML
         self.CHAMPION_THRESHOLD = float(os.getenv("CHAMPION_THRESHOLD", 0.42))
 
-        # ── TIER 1: Entry Confirmation Gates ────────────────────────────
+        # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ TIER 1: Entry Confirmation Gates ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
         # Wider initial stop: 1.5x ATR instead of 1.0x (reduces noise stops)
         self.INITIAL_SL_MULT = float(os.getenv("INITIAL_SL_MULT", "1.5"))
         # Require VWAP alignment (price on correct side of VWAP)
         self.REQUIRE_VWAP_ALIGN = os.getenv("REQUIRE_VWAP_ALIGN", "1") == "1"
         # Require 5m SuperTrend alignment with trade direction
         self.REQUIRE_5M_TREND = os.getenv("REQUIRE_5M_TREND", "1") == "1"
-        # Maximum slippage allowed at entry (points) — skip if spread > 1pt
+        # Maximum slippage allowed at entry (points) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ skip if spread > 1pt
         self.MAX_ENTRY_SLIP_PTS = float(os.getenv("MAX_ENTRY_SLIP_PTS", "1.0"))
 
-        # ── TIER 1: Entry Confirmation & Timing Gates ───────────────────
+        # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ TIER 1: Entry Confirmation & Timing Gates ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
         # Confirmation window seconds (wait for next candle or 5-15 sec)
         self.CONFIRMATION_WINDOW_SECONDS = int(os.getenv("CONFIRMATION_WINDOW_SECONDS", "10"))
         # Break + hold seconds (wait for price to hold above breakout level)
@@ -77,7 +77,7 @@ class Config:
         # Second brain strictness factor (multiply thresholds when ML prob dropping)
         self.SECOND_BRAIN_STRICTNESS_FACTOR = float(os.getenv("SECOND_BRAIN_STRICTNESS_FACTOR", "1.2"))
 
-        # ── TIER 2: Trailing & Scale-Out ───────────────────────────────
+        # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ TIER 2: Trailing & Scale-Out ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
         # Trailing activates at +2pt profit (was immediate)
         self.TRAIL_ACTIVATION_PTS = float(os.getenv("TRAIL_ACTIVATION_PTS", "2.0"))
         # Trail distance: 2pt behind peak (was tighter)
@@ -96,7 +96,19 @@ class Config:
         self.SCALP_SL_PTS             = float(os.getenv("SCALP_SL_PTS", "3.0"))
         self.SCALP_SL_MED_PTS         = float(os.getenv("SCALP_SL_MED_PTS", "5.0"))
         self.SCALP_SL_WIDE_PTS        = float(os.getenv("SCALP_SL_WIDE_PTS", "8.0"))
-        self.SCALP_TARGET_PTS         = float(os.getenv("SCALP_TARGET_PTS", "50.0"))  # disabled — trailing SL is primary exit
+        # ATR-adaptive SL (Aug-20): replace fixed 3/5/8pt tiers with ATR-
+        # relative multipliers so the stop scales with live volatility.
+        # SL = max(ATR * mult, floor_pts) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ the floor prevents micro-ATR
+        # environments from producing impossibly tight stops.
+        self.SCALP_ATR_SL_STRICT_MULT = float(os.getenv("SCALP_ATR_SL_STRICT_MULT", "0.20"))  # 20% of ATR
+        self.SCALP_ATR_SL_MED_MULT    = float(os.getenv("SCALP_ATR_SL_MED_MULT", "0.35"))    # 35% of ATR
+        self.SCALP_ATR_SL_WIDE_MULT   = float(os.getenv("SCALP_ATR_SL_WIDE_MULT", "0.55"))   # 55% of ATR
+        # Open-volatility penalty (Aug-20): widen SL during the first N
+        # seconds after ORB unlock (default 9:30).  The first 15 minutes
+        # have 2-3x normal volatility and gamma; entries here need extra room.
+        self.SCALP_OPEN_VOL_WINDOW_S  = int(os.getenv("SCALP_OPEN_VOL_WINDOW_S", "900"))   # 15 min
+        self.SCALP_OPEN_VOL_SL_MULT   = float(os.getenv("SCALP_OPEN_VOL_SL_MULT", "1.5"))   # 1.5x wider
+        self.SCALP_TARGET_PTS         = float(os.getenv("SCALP_TARGET_PTS", "50.0"))  # disabled ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ trailing SL is primary exit
         self.SCALP_MAX_HOLD_SECONDS   = int(os.getenv("SCALP_MAX_HOLD_SECONDS", "180"))
         # Entry quality (Aug-18): weak 12-13pt moves (barely above old 12pt
         # threshold) produced most of the losses; strong 18-35pt moves won.
@@ -109,11 +121,11 @@ class Config:
         # 12:07 +20pt) reverses instantly; a real trend develops across the
         # window. If the last quarter of the window carries most of the total
         # move, the burst is still exploding -> skip. Also: never enter on
-        # sparse data (<MIN_SAMPLES ticks) — confirmation must be mandatory.
+        # sparse data (<MIN_SAMPLES ticks) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ confirmation must be mandatory.
         self.SCALP_CONFIRM_MIN_SAMPLES   = int(os.getenv("SCALP_CONFIRM_MIN_SAMPLES", "6"))
         self.SCALP_EXHAUST_TAIL_FRAC     = float(os.getenv("SCALP_EXHAUST_TAIL_FRAC", "0.65"))
         # No-life exit (Aug-18): if a scalp hasn't reached the breakeven zone
-        # (+SCALP_BE_PTS) within this many seconds, the entry was wrong — cut
+        # (+SCALP_BE_PTS) within this many seconds, the entry was wrong ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ cut
         # at market instead of bleeding the full stop. Data: today's losers
         # sat dead 59-81s then lost the full 8pt; every winner showed life in
         # 9-34s, so this never fires on live trades.
@@ -127,13 +139,13 @@ class Config:
         self.ML_INACTIVITY_MINUTES    = int(os.getenv("ML_INACTIVITY_MINUTES", "20"))
         # Staged scalp profit management (Aug-18: fixed tiny-win/big-loss asymmetry).
         # Stage 1: initial SL only until +BE_PTS.
-        # Stage 2: at +BE_PTS move SL to breakeven (entry+0.25) — a trade that is
+        # Stage 2: at +BE_PTS move SL to breakeven (entry+0.25) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ a trade that is
         #          meaningfully in profit can never become a loss.
-        # Stage 3: at +TRAIL_START_PTS trailing activates — SL trails
+        # Stage 3: at +TRAIL_START_PTS trailing activates ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ SL trails
         #          SCALP_TRAIL_PTS below the peak, ratchet up only.
-        self.SCALP_BE_PTS             = float(os.getenv("SCALP_BE_PTS", "2.0"))     # breakeven lock at +2pt
-        self.SCALP_TRAIL_START_PTS    = float(os.getenv("SCALP_TRAIL_START_PTS", "5.0"))  # WFO-optimized: 8->5: activate trailing sooner to lock gains earlier
-        self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "4.0"))  # WFO-optimized: 3->4: wider trail gives winners more room to breathe
+        self.SCALP_BE_PTS             = float(os.getenv("SCALP_BE_PTS", "5.0"))     # profit lock at +2.5pt (=+150 pnl with qty=60)
+        self.SCALP_TRAIL_START_PTS    = float(os.getenv("SCALP_TRAIL_START_PTS", "6.0"))  # trail sooner: +3pt -> lock gains earlier
+        self.SCALP_TRAIL_PTS          = float(os.getenv("SCALP_TRAIL_PTS", "3.5"))  # trail 2.5pt behind peak to lock profit
         self.SCALP_MIN_OPT_PTS        = float(os.getenv("SCALP_MIN_OPT_PTS", "30.0"))  # skip options cheaper than this
         # -- Scalp risk controls (Aug-18 loss analysis) ---------------------
         # Max NIFTY move (pts) allowed for scalp entry -- block entries after

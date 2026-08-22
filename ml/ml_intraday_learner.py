@@ -130,6 +130,23 @@ class IntradayMLLearner:
         elif ts.hour == 9 and ts.minute >= 45 and not self.day_type_locked:
             self._detect_day_type()
 
+    def backfill_first_30m(self, candles: list):
+        """
+        Late-start recovery: engine started after 09:45, so the normal
+        update_candle() 30-min collection window was missed. Feed the
+        first-30-min candles from historical data and classify now.
+        """
+        if self.day_type_locked or not candles:
+            return
+        first = candles[0]
+        if self.open_price is None:
+            self.open_price = float(first.get("close", 0))
+        for c in candles:
+            self.first_30min_closes.append(float(c.get("close", 0)))
+            self.first_30min_high = max(self.first_30min_high, float(c.get("high", 0)))
+            self.first_30min_low  = min(self.first_30min_low,  float(c.get("low", 0)))
+        self._detect_day_type()
+
     def _detect_day_type(self):
         """
         Analyse first 30 minutes to classify the day.
@@ -322,8 +339,8 @@ class IntradayMLLearner:
         if side == "PE" and self.pe_losses >= 4 and self.pe_wins == 0:
             return True, f"PE_LOSING_TODAY_{self.pe_losses}L_0W"
 
-        # Block after 2 consecutive losses (was 3 — too late, half daily limit gone)
-        if self.consecutive_losses >= 2:
+        # Block after 4 consecutive losses (was 2 — too aggressive, kills session)
+        if self.consecutive_losses >= 4:
             return True, f"CONSECUTIVE_LOSS_LOCK_{self.consecutive_losses}"
 
         return False, None

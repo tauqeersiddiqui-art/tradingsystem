@@ -331,7 +331,7 @@ class ResearchEngine:
         ml_prob = position.get("ml_prob", 0.5)
         target = position.get("target")
 
-        new_sl, new_max_pnl, pm_reason = manage_position(
+        new_sl, new_max_pnl, pm_reason, _scale = manage_position(
             entry_price=entry,
             ltp=ltp,
             lot_size=size,
@@ -339,7 +339,7 @@ class ResearchEngine:
             max_pnl=max_pnl,
             ml_prob=ml_prob,
             target=target,
-            regime=position.get("regime", "RANGE"),
+            side=position.get("side", "CE"),
         )
 
         position["stop_loss"] = new_sl

@@ -368,14 +368,17 @@ def test_exit_time_based():
     entry_price = 45000.0
     ts = datetime(2026, 7, 15, 10, 0, 0)
 
-    # Weak position (low max_pnl) that exceeds time limit
+    # Weak position (low max_pnl) that exceeds time limit.
+    # This system is LONG option premium on BOTH CE & PE (profit when premium
+    # RISES): stop goes BELOW entry, target goes ABOVE entry — identical
+    # geometry for either side (see risk_manager.compute_entry_stops).
     position = {
         'entry': entry_price,
         'side': 'PE',
         'qty': 30,
-        'stop_loss': 44500.0,
-        'target': 45500.0,
-        'max_pnl': 50.0,  # Low profit — should trigger TIME_EXIT_WEAK
+        'stop_loss': 44500.0,  # stop below entry (long premium)
+        'target': 45500.0,     # target above entry (long premium)
+        'max_pnl': 50.0,       # Low profit — should trigger TIME_EXIT_WEAK
         'ml_prob': 0.65,
         'regime': 'RANGE',
         'entry_time': ts

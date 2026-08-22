@@ -60,6 +60,7 @@ def parse_symbol(raw: str) -> dict:
         return {"index": idx, "expiry": expiry, "strike": strike, "type": otype}
 
     # Format C: 3-letter month  YY + MON(3) + STRIKE(4-5)
+    # e.g. BANKNIFTY26AUG57500CE  =>  BANKNIFTY  Aug 2026  57500  CE
     m = re.match(
         r'^(NIFTY|BANKNIFTY|SENSEX)(\d{2})([A-Z]{3})(\d{4,5})(CE|PE)$', s
     )
@@ -67,7 +68,7 @@ def parse_symbol(raw: str) -> dict:
         idx, yy, mon, strike, otype = m.groups()
         year   = 2000 + int(yy)
         month  = _MONTHS.get(mon, mon)
-        expiry = f"{mon} {year}"
+        expiry = f"{month} {year}"
         return {"index": idx, "expiry": expiry, "strike": strike, "type": otype}
 
     # Fallback
@@ -75,10 +76,14 @@ def parse_symbol(raw: str) -> dict:
 
 
 def fmt_symbol(raw: str) -> str:
-    """Return human-readable symbol string."""
+    """Return human-readable symbol string.
+
+    BANKNIFTY26AUG57500CE  =>  BANKNIFTY Aug 2026 57500 CE
+    NIFTY2661623300PE      =>  NIFTY 16 Jun 2026 23300 PE
+    """
     p = parse_symbol(raw)
     if p["expiry"]:
-        return f"{p['index']}  {p['expiry']}  {p['strike']}  {p['type']}"
+        return f"{p['index']} {p['expiry']} {p['strike']} {p['type']}"
     return raw
 
 
@@ -161,7 +166,8 @@ def format_trade_entry(data: dict) -> str:
     target   = data.get("target", 0.0)
     ml_prob  = data.get("ml_prob", 0.0)
     regime   = data.get("regime", "TREND")
-    lots     = qty // 65
+    lot_size = data.get("lot_size", 60)
+    lots     = qty // lot_size
     side_e   = _side_emoji(side)
     reg_e    = _regime_emoji(regime)
     sl_pts   = round(price - stop, 2)
@@ -203,7 +209,8 @@ def format_trade_live(position: dict, ltp: float, entry_time: datetime) -> str:
     ml_prob   = position.get("ml_prob", 0.0)
     regime    = position.get("regime", "TREND")
     max_pnl   = position.get("max_pnl", 0.0)
-    lots      = qty // 65
+    lot_size  = position["lot_size"]
+    lots      = qty // lot_size
 
     pnl       = (ltp - entry) * qty
     move_pts  = ltp - entry
@@ -278,7 +285,8 @@ def format_trade_exit(data: dict) -> str:
     mae_pts     = data.get("mae_pts", 0.0)
     held_s      = data.get("held_seconds", 0.0)
     raw_reason  = data.get("reason", "")
-    lots        = qty // 65
+    lot_size    = data["lot_size"]
+    lots        = qty // lot_size
 
     reason_label, reason_emoji = _map_exit_reason(raw_reason, entry, stop)
     pnl_e    = _pnl_emoji(pnl)
@@ -326,6 +334,9 @@ def format_scalp_entry(pos: dict, move_pts: float) -> str:
     price     = pos.get("entry", 0.0)
     stop      = pos.get("stop_loss", 0.0)
     target    = pos.get("target", 0.0)
+    qty       = pos["qty"]
+    lot_size  = pos["lot_size"]
+    lots      = max(1, round(qty / lot_size))
     side_e    = _side_emoji(side)
     tgt_pts   = round(target - price, 1)
     sl_pts    = round(price - stop, 1)
@@ -338,7 +349,7 @@ def format_scalp_entry(pos: dict, move_pts: float) -> str:
         f"📌 <b>{symbol}</b>\n"
         f"\n"
         f"💵 Entry Price   : <b>{price:.1f}</b>\n"
-        f"📦 Quantity      : 65  (1 lot)\n"
+        f"📦 Quantity      : {qty}  ({lots} lot{'s' if lots > 1 else ''})\n"
         f"\n"
         f"🛑 Stop Loss     : {stop:.1f}  <i>(-{abs(sl_pts):.1f} pts)</i>\n"
         f"🎯 Target        : {target:.1f}  <i>(+{abs(tgt_pts):.1f} pts)</i>\n"
@@ -355,7 +366,8 @@ def format_scalp_live(pos: dict, ltp: float) -> str:
     entry    = pos.get("entry", 0.0)
     stop     = pos.get("stop_loss", 0.0)
     target   = pos.get("target", 0.0)
-    qty      = pos.get("qty", 65)
+    qty      = pos["qty"]
+    lot_size = pos["lot_size"]
     max_pnl  = pos.get("max_pnl", 0.0)
     entry_ts = pos.get("entry_ts")
     side_e   = _side_emoji(side)
@@ -389,7 +401,8 @@ def format_scalp_exit(pos: dict, fill: float, reason: str, pnl: float) -> str:
     symbol   = fmt_symbol(pos.get("symbol", ""))
     side     = pos.get("side", "").upper()
     entry    = pos.get("entry", 0.0)
-    qty      = pos.get("qty", 65)
+    qty      = pos["qty"]
+    lot_size = pos["lot_size"]
     max_pnl  = pos.get("max_pnl", 0.0)
     min_pnl  = pos.get("min_pnl", 0.0)
     entry_ts = pos.get("entry_ts")
@@ -427,7 +440,7 @@ def format_scalp_exit(pos: dict, fill: float, reason: str, pnl: float) -> str:
         f"📈 Best (MFE)     : {_pts_str(peak_pts)} pts\n"
         f"📉 Worst (MAE)    : {_pts_str(mae_pts)} pts\n"
         f"⏱️ Held           : {_held_str(held_s)}\n"
-        f"📦 Qty: {qty}  (1 lot)  ⚡ Scalp\n"
+        f"📦 Qty: {qty}  ({qty // lot_size if lot_size > 0 else 1} lot)  ⚡ Scalp\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
     )
 
@@ -515,34 +528,125 @@ def _section_feed_health(ms: dict) -> str:
 
 
 
+# ─────────────────────────────────────────────────────────────────────
+# HUMAN-READABLE BLOCKER TRANSLATION
+# ─────────────────────────────────────────────────────────────────────
+
+_BLOCK_HUMAN = {
+    "WARMING_UP":             "⏳ Warming up — collecting data",
+    "ORB_BUILD":              "🌅 Building Opening Range (9:15–9:30)",
+    "MARKET_CLOSING":         "🔚 Market closing (after 15:15)",
+    "LUNCH_FILTER":           "🍱 Lunch filter (11:00–12:30)",
+    "WARMUP_BLOCK":           "⏳ Warm-up — no entries yet",
+    "INSUFFICIENT_DATA":      "📉 Not enough candles yet",
+    "RANGE_REGIME_SKIP":      "〰️ Sideways (range) day — skipping (historically weak)",
+    "COOLDOWN":               "🕐 Cooling off after last trade",
+    "NO_DIRECTION":           "〰️ No clear direction (SuperTrend flat)",
+    "HTF5_OPPOSES":           "↕️ 5-min trend opposes 1-min — waiting for alignment",
+    "TRAP_FILTER":            "🎭 Breakout trap detected — skipping",
+    "SIGNAL_FIRE":            "🟢 SIGNAL FIRING",
+    "NO_SIGNAL":              "🕐 Waiting for a signal",
+    "PNL_GUARD":              "🛡️ Daily loss limit reached — entries paused",
+    "CONFIRM_NO_HISTORY":     "📉 Not enough price history for confirmation",
+    "CONFIRM_NO_HH":          "📉 No higher-high structure for CE",
+    "CONFIRM_NO_LL":          "📉 No lower-low structure for PE",
+    "CONFIRM_STRUCT_BREAK":   "💥 Structure broke — move gave back too much",
+    "CONFIRM_BAD_PULLBACK":   "↩️ Bad pullback timing (chasing or too deep)",
+    "CONFIRM_PULLBACK_FAIL":  "↩️ Pullback failed — price broke the entry zone",
+    "CONFIRM_NO_MOMENTUM":    "🌀 Momentum stalled — last ticks not pushing",
+    "CONFIRM_HTF_NEUTRAL":    "〰️ 5-min trend neutral — no confirmation",
+    "CONFIRM_HTF_OPPOSES":    "↕️ 5-min trend opposes — skipping",
+    "CONFIRM_BREAKOUT_TRAP":  "🎭 Breakout snapped back — trap avoided",
+    "CONFIRM_SPIKE_TRAP":     "🎭 Spike-and-reverse — trap avoided",
+    "CONFIRM_MICRO_REVERSAL": "🌀 Micro reversal detected — skipping",
+    "CE_WEAK":                "CE signal too weak",
+    "CE_WEAK_RANK":           "CE ranked weak vs other signals",
+    "ENTRY_SLIPPAGE":         "💸 Entry spread/slippage too wide",
+    "HTF_FAIL":               "5-min trend check failed",
+    "HTF_MISALIGN":           "5-min trend misaligned",
+    "ML_BELOW_THR":           "ML confidence below threshold",
+    "ML_BLOCKED":             "ML engine blocked the signal",
+    "NO_EDGE":                "No ML edge (CE vs PE gap too small)",
+    "NO_STRUCTURE":           "No price structure confirmation",
+    "PULLBACK_WAIT":          "↩️ Waiting for pullback",
+    "RANGE_REGIME":           "〰️ Range day detected",
+    "VWAP_FAIL":              "VWAP not aligned",
+    "VWAP_NEAR_MISS":         "VWAP barely missed",
+    "ML_EDGE_MARGIN":         "ML edge margin not met",
+    "REENTRY_COOLDOWN":       "🕐 Re-entry cooldown active",
+    "PREDICT_FIRST":          "ML-first gate",
+    "REQUIRE_HTF_ALIGN":      "HTF alignment required",
+    "REQUIRE_VWAP_ALIGN":     "VWAP alignment required",
+    "SKIP_RANGE_REGIME":      "Range regime skip",
+    "MAX_ENTRY_SLIP_PTS":     "💸 Entry slippage cap",
+    "MAX_HOLD_SECONDS":       "⏱️ Max hold reached",
+    "INITIAL_SL_MULT":        "Initial SL multiplier",
+    "TIME_EXIT_WEAK":         "⏱️ Time exit (weak move)",
+    "HTF":                    "HTF gate",
+    "VWAP":                   "VWAP gate",
+}
+
+
+def _human_block(reason: str) -> str:
+    """Translate a raw block reason (e.g. 'WARMUP_BLOCK (until 10:45)') to plain language."""
+    if not reason:
+        return "🕐 Waiting"
+    if reason.startswith("SIGNAL_FIRE"):
+        return "🟢 <b>SIGNAL FIRING</b>"
+    key = reason.split("(")[0].strip()
+    human = _BLOCK_HUMAN.get(key) or _BLOCK_HUMAN.get(reason) or reason
+    if "RANGE_REGIME" in reason and "(" in reason:
+        return f"{human} {reason[reason.find('('):]}"
+    return human
+
+
+def _human_block_counts(counts: dict) -> str:
+    """Block counts (today) in plain language, top 5."""
+    if not counts:
+        return ""
+    top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    rows = []
+    for k, v in top:
+        human = _BLOCK_HUMAN.get(k, k.replace("_", " "))
+        rows.append(f"  {human:<28} x{v}")
+    return "\n" + "\n".join(rows)
+
+
 def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
-    """Rich AI engine status — called by render_engine in dashboard.py."""
+    """Human-readable AI engine status for Telegram."""
     ms       = market_state or {}
     now_str  = datetime.now().strftime("%H:%M:%S")
-    session  = ms.get("session", "ACTIVE")
+
+    # Engine status — is it still trading / paused / stopped?
+    import telegram.notifier as _tn
+    if getattr(_tn, "ENGINE_STOP_REQUESTED", False):
+        status_line = "🛑 <b>STOPPED</b> (via /stop)"
+    elif getattr(_tn, "ENGINE_PAUSED", False):
+        status_line = "⏸️ <b>PAUSED</b> (safety — send /resume)"
+    else:
+        status_line = "✅ <b>RUNNING</b>"
 
     # Direction
-    st_dir   = ms.get("supertrend_dir", 0)
-    vwap     = ms.get("vwap", 0.0)
-    pvwap    = ms.get("price_vs_vwap", 0.0) * 100
-    rsi      = ms.get("rsi_1m", 50.0)
-    adx      = ms.get("adx", 0.0)
+    st_dir = ms.get("supertrend_dir", 0)
+    pvwap  = ms.get("price_vs_vwap", 0.0) * 100
+    rsi    = ms.get("rsi_1m", 50.0)
+    adx    = ms.get("adx", 0.0)
 
     if st_dir > 0:
-        dir_line = "📈 SuperTrend: <b>BULLISH</b> ↑"
+        dir_line = "📈 <b>BULLISH</b> ↑"
     elif st_dir < 0:
-        dir_line = "📉 SuperTrend: <b>BEARISH</b> ↓"
+        dir_line = "📉 <b>BEARISH</b> ↓"
     else:
-        dir_line = "〰️ SuperTrend: <b>NEUTRAL</b>"
+        dir_line = "〰️ <b>NEUTRAL</b> (no trend)"
 
+    vwap_e = "✅" if pvwap >= 0 else "⚠️"
     vwap_sign = "above" if pvwap >= 0 else "below"
-    vwap_e    = "✅" if pvwap >= 0 else "⚠️"
 
-    # ML bias bars
-    ce_adj  = ms.get("ce_adj", 0.0)
-    pe_adj  = ms.get("pe_adj", 0.0)
-    ce_thr  = ms.get("ce_threshold", 0.70)
-    pe_thr  = ms.get("ml_threshold", 0.65)
+    # ML confidence bars
+    ce_adj = ms.get("ce_adj", 0.0)
+    pe_adj = ms.get("pe_adj", 0.0)
+    ce_thr = ms.get("ce_threshold", 0.70)
+    pe_thr = ms.get("ml_threshold", 0.65)
 
     def _bar(v, thr):
         filled = max(0, min(10, round(v * 10)))
@@ -550,53 +654,56 @@ def format_engine_dashboard(ctx, market_state: dict, ltp: float = 0.0) -> str:
         ok = "✅" if v >= thr else ("🟡" if v >= thr - 0.06 else "🔴")
         return f"{bar} {v:.2f} {ok}"
 
-    # Decision
+    # Decision / current blocker in plain language
     block_raw = ms.get("block_reason", "WARMING_UP")
-    if block_raw.startswith("SIGNAL_FIRE"):
-        decision_line = "🟢 <b>SIGNAL FIRING</b>"
-    else:
-        import html as _html
-        decision_line = f"🔴 Waiting — {_html.escape(block_raw)}"
+    decision_line = _human_block(block_raw)
+    if not block_raw.startswith("SIGNAL_FIRE"):
+        decision_line = f"⏳ Waiting — {decision_line}"
 
-    # Stats
-    positions    = getattr(ctx, "positions", [])
+    # Today stats
     trades_today = getattr(ctx, "trades_today", 0)
     pnl          = getattr(ctx, "pnl", 0.0)
+    positions    = getattr(ctx, "positions", [])
     wins         = sum(1 for p in positions if p > 0)
     losses       = len(positions) - wins
     wr           = (wins / len(positions) * 100) if positions else 0
-    pf_wins      = sum(p for p in positions if p > 0)
-    pf_loss      = sum(abs(p) for p in positions if p < 0)
-    pf           = (pf_wins / pf_loss) if pf_loss > 0 else float("inf")
-    pf_str       = f"{pf:.2f}" if pf != float("inf") else "inf"
     pnl_e        = "💰" if pnl >= 0 else "🔴"
     ltp_str      = f"{ltp:,.1f}" if ltp else "---"
 
+    # Last trade
+    lt = getattr(ctx, "last_trade", None) or {}
+    if lt.get("symbol"):
+        lt_pnl = lt.get("pnl", 0)
+        lt_e   = "✅" if lt_pnl >= 0 else "🔴"
+        last_line = (
+            f"{lt_e} {lt.get('ts','')}  {fmt_symbol(lt.get('symbol',''))}\n"
+            f"   Entry {lt.get('entry',0):.1f} → Exit {lt.get('exit',0):.1f}  "
+            f"P&L <b>{'+' if lt_pnl>=0 else ''}₹{lt_pnl:,.0f}</b>  ({lt.get('reason','')})"
+        )
+    else:
+        last_line = "— no trades yet today"
+
     return (
-        f"🤖 <b>AI ENGINE STATUS</b>\n"
+        f"🤖 <b>AI ENGINE</b>  {status_line}\n"
         f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
-        f"🕐 {now_str}   📡 NIFTY <b>{ltp_str}</b>\n"
+        f"🕐 {now_str}   📡 <b>BANK NIFTY</b> {ltp_str}\n"
         f"\n"
-        f"<b>MARKET DIRECTION</b>\n"
-        f"{dir_line}\n"
-        f"{vwap_e} VWAP: {vwap:,.0f}  ({pvwap:+.2f}%  —  price {vwap_sign})\n"
-        f"📊 RSI: {rsi:.1f}   ADX: {adx:.1f}\n"
+        f"<b>MARKET</b>\n"
+        f"{dir_line}   {vwap_e} VWAP {vwap_sign} ({pvwap:+.2f}%)\n"
+        f"📊 RSI(1m): {rsi:.1f}   ADX: {adx:.1f}\n"
         f"\n"
         f"<b>ML CONFIDENCE</b>\n"
         f"📈 CE  {_bar(ce_adj, ce_thr)}\n"
         f"📉 PE  {_bar(pe_adj, pe_thr)}\n"
-        + _section_ml_analytics(ms)
-        + f"\n\n"
-        f"<b>DECISION</b>\n"
+        f"\n"
+        f"<b>WHAT'S HAPPENING</b>\n"
         f"{decision_line}\n"
-        + _section_block_counts(ms.get("block_counts", {}))
+        + (_human_block_counts(ms.get("block_counts", {})) if ms.get("block_counts") else "")
         + f"\n\n"
-        f"<b>TODAY  ({trades_today} trades)</b>\n"
-        f"{pnl_e} P&amp;L: <b>{'+'if pnl>=0 else ''}Rs {pnl:,.0f}</b>   "
+        f"<b>LAST TRADE</b>\n{last_line}\n"
+        f"\n"
+        f"<b>TODAY</b>  ({trades_today} trades)\n"
+        f"{pnl_e} P&amp;L: <b>{'+' if pnl>=0 else ''}₹{pnl:,.0f}</b>   "
         f"W/L: {wins}/{losses}   WR: {wr:.0f}%\n"
-        f"PF: {pf_str}\n"
-        + _section_exit_analytics(ctx)
-        + _section_exit_breakdown(ctx)
-        + _section_feed_health(ms)
-        + f"\n<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
+        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━</code>"
     )

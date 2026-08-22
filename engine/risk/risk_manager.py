@@ -17,7 +17,7 @@ def position_size(capital, confidence):
     return int(base * confidence)
 
 
-def compute_entry_stops(entry_premium, atr, regime, delta=0.5):
+def compute_entry_stops(entry_premium, atr, regime, delta=0.5, side="CE"):
     """
     Tight institutional stops for a LONG option (CE or PE — both bought).
 
@@ -27,11 +27,17 @@ def compute_entry_stops(entry_premium, atr, regime, delta=0.5):
     3. Tighter stop = more stops hit, but each loss is small → positive expectancy
     4. Do NOT widen stops to "give the trade room" — that destroys expectancy
 
+    For LONG options (both CE and PE bought): profit when premium RISES.
+    - CE: premium rises when underlying RISES
+    - PE: premium rises when underlying FALLS
+    In both cases, stop goes BELOW entry, target goes ABOVE entry.
+
     Args:
         entry_premium : fill price (premium points, e.g. 120.5)
         atr           : spot ATR in points (e.g. 45.0 for NIFTY 1m)
         regime        : "TREND" | "EXPANSION" | "RANGE"
         delta         : option delta (~0.5 for ATM)
+        side          : "CE" or "PE" — kept for compat/logging; stop/target logic is identical
     """
     if not atr or atr <= 0:
         atr = max(entry_premium, 1.0) * 0.10
@@ -45,8 +51,9 @@ def compute_entry_stops(entry_premium, atr, regime, delta=0.5):
     # 10 pts ceiling UNCHANGED (capital protection / max loss cap).
     stop_distance = max(min(raw_sl_pts, 10.0), 4.0)
 
+    # LONG CE & PE both profit when premium RISES → stop BELOW, target ABOVE
     stop_loss = entry_premium - stop_distance
-    target    = entry_premium + stop_distance * 3.5   # 3.5R — rarely hit; trailing does the work
+    target    = entry_premium + stop_distance * 3.5
     stop_pct  = stop_distance / max(entry_premium, 1.0)
 
     return stop_loss, target, stop_pct

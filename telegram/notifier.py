@@ -62,6 +62,32 @@ ANSWER_CALLBACK_URL = f"{API_URL}/answerCallbackQuery"
 _proxy_url = os.getenv("TELEGRAM_PROXY", "").strip()
 _PROXY = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else None
 
+# ─────────────────────────────────────────────────────────────────────
+# SHARED HTTP SESSION  — fast, no retries, no surprise proxy
+# ─────────────────────────────────────────────────────────────────────
+# Telegram updates are enqueued to ONE worker thread and sent serially,
+# so a single stalled request (long timeout + internal retries on a dead
+# proxy/TLS) backs up the whole queue and makes every message arrive late.
+# This session:
+#   * trust_env=False  -> ignores Windows/system proxy auto-detection
+#     (requests was routing through a dead proxy even with TELEGRAM_PROXY
+#      unset, causing "Unable to connect to proxy" and 10s+ stalls).
+#     Explicit TELEGRAM_PROXY is still honored via session.proxies.
+#   * Retry(total=0)   -> fail fast; the caller retries at a higher level
+#     (or the next queue drain) instead of blocking the queue.
+#   * Pooled keep-alive -> live-card edits reuse the connection.
+import requests.adapters as _ra
+from urllib3.util.retry import Retry as _Retry
+
+_SESSION = requests.Session()
+_SESSION.trust_env = False
+_RETRY = _Retry(total=0, connect=0, read=0, redirect=0, status=0, backoff_factor=0)
+_ADAPTER = _ra.HTTPAdapter(max_retries=_RETRY, pool_connections=5, pool_maxsize=10)
+_SESSION.mount("https://", _ADAPTER)
+_SESSION.mount("http://", _ADAPTER)
+if _proxy_url:
+    _SESSION.proxies.update({"http": _proxy_url, "https": _proxy_url})
+
 _STATE_FILE = os.path.join(PROJECT_ROOT, ".telegram_state.json")
 
 # ─────────────────────────────────────────────────────────────────────
@@ -186,7 +212,7 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
     if reply_markup:
         payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
     try:
-        r = requests.post(SEND_URL, json=payload, timeout=10, proxies=_PROXY)
+        r = _SESSION.post(SEND_URL, json=payload, timeout=8)
         d = r.json()
         if not d.get("ok"):
             _log.warning("[TG] Send error: %s", d)
@@ -203,13 +229,13 @@ def _edit(message_id, text, parse_mode="HTML"):
     if _last_edited.get(message_id) == text:
         return True
     try:
-        r = requests.post(EDIT_MESSAGE_URL, json={
+        r = _SESSION.post(EDIT_MESSAGE_URL, json={
             "chat_id": BOT_CHAT_ID,
             "message_id": message_id,
             "text": text,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True,
-        }, timeout=10, proxies=_PROXY)
+        }, timeout=8)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -251,7 +277,7 @@ def _edit_with_markup(message_id, text, reply_markup=None):
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup if isinstance(reply_markup, str) else json.dumps(reply_markup)
-        r = requests.post(EDIT_MESSAGE_URL, json=payload, timeout=10, proxies=_PROXY)
+        r = _SESSION.post(EDIT_MESSAGE_URL, json=payload, timeout=8)
         d = r.json()
         if d.get("ok"):
             _last_edited[message_id] = text
@@ -281,9 +307,9 @@ def _edit_with_markup(message_id, text, reply_markup=None):
 
 def _answer_cb(callback_id, text=""):
     try:
-        requests.post(ANSWER_CALLBACK_URL,
+        _SESSION.post(ANSWER_CALLBACK_URL,
                       json={"callback_query_id": callback_id, "text": text},
-                      timeout=5, proxies=_PROXY)
+                      timeout=5)
     except Exception:
         pass
 
@@ -372,10 +398,10 @@ def _do_repost_engine(text: str):
     global _engine_msg_id
     if _engine_msg_id:
         try:
-            requests.post(f"{API_URL}/deleteMessage", json={
+            _SESSION.post(f"{API_URL}/deleteMessage", json={
                 "chat_id": BOT_CHAT_ID,
                 "message_id": _engine_msg_id,
-            }, timeout=10, proxies=_PROXY)
+            }, timeout=8)
         except Exception:
             pass
         _last_edited.pop(_engine_msg_id, None)
@@ -428,9 +454,9 @@ def delete_trade_message():
     _trade_msg_id = None
     _last_edited.pop(mid, None)
     try:
-        requests.post(f"{API_URL}/deleteMessage", json={
+        _SESSION.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
-        }, timeout=10, proxies=_PROXY)
+        }, timeout=8)
     except Exception:
         pass
 
@@ -459,7 +485,8 @@ def remove_exit_button():
 
 def send_scalp_entry(message: str):
     global _scalp_msg_id
-    result = _send(BOT_CHAT_ID, message)
+    kb = {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]}
+    result = _send(BOT_CHAT_ID, message, reply_markup=kb)
     if result:
         _scalp_msg_id = result["message_id"]
         _last_edited.pop(_scalp_msg_id, None)
@@ -475,7 +502,11 @@ def _do_update_scalp_live(expected_msg_id, message: str):
     global _scalp_msg_id
     if _scalp_msg_id != expected_msg_id:
         return
-    result = _edit(expected_msg_id, message)
+    result = _edit_with_markup(
+        expected_msg_id,
+        message,
+        {"inline_keyboard": [[{"text": "🔴 EXIT NOW", "callback_data": "manual_exit"}]]},
+    )
     if result == _EDIT_GONE and _scalp_msg_id == expected_msg_id:
         _scalp_msg_id = None
         _last_edited.pop(expected_msg_id, None)
@@ -489,9 +520,9 @@ def delete_scalp_message():
     _scalp_msg_id = None
     _last_edited.pop(mid, None)
     try:
-        requests.post(f"{API_URL}/deleteMessage", json={
+        _SESSION.post(f"{API_URL}/deleteMessage", json={
             "chat_id": BOT_CHAT_ID, "message_id": mid,
-        }, timeout=10, proxies=_PROXY)
+        }, timeout=8)
     except Exception:
         pass
 
@@ -512,6 +543,12 @@ def freeze_scalp_message(exit_text: str):
 
 def ask_trade_permission(side: str, price: float, ml_prob: float,
                          stop: float, target: float) -> bool:
+    # Auto-approve in Paper/DRY_RUN mode — no Telegram confirmation needed
+    _live_mode = os.getenv("LIVE_MODE", "0") == "1"
+    _dry_run = os.getenv("DRY_RUN", "1") == "1"
+    if not _live_mode or _dry_run:
+        return True
+
     global _pending_confirm_id, _pending_confirm_resp
 
     uid = f"confirm_{int(time.time())}"
@@ -570,7 +607,7 @@ def _poll_commands_internal(status_cb=None):
         if _last_update_id:
             params["offset"] = _last_update_id + 1
 
-        r = requests.get(GET_UPDATES_URL, params=params, timeout=5, proxies=_PROXY)
+        r = _SESSION.get(GET_UPDATES_URL, params=params, timeout=4)
         data = r.json()
         if not data.get("ok"):
             return

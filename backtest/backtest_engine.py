@@ -47,12 +47,12 @@ _MIN_EXPECTED_PNL = 150.0
 # Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
 _MIN_ML_FLOOR = 0.65
 
-NIFTY_LOT_SIZE = 65          # current lot size (changed from 75 → 65 in Jan 2026)
+NIFTY_LOT_SIZE = 30          # BANK NIFTY lot size (1 lot = 30 qty)
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
 
 
 def _lot_size_for_date(d) -> int:
-    """NIFTY lot size: 75 before Jan 2026, 65 from Jan 2026 onwards."""
+    """BANK NIFTY lot size: 30 qty (unchanged across the period)."""
     try:
         year = d.year if hasattr(d, "year") else int(str(d)[:4])
         return 65 if year >= 2026 else 75
@@ -765,7 +765,7 @@ class BacktestSignalEngine:
         ml_prob   = position.get("ml_prob",    0.5)
         lot_size  = position.get("lot_size",   NIFTY_LOT_SIZE)
 
-        new_sl, new_max_pnl, pm_reason = manage_position(
+        new_sl, new_max_pnl, pm_reason, scale_out_info = manage_position(
             entry_price=position["entry"],
             ltp=ltp,
             lot_size=lot_size,
@@ -773,9 +773,12 @@ class BacktestSignalEngine:
             max_pnl=max_pnl,
             ml_prob=ml_prob,
             target=position.get("target"),
+            side=position.get("side", "CE"),
         )
         position["stop_loss"] = new_sl
         position["max_pnl"]   = new_max_pnl
+        if scale_out_info:
+            position["_scale_out"] = scale_out_info
 
         if pm_reason:
             return True, pm_reason
@@ -1155,8 +1158,8 @@ class BacktestEngine:
                     else:
                         entry_spot = float(row["close"]) + 0.5
 
-                    # ATM strike proxy
-                    atm_strike = round(entry_spot / 50) * 50
+                    # ATM strike proxy (Bank NIFTY: 100-pt strikes)
+                    atm_strike = round(entry_spot / 100) * 100
 
                     # mins to close at entry
                     mins_to_close = _mins_to_close(ts)

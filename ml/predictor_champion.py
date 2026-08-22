@@ -193,8 +193,13 @@ class ChampionPredictor:
             else:
                 prob = lgbm_prob
 
+            # NOTE: a hard floor here silently kills the whole ML engine when
+            # calibration squashes outputs (seen 2026-08-17: CE/PE = 0.000 all
+            # day, zero ML trades). Return the real probability and let the
+            # learner threshold + edge margin do the filtering.
             if prob < 0.01:
-                return 0.0
+                logger.info(f"[PREDICTOR] {direction} prob={prob:.4f} < 0.01 "
+                            f"(low-conviction, kept for edge/threshold logic)")
 
             return round(prob, 4)
 

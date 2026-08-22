@@ -123,8 +123,11 @@ def build_live_features(closes, opens, highs, lows, volumes, signal, ts=None):
     # ── Volatility ─────────────────────────────────────────────────────
     if len(closes) >= 21:
         import numpy as np
-        rets = [(closes[i] - closes[i - 1]) / closes[i - 1] for i in range(1, 21)]
-        volatility = float(np.std(rets))
+        # LAST 20 returns (matches training's pandas rolling(20).std()).
+        # Bug was range(1,21) = the FIRST 20 rows, a stale window.
+        rets = [(closes[i] - closes[i - 1]) / closes[i - 1]
+                for i in range(len(closes) - 19, len(closes))]
+        volatility = float(np.std(rets, ddof=1))
     else:
         volatility = 0.001
     volatility = max(volatility, 1e-6)
@@ -167,9 +170,16 @@ def build_live_features(closes, opens, highs, lows, volumes, signal, ts=None):
     # ── Momentum / wick features ───────────────────────────────────────
     import numpy as np
 
+    # MUST match training pipeline (dataset_builder): momentum_velocity is
+    # the diff of RETURNS (normalized), not raw price delta. Live was feeding
+    # raw price differences (~2.3) vs training's ~0.0001 — a 3000x scale
+    # mismatch that made the champion models output ~0.000 all day
+    # (2026-08-17: CE=0.000 PE=0.000, zero ML trades).
     mom_vel = 0.0
     if len(closes) >= 4:
-        mom_vel = (closes[-1] - closes[-2]) - (closes[-2] - closes[-3])
+        r1 = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] != 0 else 0.0
+        r2 = (closes[-2] - closes[-3]) / closes[-3] if closes[-3] != 0 else 0.0
+        mom_vel = r1 - r2
 
     range_comp = 1.0
     if len(highs) >= 15 and len(lows) >= 15:

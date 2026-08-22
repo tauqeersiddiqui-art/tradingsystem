@@ -26,7 +26,7 @@
 #
 # RULES (enforced by construction):
 #   * Stop only TIGHTENS (max() ratchet) — it can never loosen.
-#   * CE and PE behave identically (both are long-premium positions).
+#   * LONG CE & PE both profit when premium RISES → identical trailing logic.
 #   * Scalp and normal behave identically (same ladder_stop()).
 #   * max_pnl is the only profit reference used.
 
@@ -62,6 +62,14 @@ LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
 _COST_PER_LOT = 66.0     # round-trip cost per 65-qty lot (overridable via env)
 _LOT_UNITS    = 65
 _TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
+
+# ── TIER 2: Trailing & Scale-Out Configuration ─────────────────────────
+# These can be overridden via Config (env vars TRAIL_ACTIVATION_PTS,
+# TRAIL_DISTANCE_PTS, SCALE_OUT_PCT, SCALE_OUT_PTS)
+_DEFAULT_TRAIL_ACTIVATION_PTS = 2.0   # trailing activates at +2pt profit
+_DEFAULT_TRAIL_DISTANCE_PTS   = 2.0   # trail 2pt behind peak
+_DEFAULT_SCALE_OUT_PCT        = 0.5   # scale out 50%
+_DEFAULT_SCALE_OUT_PTS        = 2.0   # scale out at +2pt profit
 
 
 def _cost_rs(qty: int) -> float:
@@ -105,22 +113,64 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):
     return locked, stage
 
 
-def ladder_stop(entry_price, qty, max_pnl, current_stop):
+def ladder_stop(entry_price, qty, max_pnl, current_stop, config=None, side="CE"):
     """
-    Convert the rupee profit-lock to a premium stop level and ratchet UP only.
+    Convert the rupee profit-lock to a premium stop level and ratchet TIGHTER only.
 
-    Returns (new_stop, stage_label, locked_rs).
+    Returns (new_stop, stage_label, locked_rs, scale_out_info).
     Used by BOTH manage_position (normal trades) and the scalp loop.
+
+    Tier 2 changes:
+    - Trailing only activates after TRAIL_ACTIVATION_PTS profit (default +2pt)
+    - Trail TRAIL_DISTANCE_PTS behind peak (default 2pt)
+    - Scale out SCALE_OUT_PCT (default 50%) at SCALE_OUT_PTS (default +2pt)
+
+    LONG CE & PE both profit when premium RISES → identical trailing logic (stop trails UP).
     """
+    import os
+
+    # Get config values with defaults
+    trail_activation_pts = float(getattr(config, "TRAIL_ACTIVATION_PTS", _DEFAULT_TRAIL_ACTIVATION_PTS)) if config else _DEFAULT_TRAIL_ACTIVATION_PTS
+    trail_distance_pts   = float(getattr(config, "TRAIL_DISTANCE_PTS", _DEFAULT_TRAIL_DISTANCE_PTS)) if config else _DEFAULT_TRAIL_DISTANCE_PTS
+    scale_out_pct        = float(getattr(config, "SCALE_OUT_PCT", _DEFAULT_SCALE_OUT_PCT)) if config else _DEFAULT_SCALE_OUT_PCT
+    scale_out_pts        = float(getattr(config, "SCALE_OUT_PTS", _DEFAULT_SCALE_OUT_PTS)) if config else _DEFAULT_SCALE_OUT_PTS
+
     locked_rs, stage = ladder_locked_rs(max_pnl, qty)
+
+    # Convert peak PnL to points profit for trailing logic
+    # LONG CE & PE: profit when premium RISES → pts_profit = (peak_premium - entry)
+    pts_profit = max_pnl / max(qty, 1) if max_pnl > 0 else 0.0
+
+    # ── TIER 2: Trailing only activates after TRAIL_ACTIVATION_PTS ──
+    if pts_profit < trail_activation_pts:
+        # Not enough profit to activate trailing — keep initial stop
+        return current_stop, stage, 0.0, None
+
     if locked_rs <= 0:
-        return current_stop, stage, 0.0
-    stop_floor = entry_price + locked_rs / max(qty, 1)
-    new_stop   = max(current_stop, stop_floor)   # never loosen
-    return new_stop, stage, locked_rs
+        return current_stop, stage, 0.0, None
+
+    # ── LONG CE & PE: profit when premium RISES ──
+    peak_price = entry_price + pts_profit
+    trail_floor = peak_price - trail_distance_pts
+    stop_floor = max(trail_floor, entry_price + locked_rs / max(qty, 1))
+    new_stop = max(current_stop, stop_floor)   # never loosen (ratchet UP)
+
+    # Scale-out: trigger when premium has risen SCALE_OUT_PTS from entry
+    scale_out_info = None
+    if pts_profit >= scale_out_pts and not getattr(ladder_stop, f"_scaled_out_{side}", False):
+        scale_out_info = {
+            "pct": scale_out_pct,
+            "trigger_pts": scale_out_pts,
+            "peak_price": peak_price,
+        }
+        setattr(ladder_stop, f"_scaled_out_{side}", True)
+    elif pts_profit < scale_out_pts:
+        setattr(ladder_stop, f"_scaled_out_{side}", False)
+
+    return new_stop, stage, locked_rs, scale_out_info
 
 
-def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, target=None):
+def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, target=None, config=None, side="CE"):
     """
     Args:
         entry_price : option premium at entry
@@ -133,25 +183,30 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
         max_pnl     : peak PnL seen so far (Rs)
         ml_prob     : ML probability at entry
         target      : fixed target premium (optional)
+        config      : Config object for Tier 2 params (TRAIL_ACTIVATION_PTS, etc.)
+        side        : "CE" or "PE" — determines profit direction
 
     Returns:
-        (updated_stop_loss, updated_max_pnl, exit_reason | None)
+        (updated_stop_loss, updated_max_pnl, exit_reason | None, scale_out_info | None)
     """
     qty     = max(lot_size, 1)
+    # PnL: LONG CE & PE both profit when premium RISES
     pnl     = (ltp - entry_price) * qty
     max_pnl = max(max_pnl, pnl)
     reason  = None
 
     # ── 0  Fixed target hit ───────────────────────────────────────────
+    # Target is ABOVE entry for both CE and PE (profit when premium rises)
     if target is not None and ltp >= target:
-        return stop_loss, max_pnl, "TARGET_HIT"
+        return stop_loss, max_pnl, "TARGET_HIT", None
 
     # ── 1  Centralized profit-lock ladder (single source of truth) ────
-    new_stop, stage, locked_rs = ladder_stop(entry_price, qty, max_pnl, stop_loss)
-    if new_stop > stop_loss + 1e-6:
+    new_stop, stage, locked_rs, scale_out_info = ladder_stop(entry_price, qty, max_pnl, stop_loss, config, side)
+    tightened = new_stop > stop_loss + 1e-6
+    if tightened:
         logger.info(
             f"[LADDER]\nMFE={max_pnl:.0f}\nLOCK={locked_rs:.0f}\n"
-            f"stage={stage}  SL {stop_loss:.2f}->{new_stop:.2f}"
+            f"stage={stage}  SL {stop_loss:.2f}->{new_stop:.2f}  ({side})"
         )
     stop_loss = new_stop
 
@@ -161,8 +216,9 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
         if pnl <= max_pnl * retention:
             reason = "Drawdown"
 
-    # ── 3  Hard stop — VIRTUAL trigger (market exit, fill may gap below) ─
+    # ── 3  Hard stop — VIRTUAL trigger (market exit, fill may gap) ─
+    # LONG CE & PE: stop hit when ltp <= stop_loss (premium falls back)
     if ltp <= stop_loss:
         reason = "Stop Loss"
 
-    return stop_loss, max_pnl, reason
+    return stop_loss, max_pnl, reason, scale_out_info

@@ -30,7 +30,7 @@ from engine.risk.risk_manager import compute_entry_stops
 from backtest.backtest_engine import OptionPriceSimulator, _mins_to_close
 
 # -- Parameters (mirror walkforward_oos defaults) ----------------------
-DATA         = "ml/models/training_dataset_v3.csv"
+DATA         = "ml/models/training_dataset.csv"
 LOOKAHEAD    = 12
 TARGET_PTS   = 15
 EDGE_MARGIN  = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
@@ -164,10 +164,11 @@ def _simulate_forensic(test_df, warmup_rows, ce_model, pe_model, thr):
             ltp = _opt.premium(position["entry_spot"], cur_spot, position["side"],
                                _mins_to_close(ts))
             held_s = (ts - entry_ts).total_seconds()
-            new_sl, new_max, reason = manage_position(
+            new_sl, new_max, reason, _scale = manage_position(
                 entry_price=position["entry"], ltp=ltp, lot_size=position["qty"],
                 stop_loss=position["stop_loss"], max_pnl=position["max_pnl"],
                 ml_prob=position["ml_prob"], target=position.get("target"),
+                side=position.get("side", "CE"),
             )
             position["stop_loss"] = new_sl
             position["max_pnl"] = new_max

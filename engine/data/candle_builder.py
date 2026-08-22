@@ -67,7 +67,7 @@ class CandleBuilder:
             return self._ltp
         # Fallback: REST call (slow, only on cold start)
         try:
-            sym = f"NSE:NIFTY 50"
+            sym = "NSE:BANKNIFTY"
             data = self.broker.kite.ltp(sym)
             price = data[sym]["last_price"]
             self._ltp = float(price)
@@ -305,5 +305,12 @@ class CandleBuilder:
 
     @staticmethod
     def nifty_token() -> int:
-        """Zerodha instrument token for NIFTY 50 index."""
-        return 256265
+        """Zerodha instrument token for the traded underlying index.
+
+        IMPORTANT: this system trades BANK NIFTY (1 lot = 30 qty). The
+        champion ML models were trained on Bank NIFTY data (44k-58k), and
+        the cost model is BankNIFTY (30-qty, Rs66/lot). It was wrongly wired
+        to NIFTY 50 (token 256265, lot 65) which fed ~24k features into
+        models trained at ~50k -> ML output 0.000 all day (2026-08-17).
+        """
+        return 260105   # NSE:BANKNIFTY index token

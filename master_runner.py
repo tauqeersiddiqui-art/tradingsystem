@@ -1095,8 +1095,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 )
                 _hb_paused = " | PAUSED" if _tn.ENGINE_PAUSED else ""
                 tg_force(
-                    f"ÃÂÃÂ°ÃÂÃÂÃÂÃÂÃÂÃÂ Engine alive ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ {ts.strftime('%H:%M')}\n"
-                    f"NIFTY {ltp_current:,.1f} | PnL ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¹{ctx.pnl:+.0f}\n"
+                    f"🟢 Engine alive — {ts.strftime('%H:%M')}\n"
+                    f"NIFTY {ltp_current:,.1f} | PnL ₹{ctx.pnl:+.0f}\n"
                     f"{_hb_pos}{_hb_paused}"
                 )
 

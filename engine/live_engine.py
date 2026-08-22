@@ -28,14 +28,22 @@ logger = logging.getLogger("live_engine")
 _MARKET_OPEN  = dtime(9, 15)
 _ORB_END      = dtime(9, 30)   # ORB window: 9:15 – 9:29 (15 candles)
 
-# Zerodha instrument token for NIFTY 50 index (used in ORB reconstruction)
-_NIFTY_INDEX_TOKEN = 256265
+# Zerodha instrument token for BANK NIFTY index (used in ORB reconstruction)
+_NIFTY_INDEX_TOKEN = 260105
 _DAY_CLASS_AT = dtime(9, 45)   # Day classifier locks after 9:44
 _MARKET_CLOSE = dtime(15, 30)
 
 # ── Session filter — no new entries during lunch chop ─────────────────
 _LUNCH_START    = dtime(11,  0)
 _LUNCH_END      = dtime(12, 30)   # was 14:00 — 12:30-14:00 window recovered
+
+# ── TIER 1: Warmup block — no entries until WARMUP_MINUTES after open ──
+# Default 90 min = 11:00 (allows ML learner to warm up, avoids early noise)
+# Controlled by Config.WARMUP_MINUTES (env: WARMUP_MINUTES)
+def _warmup_end_time(warmup_minutes: int) -> dtime:
+    """Compute warmup end time from market open + minutes."""
+    total_min = 9 * 60 + 15 + warmup_minutes
+    return dtime(total_min // 60, total_min % 60)
 
 # ── Minimum expected PnL to accept a signal (capital safeguard) ───────
 _MIN_EXPECTED_PNL = 150.0
@@ -117,6 +125,41 @@ class LiveEngine:
         # Minimum gap between the two sides' probs to claim a directional
         # edge. If |ce - pe| < margin, conviction is too low → no trade.
         self._ml_edge_margin: float = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
+
+        # ══════════════════════════════════════════════════════════════════
+        # ENTRY FIXES — Structure, Pullback, HTF, Trap
+        # ══════════════════════════════════════════════════════════════════
+
+        # A. Structure confirmation — track HH/LL for continuation
+        self._last_swing_high: float | None = None
+        self._last_swing_low: float | None = None
+        self._swing_lookback: int = 5     # bars to confirm swing
+        self._structure_confirmed: bool = False
+        self._structure_wait_bars: int = 0
+
+        # B. Pullback entry — wait for retrace after breakout
+        self._breakout_detected: bool = False
+        self._breakout_price: float | None = None
+        self._breakout_side: str | None = None   # "CE" or "PE"
+        self._breakout_ts: datetime | None = None
+        self._pullback_target: float | None = None
+        self._pullback_tolerance_pct: float = 0.35   # 35% retrace of breakout move
+        self._max_pullback_wait_bars: int = 8         # max bars to wait for pullback
+        self._pullback_wait_count: int = 0
+
+        # C. HTF trend alignment — 15m/30m SuperTrend + EMA
+        self._htf15_dir: int = 0
+        self._htf30_dir: int = 0
+        self._htf15_ema20: float | None = None
+        self._htf15_ema50: float | None = None
+        self._htf30_ema20: float | None = None
+        self._htf30_ema50: float | None = None
+        self._require_htf_align: bool = bool(getattr(_cfg, "REQUIRE_HTF_ALIGN", True)) if _cfg else True
+
+        # D. Trap filter — detect failed breakouts (immediate reversal)
+        self._trap_lookback: int = 3       # bars to confirm breakout failure
+        self._trap_threshold_pct: float = 0.5   # reversal >50% of breakout move = trap
+        self._recent_breakouts: list = []   # track recent breakout attempts
 
         # ── Per-minute dedup guards (learner + VWAP update once per minute) ──
         self._last_classify_minute: datetime | None = None
@@ -275,6 +318,60 @@ class LiveEngine:
     # DAY CLASSIFIER  (runs once at 9:45)
     # ══════════════════════════════════════════════════════════════════
 
+    def _backfill_day_classification(self, csv_path: str):
+        """
+        Late-start recovery: engine started after 09:45, so the day
+        classifier never collected its first-30-min candles (the code only
+        collects while now < 09:45). Read today's 9:15-9:44 candles from
+        the historical CSV, feed the learner + classifier, and classify now.
+        """
+        import pandas as pd
+        try:
+            df = pd.read_csv(csv_path)
+        except Exception as e:
+            logger.warning(f"[DAY CLASSIFIER] Backfill: CSV read failed: {e}")
+            return
+        date_col = next(
+            (c for c in ["date", "datetime", "timestamp", "time"]
+             if c in df.columns), None
+        )
+        if date_col is None:
+            logger.warning("[DAY CLASSIFIER] Backfill: no date column")
+            return
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        df = df.dropna(subset=[date_col])
+        df = df.sort_values(date_col)
+
+        today = datetime.now().date()
+        start = datetime.combine(today, dtime(9, 15))
+        end   = datetime.combine(today, dtime(9, 44))
+        win   = df[(df[date_col] >= start) & (df[date_col] <= end)]
+
+        if len(win) < 10:
+            logger.warning(
+                f"[DAY CLASSIFIER] Backfill: only {len(win)} candles in 9:15-9:44 window"
+            )
+            return
+
+        candles = []
+        for _, row in win.iterrows():
+            candles.append({
+                "open":   float(row.get("open",  row.get("close", 0))),
+                "high":   float(row.get("high",  row.get("close", 0))),
+                "low":    float(row.get("low",   row.get("close", 0))),
+                "close":  float(row.get("close", 0)),
+                "volume": int(row.get("volume", 0)),
+            })
+
+        # Feed learner so get_day_type() resolves to a real day type
+        self.learner.backfill_first_30m(candles)
+        # Collect for the DayClassifier model
+        self._day_candles_30m = candles
+        logger.info(
+            f"[DAY CLASSIFIER] Backfilled {len(candles)} candles from history | "
+            f"learner_day_type={self.learner.get_day_type()}"
+        )
+
     def _maybe_classify_day(self, candle: dict, ts: datetime):
         """
         Collect first-30-min candles, classify once at 9:45.
@@ -322,6 +419,14 @@ class LiveEngine:
         # Classify once at 9:45
         if not self._day_classified and now >= _DAY_CLASS_AT:
             self._day_classified = True
+            # Late-start recovery: if the engine restarted after 9:45 no
+            # candles were collected live — backfill from today's CSV so the
+            # day type is not stuck UNKNOWN (which blocks every ML entry via
+            # RANGE_REGIME_SKIP). Only scalps would trade otherwise.
+            if len(self._day_candles_30m) < 10:
+                self._backfill_day_classification(
+                    os.getenv("HIST_CSV", "data/historical/nifty_1m_full.csv")
+                )
             if self._day_clf and len(self._day_candles_30m) >= 10:
                 import pandas as pd
                 df_30 = pd.DataFrame(self._day_candles_30m)
@@ -430,14 +535,29 @@ class LiveEngine:
         vwap_val     = self._vwap.value
         price_vs_vwap = (closes[-1] - vwap_val) / closes[-1] if (closes[-1] != 0 and vwap_val > 0) else 0.0
 
-        # ── Higher-timeframe (5m) SuperTrend — anti-noise confirmation ──
-        # The 1m SuperTrend flips on noise; entering on a fresh 1m flip is
-        # what drives "trade goes negative immediately". Require the 5m trend
-        # not to OPPOSE the trade. 0 = insufficient data (gate passes).
+        # ── HTF 5m SuperTrend (existing) ──
         try:
             self._htf5_dir = self._htf_supertrend_dir(df, tf=5)
         except Exception:
             self._htf5_dir = 0
+
+        # ── FIX C: HTF 15m / 30m trend alignment ──────────────────────
+        # Compute SuperTrend direction on resampled 15m and 30m candles.
+        # Also compute EMA20 vs EMA50 crossover on those timeframes.
+        # These give true "higher-timeframe" context: trade only in the
+        # direction of the dominant trend.
+        try:
+            self._htf15_dir = self._htf_supertrend_dir(df, tf=15)
+        except Exception:
+            self._htf15_dir = 0
+        try:
+            self._htf30_dir = self._htf_supertrend_dir(df, tf=30)
+        except Exception:
+            self._htf30_dir = 0
+
+        # HTF EMA alignment (proxy via mean of resampled closes)
+        self._htf15_ema20, self._htf15_ema50 = self._htf_ema_pair(df, tf=15)
+        self._htf30_ema20, self._htf30_ema50 = self._htf_ema_pair(df, tf=30)
 
         # ── Update direction bias ─────────────────────────────────────
         # Paper trading: SuperTrend is the primary direction gate.
@@ -492,6 +612,186 @@ class LiveEngine:
         return int(st_dir[-1])
 
     # ══════════════════════════════════════════════════════════════════
+
+    def _htf_ema_pair(self, df, tf: int):
+        """
+        Return (ema20, ema50) on tf-minute resampled closes.
+        Uses simple EMA calculation on resampled data.
+        """
+        if df is None or len(df) < tf * 12:
+            return None, None
+        import numpy as np
+        c = df["close"].values.astype(float)
+        usable = (len(c) // tf) * tf
+        if usable < tf * 12:
+            return None, None
+        c = c[-usable:].reshape(-1, tf)[:, -1]
+        if len(c) < 50:
+            return None, None
+
+        def ema(series, span):
+            alpha = 2 / (span + 1)
+            val = series[0]
+            for p in series[1:]:
+                val = p * alpha + val * (1 - alpha)
+            return val
+
+        ema20 = ema(c[-min(len(c), 60):], 20)
+        ema50 = ema(c[-min(len(c), 100):], 50) if len(c) >= 50 else ema20
+        return ema20, ema50
+
+    def _htf_trend_aligned(self, direction: int) -> bool:
+        """
+        FIX C -- Check if HTF (15m & 30m) trend aligns with trade direction.
+        direction: +1 for CE (bullish), -1 for PE (bearish).
+        Returns True if both 15m AND 30m SuperTrend + EMA agree.
+        """
+        if not self._require_htf_align:
+            return True
+
+        st_ok_15 = (self._htf15_dir == 0) or (self._htf15_dir == direction)
+        st_ok_30 = (self._htf30_dir == 0) or (self._htf30_dir == direction)
+
+        ema_ok_15 = True
+        if self._htf15_ema20 is not None and self._htf15_ema50 is not None:
+            ema_ok_15 = (self._htf15_ema20 > self._htf15_ema50) if direction == 1 else \
+                        (self._htf15_ema20 < self._htf15_ema50)
+
+        ema_ok_30 = True
+        if self._htf30_ema20 is not None and self._htf30_ema50 is not None:
+            ema_ok_30 = (self._htf30_ema20 > self._htf30_ema50) if direction == 1 else \
+                        (self._htf30_ema20 < self._htf30_ema50)
+
+        return st_ok_15 and st_ok_30 and ema_ok_15 and ema_ok_30
+
+    def _update_swings_and_structure(self, high: float, low: float, close: float):
+        """
+        FIX A -- Track swing highs/lows and confirm structure (HH/HL for bullish,
+        LH/LL for bearish). Sets self._structure_confirmed when price makes
+        a clear continuation pattern.
+        """
+        if self._last_swing_high is None or high > self._last_swing_high:
+            self._last_swing_high = high
+        if self._last_swing_low is None or low < self._last_swing_low:
+            self._last_swing_low = low
+
+        if self._last_swing_high and self._last_swing_low:
+            if close > self._last_swing_high:
+                self._structure_confirmed = True
+                self._structure_wait_bars = 0
+            elif close < self._last_swing_low:
+                self._structure_confirmed = True
+                self._structure_wait_bars = 0
+            else:
+                # Price inside range — auto-confirm after 5 bars (range IS structure)
+                self._structure_wait_bars = getattr(self, '_structure_wait_bars', 0) + 1
+                if self._structure_wait_bars >= 5:
+                    self._structure_confirmed = True
+                else:
+                    self._structure_confirmed = False
+        else:
+            self._structure_confirmed = False
+
+    def _check_pullback_entry(self, df_window, side: str, price: float) -> bool:
+        """
+        FIX B -- Pullback entry logic.
+        - When breakout detected (price breaks ORB or key level), don't enter immediately.
+        - Wait for retrace of 30-50% of breakout move, then enter on resumption.
+        Returns True if pullback entry condition met (ready to enter now).
+        """
+        if not self._breakout_detected:
+            if side == "CE" and self.orb_done and self.orb_high and price > self.orb_high:
+                self._breakout_detected = True
+                self._breakout_price = price
+                self._breakout_side = "CE"
+                self._breakout_ts = datetime.now()
+                self._pullback_wait_count = 0
+                return False
+            elif side == "PE" and self.orb_done and self.orb_low and price < self.orb_low:
+                self._breakout_detected = True
+                self._breakout_price = price
+                self._breakout_side = "PE"
+                self._breakout_ts = datetime.now()
+                self._pullback_wait_count = 0
+                return False
+            return True
+
+        if self._breakout_side != side:
+            self._breakout_detected = False
+            self._breakout_price = None
+            self._breakout_side = None
+            return True
+
+        self._pullback_wait_count += 1
+
+        if side == "CE" and self._breakout_price:
+            breakout_move = price - self.orb_high if self.orb_high else 0
+            if breakout_move > 0:
+                self._pullback_target = self._breakout_price - (breakout_move * self._pullback_tolerance_pct)
+                if price <= self._pullback_target:
+                    self._pullback_target = None
+                    return True
+        elif side == "PE" and self._breakout_price:
+            breakout_move = self.orb_low - price if self.orb_low else 0
+            if breakout_move > 0:
+                self._pullback_target = self._breakout_price + (breakout_move * self._pullback_tolerance_pct)
+                if price >= self._pullback_target:
+                    self._pullback_target = None
+                    return True
+
+        if self._pullback_wait_count >= self._max_pullback_wait_bars:
+            self._breakout_detected = False
+            self._breakout_price = None
+            self._breakout_side = None
+            self._pullback_target = None
+            return True
+
+        return False
+
+    def _check_trap_filter(self, df_window, side: str, price: float) -> bool:
+        """
+        FIX D -- Trap filter: detect if recent breakout failed immediately.
+        If price broke ORB/level but reversed >50% of move within 3 bars,
+        mark as trap and block new entries in same direction for a few bars.
+        Returns True if OK to enter (no trap detected).
+        """
+        if not self.orb_done:
+            return True
+
+        current_bar = {
+            "side": side,
+            "price": price,
+            "orb_high": self.orb_high,
+            "orb_low": self.orb_low,
+        }
+        self._recent_breakouts.append(current_bar)
+        if len(self._recent_breakouts) > 10:
+            self._recent_breakouts.pop(0)
+
+        if len(self._recent_breakouts) < 3:
+            return True
+
+        recent = self._recent_breakouts[-3:]
+        for i, bar in enumerate(recent[:-1]):
+            next_bar = recent[i + 1]
+            if bar["side"] == "CE" and bar["orb_high"] and bar["price"] > bar["orb_high"]:
+                breakout_move = bar["price"] - bar["orb_high"]
+                if breakout_move > 0:
+                    reversal = bar["price"] - next_bar["price"]
+                    if reversal > breakout_move * self._trap_threshold_pct:
+                        logger.warning(f"[TRAP FILTER] CE breakout failed: move={breakout_move:.1f} reversal={reversal:.1f}")
+                        return False
+            elif bar["side"] == "PE" and bar["orb_low"] and bar["price"] < bar["orb_low"]:
+                breakout_move = bar["orb_low"] - bar["price"]
+                if breakout_move > 0:
+                    reversal = next_bar["price"] - bar["price"]
+                    if reversal > breakout_move * self._trap_threshold_pct:
+                        logger.warning(f"[TRAP FILTER] PE breakout failed: move={breakout_move:.1f} reversal={reversal:.1f}")
+                        return False
+
+        return True
+
+
     # ENTRY SIGNAL DETECTION
     # ══════════════════════════════════════════════════════════════════
 
@@ -538,8 +838,27 @@ class LiveEngine:
         if self._lunch_enabled and _LUNCH_START <= now < _LUNCH_END:
             self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
             return None
+
+        # ── TIER 1: Warmup block — no entries until WARMUP_MINUTES after open ──
+        # Allows ML learner to warm up; avoids early-session noise trades.
+        _cfg = getattr(self.ctx, "config", None)
+        _warmup_min = int(getattr(_cfg, "WARMUP_MINUTES", 90)) if _cfg else 90
+        _warmup_end = _warmup_end_time(_warmup_min)
+        if now < _warmup_end:
+            self._last_block_reason = f"WARMUP_BLOCK (until {_warmup_end.strftime('%H:%M')})"
+            return None
+
         if not features:
             self._last_block_reason = "INSUFFICIENT_DATA (<26 candles)"
+            return None
+
+        # ── TIER 1: Regime filter — skip RANGE days (31% WR, negative expectancy) ──
+        _regime_str = str(self.learner.get_day_type()).upper()
+        _is_range = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
+        _skip_range = bool(getattr(_cfg, "SKIP_RANGE_REGIME", True)) if _cfg else True
+        if _skip_range and _is_range:
+            self._count_block("RANGE_REGIME_SKIP")
+            self._last_block_reason = f"RANGE_REGIME_SKIP (day_type={_regime_str})"
             return None
 
         # ── Re-entry cooldown ────────────────────────────────────────────
@@ -585,6 +904,22 @@ class LiveEngine:
         )
 
         price      = df_window["close"].iloc[-1]
+        
+        # ── FIX A: Update swing structure (HH/LL) ──────────────────────
+        self._update_swings_and_structure(
+            df_window["high"].iloc[-1], df_window["low"].iloc[-1], price
+        )
+
+        # ── FIX D: Trap filter — block if recent breakout failed ─────────
+        if not self._check_trap_filter(df_window, "CE", price):
+            self._count_block("TRAP_FILTER")
+            self._last_block_reason = "TRAP_FILTER (CE breakout failed)"
+            return None
+        if not self._check_trap_filter(df_window, "PE", price):
+            self._count_block("TRAP_FILTER")
+            self._last_block_reason = "TRAP_FILTER (PE breakout failed)"
+            return None
+
         threshold  = max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR)
         # CE uses a higher independent floor — weaker CE signals skipped
         ce_floor   = max(threshold, _CE_ML_FLOOR)
@@ -711,17 +1046,33 @@ class LiveEngine:
 
         # PE (only if CE not triggered)
         if signal is None:
-            pe_thr = threshold - 0.03 if (pe_breakout and orb_ok) else threshold
-            if pe_adj >= pe_thr:
-                blocked, reason_block = self.learner.is_side_blocked("PE")
-                if blocked:
-                    self._count_block("ML_BLOCKED")
-                    self._last_block_reason = f"PE_BLOCKED ({reason_block})"
-                else:
-                    reason = "ORB+ML_PE" if pe_breakout else "ML_PE"
-                    self._last_block_reason = f"SIGNAL_FIRE ({reason})"
-                    signal = {"side": "PE", "ml_prob": pe_adj,
-                              "features": features, "reason": reason}
+            # ── FIX A: Structure confirmation (LH/LL) ──────────────────────
+            if not self._structure_confirmed:
+                self._count_block("NO_STRUCTURE")
+                self._last_block_reason = "NO_STRUCTURE (waiting for LH/LL confirmation)"
+                pe_adj = 0.0
+            # ── FIX C: HTF 15m/30m trend alignment ────────────────────────
+            elif not self._htf_trend_aligned(-1):  # -1 for PE/bearish
+                self._count_block("HTF_MISALIGN")
+                self._last_block_reason = "HTF_MISALIGN (15m/30m trend not bearish)"
+                pe_adj = 0.0
+            # ── FIX B: Pullback entry — wait for retrace ──────────────────
+            elif not self._check_pullback_entry(df_window, "PE", price):
+                self._count_block("PULLBACK_WAIT")
+                self._last_block_reason = "PULLBACK_WAIT (waiting for retrace)"
+                pe_adj = 0.0
+            else:
+                pe_thr = threshold - 0.03 if (pe_breakout and orb_ok) else threshold
+                if pe_adj >= pe_thr:
+                    blocked, reason_block = self.learner.is_side_blocked("PE")
+                    if blocked:
+                        self._count_block("ML_BLOCKED")
+                        self._last_block_reason = f"PE_BLOCKED ({reason_block})"
+                    else:
+                        reason = "ORB+ML_PE" if pe_breakout else "ML_PE"
+                        self._last_block_reason = f"SIGNAL_FIRE ({reason})"
+                        signal = {"side": "PE", "ml_prob": pe_adj,
+                                  "features": features, "reason": reason}
 
         if signal is None:
             # F3: count final block reason (signal evaluated but nothing fired)
@@ -751,11 +1102,19 @@ class LiveEngine:
             "TREND"     if "TREND"    in day_type else
             "RANGE"
         )
-        stop_loss, target, stop_pct = compute_entry_stops(price, atr_val, regime)
+
+        # ── TIER 1: Wider initial stop using INITIAL_SL_MULT (default 1.5x) ──
+        _cfg = getattr(self.ctx, "config", None)
+        _sl_mult = float(getattr(_cfg, "INITIAL_SL_MULT", 1.5)) if _cfg else 1.5
+
+        # Temporarily scale ATR for stop calculation to apply INITIAL_SL_MULT
+        scaled_atr = atr_val * _sl_mult
+        side = signal.get("side", "CE")
+        stop_loss, target, stop_pct = compute_entry_stops(price, scaled_atr, regime, side=side)
         signal.update(stop_loss=stop_loss, target=target,
                       stop_pct=stop_pct, regime=regime)
 
-        lot_size     = getattr(getattr(self.ctx, "config", None), "LOT_SIZE", 65)
+        lot_size     = self.ctx.config.LOT_SIZE
         exp_win      = (target - price) * lot_size
         exp_loss     = (price - stop_loss) * lot_size
         expected_pnl = signal["ml_prob"] * exp_win - (1 - signal["ml_prob"]) * exp_loss
@@ -767,10 +1126,20 @@ class LiveEngine:
             self._last_block_reason = f"PNL_GUARD (exp=Rs{expected_pnl:.0f})"
             return None
 
+        # ── TIER 1: Entry slippage guard — skip if bid/ask spread > MAX_ENTRY_SLIP_PTS ──
+        _max_slip = float(getattr(_cfg, "MAX_ENTRY_SLIP_PTS", 1.0)) if _cfg else 1.0
+        _bid, _ask = self.ctx.broker.get_bid_ask(signal.get("symbol", ""))
+        if _bid is not None and _ask is not None:
+            _spread = _ask - _bid
+            if _spread > _max_slip:
+                self._count_block("ENTRY_SLIPPAGE")
+                self._last_block_reason = f"ENTRY_SLIPPAGE (spread={_spread:.2f} > {_max_slip})"
+                return None
+
         logger.info(
             f"[ENTRY SIGNAL] {signal['side']} | reason={signal['reason']} | "
             f"prob={signal['ml_prob']:.3f} | SL={stop_loss:.2f} | TP={target:.2f} | "
-            f"ExpPnL=Rs{expected_pnl:.0f}"
+            f"ExpPnL=Rs{expected_pnl:.0f} | SL_mult={_sl_mult}x"
         )
         return signal
 
@@ -787,19 +1156,32 @@ class LiveEngine:
           4. CONFIRM — 5m SuperTrend must AGREE (not just 'not oppose'), and
                        VWAP side must agree. This is the AI+ML+structure
                        confirmation the trade direction is real.
-          5. learner side-block + finalize (risk/PnL guard).
+          5. FIX A: Structure confirmation (HH/HL for CE, LH/LL for PE)
+          6. FIX C: HTF 15m/30m trend alignment
+          7. FIX B: Pullback entry — wait for retrace after breakout
+          8. FIX D: Trap filter — block if recent breakout failed
+          9. learner side-block + finalize (risk/PnL guard).
         """
         price  = df_window["close"].iloc[-1]
         ce_adj = self._last_ce_adj
         pe_adj = self._last_pe_adj
         htf5   = self._htf5_dir
         pvwap  = features.get("price_vs_vwap", 0.0)
+        _cfg   = getattr(self.ctx, "config", None)
 
-        # Per-side thresholds: max of the model's calibrated threshold and the
-        # learner's adaptive threshold (rises after losses).
+        # ── FIX A: Update swing structure (HH/LL) ──────────────────────
+        self._update_swings_and_structure(
+            df_window["high"].iloc[-1], df_window["low"].iloc[-1], price
+        )
+
+        # Per-side thresholds: use the learner's adaptive threshold (base from
+        # CHAMPION_THRESHOLD=0.35 + day-type adjustment, clamped 0.45-0.56).
+        # The predictor's calibrated threshold FILES (0.79) are stale for the
+        # de-saturated models — live probs top out ~0.46, so the file threshold
+        # made ML unfirable (ML_BELOW_THR forever). Learner adaptive only.
         learn_thr = self.learner.get_ml_threshold()
-        ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr)
-        pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr)
+        ce_thr = learn_thr
+        pe_thr = learn_thr
 
         # 1. PREDICT direction
         side   = "CE" if ce_adj >= pe_adj else "PE"
@@ -827,28 +1209,59 @@ class LiveEngine:
             return None
 
         # 4. CONFIRM — 5m trend must AGREE (htf5==0 = insufficient data → allow)
-        if side == "CE" and htf5 == -1:
-            self._count_block("HTF5_OPPOSES")
-            self._last_block_reason = f"CE_HTF5_OPPOSES (5m=DOWN, prob={prob:.2f})"
-            return None
-        if side == "PE" and htf5 == 1:
-            self._count_block("HTF5_OPPOSES")
-            self._last_block_reason = f"PE_HTF5_OPPOSES (5m=UP, prob={prob:.2f})"
-            return None
+        # Conditional on REQUIRE_5M_TREND config (default True)
+        _require_5m = bool(getattr(_cfg, "REQUIRE_5M_TREND", True)) if _cfg else True
+        if _require_5m:
+            if side == "CE" and htf5 == -1:
+                self._count_block("HTF5_OPPOSES")
+                self._last_block_reason = f"CE_HTF5_OPPOSES (5m=DOWN, prob={prob:.2f})"
+                return None
+            if side == "PE" and htf5 == 1:
+                self._count_block("HTF5_OPPOSES")
+                self._last_block_reason = f"PE_HTF5_OPPOSES (5m=UP, prob={prob:.2f})"
+                return None
 
         # 4b. CONFIRM — VWAP side must agree (within tolerance). CE above VWAP,
         # PE below. Tolerance ≈ 0.15% so a marginal cross isn't over-blocked.
+        # Conditional on REQUIRE_VWAP_ALIGN config (default True)
+        _require_vwap = bool(getattr(_cfg, "REQUIRE_VWAP_ALIGN", True)) if _cfg else True
         _VWAP_TOL = 0.0015
-        if side == "CE" and pvwap < -_VWAP_TOL:
-            self._count_block("VWAP_FAIL")
-            self._last_block_reason = f"CE_VWAP_FAIL (pvwap={pvwap:.4f} below VWAP)"
-            return None
-        if side == "PE" and pvwap > _VWAP_TOL:
-            self._count_block("VWAP_FAIL")
-            self._last_block_reason = f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)"
+        if _require_vwap:
+            if side == "CE" and pvwap < -_VWAP_TOL:
+                self._count_block("VWAP_FAIL")
+                self._last_block_reason = f"CE_VWAP_FAIL (pvwap={pvwap:.4f} below VWAP)"
+                return None
+            if side == "PE" and pvwap > _VWAP_TOL:
+                self._count_block("VWAP_FAIL")
+                self._last_block_reason = f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)"
+                return None
+
+        # 5. FIX A: Structure confirmation (HH/HL for CE, LH/LL for PE)
+        if not self._structure_confirmed:
+            self._count_block("NO_STRUCTURE")
+            self._last_block_reason = f"NO_STRUCTURE ({side} waiting for HH/LL confirmation)"
             return None
 
-        # 5. learner side-block (consecutive-loss / losing-side lock)
+        # 6. FIX C: HTF 15m/30m trend alignment
+        direction = 1 if side == "CE" else -1
+        if not self._htf_trend_aligned(direction):
+            self._count_block("HTF_MISALIGN")
+            self._last_block_reason = f"HTF_MISALIGN (15m/30m trend opposes {side})"
+            return None
+
+        # 7. FIX B: Pullback entry — wait for retrace after breakout
+        if not self._check_pullback_entry(df_window, side, price):
+            self._count_block("PULLBACK_WAIT")
+            self._last_block_reason = f"PULLBACK_WAIT ({side} waiting for retrace)"
+            return None
+
+        # 8. FIX D: Trap filter — block if recent breakout failed
+        if not self._check_trap_filter(df_window, side, price):
+            self._count_block("TRAP_FILTER")
+            self._last_block_reason = f"TRAP_FILTER ({side} breakout failed)"
+            return None
+
+        # 9. learner side-block (consecutive-loss / losing-side lock)
         blocked, reason_block = self.learner.is_side_blocked(side)
         if blocked:
             self._count_block("ML_BLOCKED")
@@ -979,14 +1392,15 @@ class LiveEngine:
         entry     = position["entry"]
         # SINGLE position-size source of truth: use the ACTUAL filled qty so
         # max_pnl/MFE is consistent with realized PnL and MAE (which use qty).
-        # Falls back to lot_size, then 1, for legacy/partial dicts.
-        size      = position.get("qty", position.get("lot_size", 1))
+        size      = position["qty"]
         stop_loss = position.get("stop_loss", entry * 0.90)
         max_pnl   = position.get("max_pnl", 0.0)
         ml_prob   = position.get("ml_prob", 0.5)
+        side      = position.get("side", "CE")
 
         # ── profit_manager handles trailing + lock system ─────────────
-        new_sl, new_max_pnl, pm_reason = manage_position(
+        # Pass config for Tier 2 params (TRAIL_ACTIVATION_PTS, etc.)
+        new_sl, new_max_pnl, pm_reason, scale_out_info = manage_position(
             entry_price=entry,
             ltp=ltp,
             lot_size=size,
@@ -994,11 +1408,21 @@ class LiveEngine:
             max_pnl=max_pnl,
             ml_prob=ml_prob,
             target=position.get("target"),
+            config=getattr(self.ctx, "config", None),
+            side=side,
         )
 
         # Update position dict in-place so caller persists new SL
         position["stop_loss"] = new_sl
         position["max_pnl"]   = new_max_pnl
+
+        # Handle scale-out signal
+        if scale_out_info:
+            position["_scale_out"] = scale_out_info
+            logger.info(
+                f"[SCALE OUT] Triggered at +{scale_out_info['trigger_pts']:.1f}pt "
+                f"| scaling out {scale_out_info['pct']*100:.0f}% of position"
+            )
 
         # Track highest ladder rung for diagnostics journal
         from engine.execution.profit_manager import ladder_locked_rs

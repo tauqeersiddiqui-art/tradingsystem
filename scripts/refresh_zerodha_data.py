@@ -28,14 +28,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CSV_PATH   = "data/historical/nifty_1m_full.csv"
-NIFTY_TOKEN = 256265            # NSE:NIFTY 50 index
+NIFTY_TOKEN = 260105            # NSE:BANKNIFTY index
 YEARS_BACK  = float(os.getenv("YEARS_BACK", "3"))
 CHUNK_DAYS  = 60                # Zerodha minute-data max window per request
 
 
 def main():
     print("=" * 64)
-    print("  ZERODHA HISTORICAL DATA REFRESH (NIFTY 1m)")
+    print("  ZERODHA HISTORICAL DATA REFRESH (BANK NIFTY 1m)")
     print("=" * 64)
 
     from pathlib import Path
@@ -120,7 +120,7 @@ def main():
     print(f"[SAVED] {CSV_PATH}  {len(new):,} rows  "
           f"{new['date'].min().date()} -> {new['date'].max().date()}")
     print("  Next: rebuild dataset + retrain + REVALIDATE on real data:")
-    print("    python ml/dataset_builder_v3.py")
+    print("    python ml/dataset_builder.py")
     print("    python backtest/walkforward_oos.py")
     print("=" * 64)
 

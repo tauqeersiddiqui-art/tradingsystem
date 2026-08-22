@@ -2,11 +2,12 @@
 Unit tests for master_runner.should_confirm_entry — the refined
 entry-confirmation gates:
 
-  A. Structure confirmation (HH/LL) over 40s-past vs 20s-recent windows
-  B. Dynamic pullback band (10-50% of range, scales with volatility)
-  B2. Momentum (last 5 ticks must push the direction)
-  C. HTF rule (5m SuperTrend agree; neutral blocks)
-  D. Trap filters (ORB snap-back, deep give-back, micro reversal)
+  A. Structure confirmation over the past/recent window split (a full
+     give-back of the past window = CONFIRM_STRUCT_BREAK)
+  B. Anti-chasing (price pinned at the extreme = CONFIRM_CHASING_SPIKE)
+  B2. Momentum (last tick must still push the direction)
+  C. HTF rule (5m SuperTrend: opposing blocks; neutral (0) is ALLOWED)
+  D. Trap filters (ORB snap-back, >85% give-back)
 
 Each test feeds a synthetic 1s NIFTY-spot tick history and asserts the
 gate blocks or confirms as designed.
@@ -79,17 +80,21 @@ def test_pe_confirm_on_lower_low():
     assert ok is True and reason == "CONFIRMED"
 
 
-def test_ce_block_no_higher_high():
-    """Recent high below past high = no continuation."""
+def test_ce_block_stalled_move_give_back():
+    """Stalled move that ends at the bottom of its own recent range: the old
+    NO_HH gate no longer exists — under the current relaxed gate order this
+    shape is rejected as a >85% give-back (CONFIRM_SPIKE_TRAP)."""
     recent = [100.20, 100.25, 100.20, 100.25, 100.20] * 4
     ok, reason = _confirm("CE", _CE_PAST + recent)
-    assert ok is False and reason == "CONFIRM_NO_HH"
+    assert ok is False and reason == "CONFIRM_SPIKE_TRAP"
 
 
-def test_pe_block_no_lower_low():
+def test_pe_block_pinned_at_extreme():
+    """Price pinned at the low of the recent window (pullback = 0%): the old
+    NO_LL gate no longer exists — the anti-chasing gate fires first."""
     recent = [99.75, 99.70, 99.75, 99.70] * 5
     ok, reason = _confirm("PE", _PE_PAST + recent, htf5=-1)
-    assert ok is False and reason == "CONFIRM_NO_LL"
+    assert ok is False and reason == "CONFIRM_CHASING_SPIKE"
 
 
 def test_ce_block_structure_break():
@@ -105,45 +110,46 @@ def test_ce_block_structure_break():
 # B. DYNAMIC PULLBACK BAND (10-50% of range)
 # ══════════════════════════════════════════════════════════════════════
 def test_ce_block_chasing_at_top():
-    """Price pinned at the extreme = pullback 0% = bad pullback."""
+    """Price pinned at the extreme = pullback 0% = chasing the spike."""
     recent = [100.5, 100.6, 100.7, 100.8, 100.9, 101.0] * 3 + [101.0] * 2
     ok, reason = _confirm("CE", _CE_PAST + recent)
-    assert ok is False and reason == "CONFIRM_BAD_PULLBACK"
+    assert ok is False and reason == "CONFIRM_CHASING_SPIKE"
 
 
 def test_pe_block_chasing_at_bottom():
     recent = [99.5, 99.4, 99.3, 99.2, 99.1, 99.0] * 3 + [99.0] * 2
     ok, reason = _confirm("PE", _PE_PAST + recent, htf5=-1)
-    assert ok is False and reason == "CONFIRM_BAD_PULLBACK"
+    assert ok is False and reason == "CONFIRM_CHASING_SPIKE"
 
 
 def test_ce_block_deep_pullback():
-    """Gave back >50% of the range = pullback failed, not a retrace."""
-    # NOTE: past window = prelude[20:40] -> l1 = 100.20, so the collapse
-    # must stay above 100.20 to test BAD_PULLBACK and not STRUCT_BREAK.
+    """Gave back the whole move: the current relaxed gate set has no separate
+    deep-pullback reason — collapsing below the past-window low is rejected
+    as CONFIRM_STRUCT_BREAK (gate A fires before the pullback gate)."""
     recent = [100.50, 100.60, 100.70, 100.80, 100.90, 101.00, 100.85, 100.70,
               100.55, 100.45, 100.40, 100.38, 100.36, 100.34, 100.33, 100.32,
               100.31, 100.31, 100.30, 100.30]
     ok, reason = _confirm("CE", _CE_PAST + recent)
-    assert ok is False and reason == "CONFIRM_BAD_PULLBACK"
+    assert ok is False and reason == "CONFIRM_STRUCT_BREAK"
 
 
 # ══════════════════════════════════════════════════════════════════════
 # B2. MOMENTUM CONFIRMATION (last 5 ticks)
 # ══════════════════════════════════════════════════════════════════════
 def test_ce_block_no_momentum():
-    """Valid HH + pullback but last ticks are choppy = no momentum."""
+    """Valid structure + pullback but the final tick stops pushing: the
+    current soft gate compares the last tick against the tick 3 back."""
     recent = [100.50, 100.60, 100.70, 100.80, 100.90, 101.00, 100.98, 100.95,
               100.92, 100.90, 100.88, 100.86, 100.88, 100.90, 100.92, 100.94,
-              100.90, 100.88, 100.90, 100.90]
+              100.96, 100.95, 100.93, 100.92]
     ok, reason = _confirm("CE", _CE_PAST + recent)
     assert ok is False and reason == "CONFIRM_NO_MOMENTUM"
 
 
 def test_pe_block_no_momentum():
     recent = [99.50, 99.40, 99.30, 99.20, 99.10, 99.00, 99.02, 99.05,
-              99.08, 99.10, 99.12, 99.14, 99.10, 99.12, 99.14, 99.06,
-              99.10, 99.12, 99.10, 99.10]
+              99.08, 99.10, 99.12, 99.14, 99.12, 99.10, 99.08, 99.06,
+              99.04, 99.05, 99.07, 99.08]
     ok, reason = _confirm("PE", _PE_PAST + recent, htf5=-1)
     assert ok is False and reason == "CONFIRM_NO_MOMENTUM"
 
@@ -161,10 +167,12 @@ def test_pe_block_htf_opposes():
     assert ok is False and reason == "CONFIRM_HTF_OPPOSES"
 
 
-def test_htf_neutral_blocks():
-    """htf5 == 0 = no 5m trend confirmation = block (no trade on no trend)."""
+def test_htf_neutral_allowed():
+    """CURRENT intended behavior: htf5 == 0 (no 5m trend) does NOT block —
+    only an OPPOSING HTF vetoes entry (gate C rejects htf5 == -1 for CE /
+    +1 for PE only). NOTE: this is a behavior decision worth revisiting."""
     ok, reason = _confirm("CE", _ce_pullback_confirm(), htf5=0)
-    assert ok is False and reason == "CONFIRM_HTF_NEUTRAL"
+    assert ok is True and reason == "CONFIRMED"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -202,7 +210,8 @@ def test_no_history_blocks():
 
 
 def test_short_history_blocks():
-    ok, reason = _confirm("CE", [100.0] * 10)
+    # Gate is len(prices) < 10, so feed 9 ticks to exercise it.
+    ok, reason = _confirm("CE", [100.0] * 9)
     assert ok is False and reason == "CONFIRM_NO_HISTORY"
 
 
@@ -227,6 +236,12 @@ class _ScalpCfg:
     SCALP_EXHAUST_TAIL_FRAC = 0.65
     SCALP_NO_LIFE_SECONDS = 35
     SCALP_BE_PTS = 2.0
+    # Cost-model inputs: ScalpEngine.__init__ computes
+    # round_trip_cost(LOT_SIZE, config) for the EQ NOT_PROFITABLE rule
+    # (cost_model.lot_qty reads config.LOT_SIZE directly). Production
+    # defaults from engine.config.Config.
+    LOT_SIZE = 30          # BANKNIFTY qty per lot
+    COST_PER_LOT = 66.0    # Rs round-trip per lot
 
 
 def _scalp_hist(prices):
@@ -234,10 +249,17 @@ def _scalp_hist(prices):
     return deque((t0 + timedelta(seconds=i), float(p)) for i, p in enumerate(prices))
 
 
-# CE series: 15.2pt move, HH structure, cur retraced 1.3pt from h2=116.5
-_CE_VALID = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0,
-             110.0, 111.0, 112.0, 113.0, 114.0, 115.0, 116.5, 116.2, 116.0, 115.4,
-             115.2]
+# CE acceptance series must also survive the rejection-first ENTRY QUALITY
+# gate (engine.execution.filters.compute_entry_quality) that check_entry now
+# runs last: realistic ~25000 base keeps move_pct under EQ_MOVE_PCT_MAX and
+# the ~12pt chop per synthetic bar keeps the NOT_PROFITABLE cost check happy.
+# Net +22pt move with HH structure; ltp 25022.0 = 27.8% pullback off h2.
+_CE_VALID = [25000.0, 25008.0, 25012.0, 25003.0,
+             25003.0, 25011.0, 25015.0, 25006.0,
+             25006.0, 25014.0, 25018.0, 25009.0,
+             25009.0, 25017.0, 25021.0, 25012.0,
+             25012.0, 25020.0, 25024.0, 25015.0,
+             25015.0, 25023.0, 25027.0, 25024.0]
 
 
 def test_normal_scalp_htf_agreement_required_by_default():
@@ -245,43 +267,45 @@ def test_normal_scalp_htf_agreement_required_by_default():
     cfg = _ScalpCfg()
     cfg.SCALP_REQUIRE_HTF_AGREE = True
     e = ScalpEngine(cfg)
-    assert e.check_entry(115.2, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=False) is not None
-    assert e.check_entry(115.2, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=0, safe_mode=False) is None
-    assert e.check_entry(115.2, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=-1, safe_mode=False) is None
 
 
 def test_safe_scalp_htf_agreement_required():
     """SAFE_SCALP: HTF must AGREE (+1 for CE); neutral (0) and opposing (-1) block."""
     e = ScalpEngine(_ScalpCfg())
-    assert e.check_entry(115.2, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=True) is not None
-    assert e.check_entry(115.2, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=0, safe_mode=True) is None
-    assert e.check_entry(115.2, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=-1, safe_mode=True) is None
 
 
 def test_normal_scalp_htf_neutral_allowed():
-    """Normal scalp: HTF neutral (0) is allowed — only opposing blocks."""
+    """Normal scalp with SCALP_REQUIRE_HTF_AGREE=0: HTF neutral (0) is allowed
+    — only opposing blocks."""
     e = ScalpEngine(_ScalpCfg())
-    assert e.check_entry(115.2, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=0, safe_mode=False) is not None
 
 
 def test_adaptive_sl_by_conviction():
-    """SL widens with movement conviction: strict on weak/no-support, wide on strong+aligned."""
+    """SL widens with movement conviction: strict on weak/no-support, wide on
+    strong+aligned. Returns (pts, tier) since the ATR-adaptive upgrade."""
     e = ScalpEngine(_ScalpCfg())
     # Weak move, HTF opposes, no VWAP, ML silent -> STRICT 3pt
-    assert e.adaptive_sl_pts("CE", 12.0, htf5=-1, vwap_confirms=False, ml_active=False) == 3.0
+    assert e.adaptive_sl_pts("CE", 12.0, htf5=-1, vwap_confirms=False, ml_active=False) == (3.0, "STRICT")
     # Strong move + ML + VWAP -> MED 5pt
-    assert e.adaptive_sl_pts("CE", 25.0, htf5=0, vwap_confirms=True, ml_active=True) == 5.0
+    assert e.adaptive_sl_pts("CE", 25.0, htf5=0, vwap_confirms=True, ml_active=True) == (5.0, "MED")
     # Strong move + HTF agrees + VWAP + ML -> WIDE 8pt
-    assert e.adaptive_sl_pts("PE", -35.0, htf5=-1, vwap_confirms=True, ml_active=True) == 8.0
+    assert e.adaptive_sl_pts("PE", -35.0, htf5=-1, vwap_confirms=True, ml_active=True) == (8.0, "WIDE")
     # HTF agrees but weak move -> MED
-    assert e.adaptive_sl_pts("CE", 15.0, htf5=1, vwap_confirms=True, ml_active=True) == 5.0
+    assert e.adaptive_sl_pts("CE", 15.0, htf5=1, vwap_confirms=True, ml_active=True) == (5.0, "MED")
 
 
 def test_check_exit_honors_position_stop():
@@ -297,22 +321,29 @@ def test_check_exit_honors_position_stop():
 
 
 def test_safe_scalp_higher_momentum_bar():
-    """SAFE_SCALP raises the momentum bar 25% (12pt -> 14pt)."""
+    """SAFE_SCALP raises the momentum bar 25% (12pt -> 15pt)."""
     e = ScalpEngine(_ScalpCfg())
-    _big = [100.0, 101.2, 102.4, 103.6, 104.8, 106.0, 107.2, 108.4, 109.6, 110.8,
-            112.0, 113.2, 114.4, 115.6, 116.8, 118.0, 119.2, 118.8, 118.4, 118.0,
-            117.6]  # move 17.6pt
-    # 12.2pt move with 45% pullback: fires in normal mode (>=12, band 10-50%)
-    # but blocked in safe mode (move<14 AND 45% > 40% tight band)
-    _small = [102.0, 103.4, 104.8, 106.2, 107.6, 109.0, 110.4, 111.8, 113.2, 114.6,
-              112.0, 113.0, 114.0, 115.0, 116.0, 115.6, 115.2, 114.8, 114.6, 114.4,
-              114.2]
-    assert e.check_entry(114.2, _scalp_hist(_small), datetime(2026, 1, 1, 10, 0),
+    # Net +13.5pt move with HH structure: fires in normal mode (>=12) but is
+    # blocked in safe mode (13.5 < 15 raised bar).
+    _small = [25000.0, 25008.0, 25012.0, 25001.5,
+              25001.5, 25009.5, 25013.5, 25003.0,
+              25003.0, 25011.0, 25015.0, 25004.5,
+              25004.5, 25012.5, 25016.5, 25006.0,
+              25006.0, 25014.0, 25018.0, 25007.5,
+              25007.5, 25015.5, 25019.5, 25013.5]
+    # Net +20pt move passes the safe bar (>=15).
+    _big = [25000.0, 25008.0, 25012.0, 25002.9,
+            25002.9, 25010.9, 25014.9, 25005.8,
+            25005.8, 25013.8, 25017.8, 25008.7,
+            25008.7, 25016.7, 25020.7, 25011.6,
+            25011.6, 25019.6, 25023.6, 25014.5,
+            25010.0, 25025.0, 25008.0, 25017.6]
+    assert e.check_entry(25013.5, _scalp_hist(_small), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=False) is not None
-    assert e.check_entry(114.2, _scalp_hist(_small), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25013.5, _scalp_hist(_small), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=True) is None
-    # 17.6pt move passes the safe bar
-    assert e.check_entry(117.6, _scalp_hist(_big), datetime(2026, 1, 1, 10, 0),
+    # 20pt move passes the safe bar
+    assert e.check_entry(25020.0, _scalp_hist(_big), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=True) is not None
 
 
@@ -322,23 +353,23 @@ def test_safe_scalp_higher_momentum_bar():
 
 
 def test_exhaustion_blocks_vertical_spike_tail():
-    """A move concentrated in the last quarter of the window (fresh vertical
-    spike, e.g. 11:50 +33pt one-minute candle on Aug-18) must be skipped."""
+    """A move concentrated in the last few seconds of the window (fresh
+    vertical spike, e.g. 11:50 +33pt one-minute candle on Aug-18) must be
+    skipped: the tail carries >65% of the total move."""
     e = ScalpEngine(_ScalpCfg())
-    # 14s flat, then a +24pt explosion in the last 4s -> tail carries it all
-    spike = ([100.0] * 14 + [104.0, 110.0, 118.0, 124.0])
-    assert e.check_entry(124.0, _scalp_hist(spike), datetime(2026, 1, 1, 10, 0),
+    # 15s flat, then a +24pt explosion in 3s; the small retrace keeps the
+    # pullback band satisfied so the EXHAUSTION gate is the one that fires.
+    spike = [25000.0] * 15 + [25012.0, 25022.0, 25024.0]
+    assert e.check_entry(25020.0, _scalp_hist(spike), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=False) is None
 
 
 def test_exhaustion_allows_sustained_move():
     """A move that develops across the whole window (real trend, e.g. the
-    10:51 -28.5pt winner that kept going) still qualifies."""
+    10:51 -28.5pt winner that kept going) still qualifies: the tail carries
+    only a small share of the total move."""
     e = ScalpEngine(_ScalpCfg())
-    # steady climb 100 -> 124 spread over 17s, then a small 3pt pullback
-    # (no single-burst tail: the move developed across the whole window)
-    sustained = [100.0 + i * (24.0 / 17) for i in range(17)] + [121.0]
-    assert e.check_entry(121.0, _scalp_hist(sustained), datetime(2026, 1, 1, 10, 0),
+    assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=False) is not None
 
 
@@ -346,8 +377,8 @@ def test_sparse_window_blocks_confirmation():
     """With fewer than SCALP_CONFIRM_MIN_SAMPLES ticks, entry is blocked —
     confirmation is mandatory (closes the old '<6 samples skips all checks' hole)."""
     e = ScalpEngine(_ScalpCfg())
-    sparse = [100.0, 104.0, 110.0, 118.0]  # only 4 ticks, big move
-    assert e.check_entry(118.0, _scalp_hist(sparse), datetime(2026, 1, 1, 10, 0),
+    sparse = [25000.0, 25004.0, 25010.0, 25018.0]  # only 4 ticks, big move
+    assert e.check_entry(25018.0, _scalp_hist(sparse), datetime(2026, 1, 1, 10, 0),
                          htf5=1, safe_mode=False) is None
 
 

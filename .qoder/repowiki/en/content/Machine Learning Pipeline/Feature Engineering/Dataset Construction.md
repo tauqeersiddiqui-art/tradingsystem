@@ -14,11 +14,10 @@
 
 ## Update Summary
 **Changes Made**
-- Updated to reflect optimized future extrema calculation for label generation using pandas groupby operations
-- Enhanced performance through vectorized operations with df.groupby(day)['high'].transform() patterns
-- Improved date parsing logic with fail-fast behavior for malformed dates
-- Maintained entry-quality label semantics with BAD_ENTRY guards and proper forward-looking window handling
-- Preserved comprehensive data validation with NaN auditing and robust preprocessing
+- Updated future extrema calculation to use optimized pandas groupby operations with proper forward-looking windows (s.rolling(ENTRY_HORIZON_BARS).max().shift(-ENTRY_HORIZON_BARS)) avoiding cross-day data leakage
+- Enhanced comprehensive NaN auditing with configurable MAX_NAN_PCT thresholds replacing silent data dropping behavior
+- Improved session-based filtering with active time window detection for better label quality
+- Optimized performance through vectorized operations and efficient groupby patterns
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -34,7 +33,7 @@
 ## Introduction
 This document explains the enhanced dataset construction pipeline that powers entry-quality ML models for intraday trading. The system has been updated to focus on **entry quality metrics** rather than directional prediction, measuring whether an entry made at a specific bar is likely to see favorable movement within a defined horizon (typically 5 minutes). It covers how raw market data is loaded, cleaned, and transformed into a consistent set of 36 engineered features used by both training and inference, with improved feature building capabilities and robust data validation mechanisms.
 
-**Updated**: The pipeline now includes optimized future extrema calculations using pandas groupby operations for significantly improved performance when processing large datasets, while maintaining the same entry-quality label semantics and validation mechanisms.
+**Updated**: The pipeline now includes significantly optimized future extrema calculations using pandas groupby operations with proper forward-looking windows, comprehensive NaN auditing with configurable thresholds, and enhanced session-based filtering for improved data quality and performance when processing large datasets.
 
 ## Project Structure
 The enhanced dataset construction pipeline spans several modules with improved separation of concerns:
@@ -73,7 +72,7 @@ G --> I["Walk-Forward OOS<br/>backtest/walkforward_oos.py"]
 - [walkforward_oos.py:265-318](file://backtest/walkforward_oos.py#L265-L318)
 
 ## Core Components
-- **Enhanced data loader and cleaner**: reads OHLCV CSV with improved date parsing, filters start date, ensures volume column presence, sorts chronologically, and includes comprehensive NaN auditing
+- **Enhanced data loader and cleaner**: reads OHLCV CSV with improved date parsing, filters start date, ensures volume column presence, sorts chronologically, and includes comprehensive NaN auditing with configurable thresholds
 - **Improved feature engine**: computes 36 canonical features including trend, volatility, momentum, candle structure, session timing, and options context with consistent behavior across training and live inference
 - **Entry-quality labeler**: creates directional labels based on whether price achieves favorable movement within a lookahead window, with BAD_ENTRY guards to prevent late entries and optimized groupby operations for performance
 - **Robust trainer**: trains LightGBM/CatBoost models with time-series cross-validation, Platt calibration, recency weighting, and deploy gates
@@ -131,7 +130,7 @@ The dataset builder now includes comprehensive validation and error handling wit
 **Updated**: Date parsing now uses fail-fast behavior with `errors="coerce"` parameter removed from pd.to_datetime() calls to ensure malformed dates are caught early in the process rather than silently coerced.
 
 **Enhanced validation highlights:**
-- Comprehensive NaN auditing with per-column statistics and fail-hard thresholds
+- Comprehensive NaN auditing with per-column statistics and configurable fail-hard thresholds via MAX_NAN_PCT
 - Fail-fast date parsing to catch malformed entries immediately
 - Sorting and deduplication via reset_index
 - Volume fallback to avoid division-by-zero or zero-weight issues in VWAP
@@ -196,6 +195,11 @@ The system has transitioned from directional first-touch labels to **entry-quali
 - Bars with fewer than H forward bars (day end) get NaN labels and are dropped — never NaN-filled
 - Forward/backward windows never cross a day boundary
 
+**Enhanced session-based filtering:**
+- Active time window detection using `_in_active_session()` function with predefined trading hours
+- Labels are only meaningful during active trading sessions (9:30-11:00 and 14:00-15:15)
+- Non-active session bars are filtered out to improve signal quality
+
 **Section sources**
 - [dataset_builder.py:179-233](file://ml/dataset_builder.py#L179-L233)
 - [dataset_builder.py:242-320](file://ml/dataset_builder.py#L242-L320)
@@ -256,7 +260,7 @@ The training pipeline includes improved validation and optimization:
 
 **Enhanced validation mechanisms:**
 - Shared `validate_training_csv` function provides fail-hard preconditions
-- Comprehensive NaN auditing with per-column statistics
+- Comprehensive NaN auditing with per-column statistics and configurable MAX_NAN_PCT thresholds
 - Minimum row count requirements and required column validation
 - Backup and candidate model management for safe deployments
 
@@ -289,6 +293,15 @@ The enhanced system includes significant performance optimizations:
 - Walk-forward scripts process large datasets by iterating folds and limiting warmup buffers
 - Improved memory management through efficient data structures and batch processing
 
+**Enhanced NaN auditing performance:**
+- Configurable MAX_NAN_PCT thresholds replace silent data dropping behavior
+- Comprehensive NaN auditing with per-column statistics prevents data quality issues
+- Fail-fast validation catches data problems early in the pipeline
+
+**Section sources**
+- [dataset_builder.py:267-270](file://ml/dataset_builder.py#L267-L270)
+- [dataset_builder.py:336-353](file://ml/dataset_builder.py#L336-L353)
+
 ## Dependency Analysis
 The enhanced dataset builder depends on shared indicator functions and a canonical feature configuration to ensure consistency across the system:
 
@@ -304,7 +317,7 @@ WFO["walkforward_oos.py"] --> FC
 **Diagram sources**
 - [dataset_builder.py:34-38](file://ml/dataset_builder.py#L34-L38)
 - [feature_config.py:22-64](file://ml/feature_config.py#L22-L64)
-- [trainer.py:38-39](file://ml/trainer.py#L38-L39)
+- [trainer.py:38-39](file://ml/trainer.py#L38-39)
 - [backtest_engine.py:23-26](file://backtest/backtest_engine.py#L23-L26)
 - [walkforward_oos.py:272-278](file://backtest/walkforward_oos.py#L272-L278)
 
@@ -323,6 +336,7 @@ WFO["walkforward_oos.py"] --> FC
 - Live feature builder mirrors training exactly to avoid distribution shifts
 - Enhanced validation prevents training on poor quality datasets
 - Memory-efficient processing of large datasets through batch operations
+- **Configurable NaN auditing** with MAX_NAN_PCT thresholds ensures data quality without silent failures
 
 ## Troubleshooting Guide
 Common issues and mitigations in the enhanced system:
@@ -334,6 +348,7 @@ Common issues and mitigations in the enhanced system:
 - **NaN audit failures**: check data quality and preprocessing steps; rebuild dataset if necessary
 - **Entry quality issues**: verify ENTRY_HORIZON_BARS and QUALITY_THRESHOLD_PTS settings align with trading strategy
 - **Performance issues**: optimized groupby operations should handle large datasets efficiently; monitor memory usage during processing
+- **Session filtering issues**: verify ACTIVE_WINDOWS configuration matches trading schedule
 
 **Section sources**
 - [dataset_builder.py:236-270](file://ml/dataset_builder.py#L236-L270)
@@ -344,4 +359,4 @@ Common issues and mitigations in the enhanced system:
 ## Conclusion
 The enhanced dataset construction pipeline delivers a robust, consistent foundation for entry-quality ML models. It combines clean data ingestion, rigorous feature engineering, and principled labeling focused on entry quality rather than direction prediction to produce high-quality training sets. The same feature pipeline underpins live inference and backtesting, ensuring parity. 
 
-**Updated**: The pipeline now includes significantly optimized future extrema calculations using pandas groupby operations, providing substantial performance improvements when processing large datasets while maintaining the same entry-quality label semantics and validation mechanisms. Enhanced validation mechanisms, improved label creation with BAD_ENTRY guards, and walk-forward evaluation with embargoed training windows provide honest out-of-sample performance estimates. Together, these components enable reliable model deployment and adaptive trading decisions integrated with ORB strategy logic, specifically optimized for entry quality metrics that align with actual trading scenarios.
+**Updated**: The pipeline now includes significantly optimized future extrema calculations using pandas groupby operations with proper forward-looking windows, comprehensive NaN auditing with configurable thresholds, and enhanced session-based filtering. These improvements provide substantial performance gains when processing large datasets while maintaining the same entry-quality label semantics and validation mechanisms. Enhanced validation mechanisms, improved label creation with BAD_ENTRY guards, and walk-forward evaluation with embargoed training windows provide honest out-of-sample performance estimates. Together, these components enable reliable model deployment and adaptive trading decisions integrated with ORB strategy logic, specifically optimized for entry quality metrics that align with actual trading scenarios.

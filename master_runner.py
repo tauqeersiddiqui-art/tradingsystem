@@ -807,9 +807,10 @@ def should_confirm_entry(decision, ts, ltp_history, ctx):
     B. PULLBACK ENTRY - no breakout chasing: price must have retraced a
        dynamic 10-50% of the recent range before we enter.
     B2. MOMENTUM - the last ticks must still be pushing the direction.
-    C. HTF RULE - 5m SuperTrend must agree with the side; neutral (0) or
-       opposing blocks the trade.
-    D. TRAP FILTER - failed breakout (ORB snap-back, >65% give-back) and
+    C. HTF RULE - an OPPOSING 5m SuperTrend blocks the trade; a neutral
+       reading (0) is ALLOWED (gate C only vetoes htf5 == -1 for CE /
+       htf5 == +1 for PE).
+    D. TRAP FILTER - failed breakout (ORB snap-back, >85% give-back) and
        micro reversals are skipped.
 
     Returns (confirmed: bool, reason: str).

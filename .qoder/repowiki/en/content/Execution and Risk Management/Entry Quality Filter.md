@@ -12,11 +12,11 @@
 
 ## Update Summary
 **Changes Made**
-- Updated Entry Timing and Quality Filter section to reflect asymmetric thresholds for CE and PE options
-- Enhanced BUYING_AT_TOP detection logic documentation with option-type-specific thresholds
-- Added detailed explanation of CLOSE_POS_GOOD_CE and CLOSE_POS_GOOD_PE parameters
-- Updated threshold configuration section with new asymmetric parameters
-- Enhanced quality scoring mechanism documentation
+- Updated Entry Quality Filter to reflect symmetric coordinate handling for both CE and PE instruments
+- Enhanced documentation of the seven-stage rejection pipeline with consistent behavior across option types
+- Added comprehensive coverage of module-level rejection counters (_REJECTION_COUNTS, _QUALITY_EVALS) for aggregate statistics
+- Updated threshold configuration section to document the mirrored coordinate system where CE uses raw values and PE uses inverted values (1.0 - raw)
+- Enhanced quality scoring mechanism documentation with symmetric coordinate handling
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -31,7 +31,7 @@
 
 ## Introduction
 This document explains the Entry Quality Filter system that prevents low-quality or mistimed entries from being executed. It combines:
-- A rejection-first entry timing and quality filter based on completed 1-minute candles and momentum velocity with **enhanced asymmetric thresholds for CE and PE options**.
+- A rejection-first entry timing and quality filter based on completed 1-minute candles and momentum velocity with **symmetric coordinate handling for CE and PE options**.
 - An additional Phase 5.5 decision filter for CE/PE confidence thresholds and regime awareness.
 - Live confirmation gates (structure, pullback, momentum, HTF alignment, trap filters) used by the master runner.
 - A backtest replay script to measure baseline vs filtered performance and collect rejection statistics.
@@ -71,7 +71,7 @@ P55["Phase55 evaluate_phase55_filter<br/>(phase55_filter.py)"] --> LE
 - [test_entry_confirmation.py:1-389](file://tests/test_entry_confirmation.py#L1-L389)
 
 ## Core Components
-- compute_entry_quality: Rejection-first filter using OHLC geometry, swing move, breakout age, candle wick, momentum velocity, composite score, and cost coverage with **asymmetric thresholds for CE and PE options**. Returns accepted/rejected with metrics and reason.
+- compute_entry_quality: Rejection-first filter using OHLC geometry, swing move, breakout age, candle wick, momentum velocity, composite score, and cost coverage with **symmetric coordinate handling for CE and PE options**. Returns accepted/rejected with metrics and reason.
 - should_confirm_entry: Live confirmation gates applied after an ML signal fires but before execution: structure continuation, pullback band, momentum push, HTF alignment, and trap detection.
 - evaluate_phase55_filter: Optional ML-aware filter that can block CE/PE entries based on side-specific confidence thresholds and regime conditions.
 - Backtest replay: Generates ORB/momentum candidates, runs compute_entry_quality per bar, simulates exits, and compares baseline vs filtered results plus rejection breakdown.
@@ -136,25 +136,26 @@ BE-->>BE : Compare baseline vs filtered + rejections
 - Key checks (in order):
   - MOVE_ALREADY_DONE: Move off recent swing exceeds threshold.
   - LATE_ENTRY: Breakout older than configured seconds.
-  - BUYING_AT_TOP: Candle closed at adverse extreme with **option-type-specific thresholds**.
+  - BUYING_AT_TOP: Candle closed at adverse extreme with **symmetric coordinate handling**.
   - REJECTION_CANDLE: Adverse wick dominates range.
   - MOMENTUM_DYING: Momentum velocity falling while price still extends.
-  - LOW_QUALITY: Composite score below minimum with **asymmetric quality scoring**.
+  - LOW_QUALITY: Composite score below minimum with **symmetric coordinate scoring**.
   - NOT_PROFITABLE: Expected premium move cannot cover round-trip cost.
 - Outputs: accepted flag, reason if rejected, metrics including move_pct, wick_ratio, close_position, breakout_age_s, momentum_velocity_now/prev, score.
 
-**Enhanced Asymmetric Thresholds:**
-- **CLOSE_POS_GOOD_CE (0.7)**: Higher threshold for Call Options requiring stronger bullish confirmation
-- **CLOSE_POS_GOOD_PE (0.3)**: Lower threshold for Put Options reflecting different risk profile
-- **CLOSE_POS_MAX**: Standard threshold for buying-at-top detection across all options
-- **CLOSE_POS_MIN (0.15)**: Stricter threshold specifically for Put Options to address their unique risk characteristics
+**Updated Symmetric Coordinate Handling:**
+- **Mirrored Coordinates System**: CE uses raw values while PE uses inverted values (1.0 - raw) to maintain consistent threshold logic
+- **CLOSE_POS_MAX**: Standard threshold for buying-at-top detection across all options in mirrored coordinates
+- **CLOSE_POS_GOOD**: Threshold for quality scoring bonus in mirrored coordinates
+- **Adverse Wick Calculation**: Direction-specific wick calculation that works consistently across option types
 
 ```mermaid
 flowchart TD
 Start(["Start compute_entry_quality"]) --> DataCheck{"Valid data?"}
 DataCheck -- No --> AcceptOpen["Return accepted=True (fail-open)"]
 DataCheck -- Yes --> Compute["Compute swing move, breakout age, candle geometry, momentum velocity"]
-Compute --> Rule1{"MOVE_ALREADY_DONE?"}
+Compute --> Mirror["Apply symmetric coordinate mirroring:<br/>CE: raw values | PE: 1.0 - raw"]
+Mirror --> Rule1{"MOVE_ALREADY_DONE?"}
 Rule1 -- Yes --> Reject1["Reject: MOVE_ALREADY_DONE"]
 Rule1 -- No --> Rule2{"LATE_ENTRY?"}
 Rule2 -- Yes --> Reject2["Reject: LATE_ENTRY"]
@@ -164,7 +165,7 @@ Rule3 -- No --> Rule4{"REJECTION_CANDLE?"}
 Rule4 -- Yes --> Reject4["Reject: REJECTION_CANDLE"]
 Rule4 -- No --> Rule5{"MOMENTUM_DYING?"}
 Rule5 -- Yes --> Reject5["Reject: MOMENTUM_DYING"]
-Rule5 -- No --> Score["Compute composite score with asymmetric thresholds"]
+Rule5 -- No --> Score["Compute composite score with symmetric coordinates"]
 Score --> Rule6{"LOW_QUALITY?"}
 Rule6 -- Yes --> Reject6["Reject: LOW_QUALITY"]
 Rule6 -- No --> Profitable{"NOT_PROFITABLE?"}
@@ -177,6 +178,31 @@ Profitable -- No --> Accept["Return accepted=True with metrics"]
 
 **Section sources**
 - [filters.py:126-264](file://engine/execution/filters.py#L126-L264)
+
+### Module-Level Rejection Counters
+- Purpose: Track aggregate statistics for backtest reporting and EOD analysis
+- Components:
+  - `_REJECTION_COUNTS`: Dictionary tracking rejection reasons and their frequencies
+  - `_QUALITY_EVALS`: Counter for total quality evaluations performed
+- Functions:
+  - `get_rejection_stats()`: Returns comprehensive rejection statistics
+  - `reset_rejection_stats()`: Clears counters between backtest folds
+  - `_eq_reject()`: Increments rejection counter and returns rejection result
+
+```mermaid
+flowchart TD
+Eval["Quality Evaluation"] --> Increment["_QUALITY_EVALS += 1"]
+Increment --> Check{"Rejection?"}
+Check -- Yes --> Count["_REJECTION_COUNTS[reason] += 1"]
+Count --> Return["Return rejection with metrics"]
+Check -- No --> Success["Return acceptance with metrics"]
+```
+
+**Diagram sources**
+- [filters.py:66-89](file://engine/execution/filters.py#L66-L89)
+
+**Section sources**
+- [filters.py:66-89](file://engine/execution/filters.py#L66-L89)
 
 ### Live Confirmation Gates (should_confirm_entry)
 - Purpose: Ensure structural continuation, proper pullback, momentum, HTF alignment, and no trap patterns before executing.
@@ -246,6 +272,7 @@ Decide -- Yes --> Allow
   - Candidate generation: ORB breakouts and momentum bursts.
   - Exit model: SL, target, no-life cutoff, max hold, delta proxy, lot size, round-trip cost.
   - Aggregation: Win rate, net PnL, exit mix, total evaluations, rejections by reason.
+  - **Statistics Collection**: Uses module-level counters to track evaluation counts and rejection breakdowns.
 
 ```mermaid
 sequenceDiagram
@@ -259,7 +286,7 @@ alt accepted
 BR->>EX : Simulate exit (SL/TARGET/NO_LIFE/MAX_HOLD/EOD)
 EX-->>BR : Record PnL and exit reason
 else rejected
-BR->>BR : Increment rejection counter
+BR->>BR : Increment rejection counter via module stats
 end
 end
 BR-->>BR : Summarize baseline vs filtered + rejection stats
@@ -278,6 +305,7 @@ BR-->>BR : Summarize baseline vs filtered + rejection stats
 - MasterRunner's should_confirm_entry provides additional live confirmation gates independent of the candle-based quality filter.
 - Phase 5.5 filter is optional and can be integrated to adjust allowance based on ML confidence and regime.
 - Backtest Replay depends on compute_entry_quality and round_trip_cost to simulate realistic trading economics.
+- **Enhanced Statistics**: Module-level counters provide aggregate data for backtest analysis and reporting.
 
 ```mermaid
 graph LR
@@ -286,6 +314,7 @@ LE --> MRGates["should_confirm_entry"]
 LE --> P55["evaluate_phase55_filter"]
 BE["Backtest Replay"] --> EQ
 BE --> Cost["round_trip_cost"]
+EQ --> Stats["_REJECTION_COUNTS & _QUALITY_EVALS"]
 ```
 
 **Diagram sources**
@@ -307,7 +336,8 @@ BE --> Cost["round_trip_cost"]
 - The rejection-first design ensures early exits on failing rules, minimizing unnecessary computation.
 - Backtest Replay processes only sealed bars and throttles momentum candidates to avoid burst spam, keeping runtime efficient.
 - Phase 5.5 filter adds minimal overhead via confidence lookups and regime inference.
-- **Asymmetric threshold evaluation** adds negligible computational overhead while providing more nuanced quality assessment for different option types.
+- **Symmetric coordinate handling** adds negligible computational overhead while providing consistent behavior across option types.
+- **Module-level counters** provide O(1) increment operations with minimal memory overhead.
 
 ## Troubleshooting Guide
 Common rejection reasons and diagnostics:
@@ -319,11 +349,10 @@ Common rejection reasons and diagnostics:
 - NOT_PROFITABLE: Expected move cannot cover costs; adjust lot size, delta proxy, or wait for better setups.
 - Live confirmation blocks: CONFIRM_NO_HISTORY, CONFIRM_STRUCT_BREAK, CONFIRM_CHASING_SPIKE, CONFIRM_PULLBACK_FAIL, CONFIRM_NO_MOMENTUM, CONFIRM_HTF_OPPOSES, CONFIRM_BREAKOUT_TRAP, CONFIRM_SPIKE_TRAP.
 
-**Updated Threshold Configuration:**
-- **CLOSE_POS_GOOD_CE (0.7)**: Higher threshold for CE options requiring stronger bullish confirmation
-- **CLOSE_POS_GOOD_PE (0.3)**: Lower threshold for PE options reflecting different risk profile
-- **CLOSE_POS_MAX**: Standard threshold for buying-at-top detection across all options
-- **CLOSE_POS_MIN (0.15)**: Stricter threshold for PE options addressing their unique risk characteristics
+**Updated Statistics Tracking:**
+- Use `get_rejection_stats()` to retrieve comprehensive rejection breakdowns
+- Monitor `_QUALITY_EVALS` to track total quality evaluations
+- Reset counters between backtest folds using `reset_rejection_stats()`
 
 Use backtest replay to inspect rejection breakdowns and validate parameter changes.
 
@@ -333,4 +362,4 @@ Use backtest replay to inspect rejection breakdowns and validate parameter chang
 - [backtest_entry_quality.py:198-202](file://scripts/backtest_entry_quality.py#L198-L202)
 
 ## Conclusion
-The Entry Quality Filter system combines robust, rejection-first timing and quality checks with **enhanced asymmetric thresholds for CE and PE options**, live confirmation gates, and optional ML-aware Phase 5.5 filtering. The asymmetric approach addresses the different risk profiles between call and put options, providing more nuanced quality scoring that better reflects the unique characteristics of each option type. Together, these layers significantly reduce low-probability entries, protect against traps and late entries, and improve the expected profitability of trades. The backtest replay tool enables continuous validation and tuning of parameters and thresholds.
+The Entry Quality Filter system combines robust, rejection-first timing and quality checks with **symmetric coordinate handling for CE and PE options**, live confirmation gates, and optional ML-aware Phase 5.5 filtering. The symmetric approach addresses the different characteristics between call and put options through mirrored coordinates, providing consistent behavior across option types while maintaining the same threshold logic. The addition of module-level rejection counters enables comprehensive statistical analysis and reporting. Together, these layers significantly reduce low-probability entries, protect against traps and late entries, and improve the expected profitability of trades. The backtest replay tool enables continuous validation and tuning of parameters and thresholds with detailed rejection statistics.

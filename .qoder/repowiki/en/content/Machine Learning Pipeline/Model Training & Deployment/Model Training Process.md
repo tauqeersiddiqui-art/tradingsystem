@@ -11,10 +11,10 @@
 
 ## Update Summary
 **Changes Made**
-- Updated data validation section to reflect simplified NaN drop operation focusing on feature columns and labels
-- Enhanced preprocessing pipeline description to show streamlined data manipulation steps
-- Updated robustness improvements by clarifying error tolerance handling in date parsing
-- Maintained all existing training workflow documentation while reflecting the specific validation changes
+- Enhanced data validation section to reflect simplified NaN drop operation focusing on feature columns and labels
+- Updated preprocessing pipeline description to show streamlined data manipulation steps with improved error tolerance
+- Strengthened robustness improvements by clarifying error tolerance handling in date parsing using `errors="coerce"`
+- Maintained all existing training workflow documentation while reflecting the specific validation and preprocessing changes
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -142,7 +142,7 @@ Key aspects:
 - Feature computation aligns with live engine to ensure consistency
 - Output includes date column enabling recency weighting during training
 
-**Updated** Simplified data validation logic now focuses on feature columns and labels for NaN drop operations, removing unnecessary date column processing while maintaining data integrity through enhanced error tolerance in date parsing.
+**Updated** Simplified data validation logic now focuses on feature columns and labels for NaN removal, removing unnecessary date column processing from the drop operation while maintaining data integrity through enhanced error tolerance in date parsing.
 
 **Section sources**
 - [dataset_builder.py:84-176](file://ml/dataset_builder.py#L84-L176)
@@ -259,16 +259,17 @@ Next --> End(["Aggregate mean AUC"])
 - [trainer.py:146-157](file://ml/trainer.py#L146-L157)
 
 ### Enhanced Data Validation and Preprocessing Pipeline
-**Updated** The data validation and preprocessing pipeline has been streamlined to focus on essential data integrity checks:
+**Updated** The data validation and preprocessing pipeline has been significantly strengthened with improved error tolerance and streamlined operations:
 
-- **Simplified NaN Drop Operation**: The validation now focuses specifically on feature columns and labels for NaN removal, removing unnecessary date column processing from the drop operation
-- **Streamlined Preprocessing**: Reduced unnecessary data manipulation steps while maintaining data quality
-- **Enhanced Robustness**: Error tolerance in date parsing (`errors="coerce"`) allows malformed rows to be converted to NaT and dropped later, preventing training crashes while maintaining data integrity
-- **Focused Validation**: The `validate_training_csv()` function checks required columns (FEATURE_COLUMNS + label columns) and enforces strict NaN percentage limits
+- **Resilient Date Parsing**: Enhanced date parsing using `pd.to_datetime(df['date'], format='mixed', errors='coerce')` converts malformed rows to NaT values instead of crashing training runs, providing graceful degradation for data quality issues
+- **Simplified NaN Drop Operation**: The validation now focuses specifically on feature columns and labels for NaN removal (`df.dropna(subset=list(FEATURE_COLUMNS) + ["label_ce", "label_pe", "date"])`), removing unnecessary date column processing from the initial drop operation
+- **Streamlined Preprocessing**: Reduced unnecessary data manipulation steps while maintaining comprehensive data quality checks through the dataset builder's robust NaN auditing
+- **Focused Validation**: The `validate_training_csv()` function checks required columns (FEATURE_COLUMNS + label columns) and enforces strict NaN percentage limits (>2% triggers failure)
 
 Key improvements:
 - More efficient data processing by focusing validation on critical columns only
 - Better error handling through graceful degradation of malformed date entries
+- Enhanced robustness against data quality issues without compromising training integrity
 - Maintained data integrity while reducing computational overhead
 
 **Section sources**
@@ -306,7 +307,7 @@ TR --> SK["scikit-learn"]
 
 **Section sources**
 - [trainer.py:18-39](file://ml/trainer.py#L18-L39)
-- [dataset_builder.py:30-38](file://ml/dataset_builder.py#L30-L38)
+- [dataset_builder.py:30-38](file://ml/dataset_builder.py#L30-38)
 
 ## Performance Considerations
 - TimeSeriesSplit preserves temporal order, preventing look-ahead bias
@@ -314,7 +315,7 @@ TR --> SK["scikit-learn"]
 - Calibration improves probability reliability, aiding threshold selection
 - Feature clipping and bounds reduce outlier impact and stabilize training
 - Parallelization via n_jobs=-1 (LightGBM) and thread_count=-1 (CatBoost) accelerates training
-- **Updated** Streamlined data validation reduces preprocessing overhead while maintaining data quality
+- **Updated** Streamlined data validation reduces preprocessing overhead while maintaining data quality through more efficient column-focused operations
 
 [No sources needed since this section provides general guidance]
 
@@ -331,13 +332,15 @@ Common issues and resolutions:
 - Threshold selection yields few trades:
   - find_threshold enforces minimum trade count; adjust expectations or data window
 - **Updated** Data validation errors:
-  - Malformed date entries are now handled gracefully with `errors="coerce"` and dropped automatically
+  - Malformed date entries are now handled gracefully with `errors="coerce"` and converted to NaT values, which are then automatically dropped
   - Focus on feature columns and labels for NaN validation to reduce false positives in data quality checks
+  - The enhanced date parsing prevents training crashes while maintaining data integrity
 
 Operational tips:
 - Inspect *_candidate.pkl files when gate fails to diagnose issues
 - Review backup directories to compare old vs new champions
 - Validate feature alignment between training and live pipelines
+- Monitor NaN audit logs during dataset building to identify data quality issues early
 
 **Section sources**
 - [trainer.py:216-223](file://ml/trainer.py#L216-L223)
@@ -347,7 +350,7 @@ Operational tips:
 ## Conclusion
 The training pipeline in trainer.py implements a robust, time-aware, and calibrated approach to directional classification for trading. It combines rigorous cross-validation, recency weighting, and dual-model support (LightGBM and CatBoost) with strict deployment gates to ensure only high-quality models enter production. Proper dataset preparation and consistent feature engineering are critical to success.
 
-**Updated** Recent improvements to the data validation and preprocessing pipeline enhance robustness while simplifying the overall workflow, making the training process more reliable and efficient.
+**Updated** Recent improvements to the data validation and preprocessing pipeline enhance robustness while simplifying the overall workflow, making the training process more reliable and efficient. The enhanced error tolerance in date parsing and streamlined validation operations provide better resilience against data quality issues without compromising model performance.
 
 [No sources needed since this section summarizes without analyzing specific files]
 

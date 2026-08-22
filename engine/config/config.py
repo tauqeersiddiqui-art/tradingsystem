@@ -42,6 +42,27 @@ class Config:
         self.DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", 0.05))
         self.MAX_HOLD_SECONDS = int(os.getenv("MAX_HOLD_SECONDS", 300))
 
+        # ── Phase-10 exit-tuning config (Task #19) ───────────────────────
+        # Approved for Monday DRY_RUN: exit-grid backtest on 58 accepted
+        # entries (scripts/backtest_exit_tuning.py) — baseline -Rs1,024 ->
+        # recommended +Rs2,587. Fixed premium-space SL/TARGET replace the
+        # ATR-derived stops at position entry; trailing = breakeven once
+        # profit reaches ML_TRAIL_BE_PTS, then trail ML_TRAIL_GAP_PTS below
+        # the high-water mark after ML_TRAIL_T2_PTS. MAX_HOLD stays 300s.
+        self.ML_SL_PTS        = float(os.getenv("ML_SL_PTS", "3.0"))       # was ATR-derived 4-10 pts
+        self.ML_TARGET_PTS    = float(os.getenv("ML_TARGET_PTS", "80.0"))  # was 3.5x SL distance
+        # NO_LIFE exit (premium profit < floor at N seconds) — DISABLED by
+        # Phase-10: grid shows it only hurts once trailing is active. The
+        # live ML path has no NO_LIFE consumer (it was a backtest-only rule;
+        # the scalp NO_LIFE below is a separate 35s rule, untouched).
+        # Task #20 FIX 10: reserved — no live consumer; ML NO_LIFE is
+        # disabled by absence, so setting this has no effect yet.
+        self.ML_NO_LIFE_ENABLED = os.getenv("ML_NO_LIFE_ENABLED", "0") == "1"
+        self.ML_TRAIL_ENABLED   = os.getenv("ML_TRAIL_ENABLED", "1") == "1"
+        self.ML_TRAIL_BE_PTS    = float(os.getenv("ML_TRAIL_BE_PTS", "10.0"))  # profit pts -> stop to breakeven
+        self.ML_TRAIL_T2_PTS    = float(os.getenv("ML_TRAIL_T2_PTS", "20.0"))  # profit pts -> trailing mode
+        self.ML_TRAIL_GAP_PTS   = float(os.getenv("ML_TRAIL_GAP_PTS", "8.0"))  # stop = HWM - gap
+
         # Lot size: BANK NIFTY = 30 qty per lot (matches cost_model default
         # and the training data). Was wrongly set to NIFTY 65.
         self.LOT_SIZE = int(os.getenv("LOT_SIZE", 30))

@@ -1,1 +1,0 @@
-Top-level orchestrator that authenticates to Zerodha, wires engine/ML/data_store into a single TradingContext, and supervises crash-resilient intraday NIFTY/BANKNIFTY option trading sessions.

@@ -23,6 +23,8 @@ _PERSIST_KEYS = (
     "symbol", "side", "qty", "lot_size", "entry", "stop_loss", "target",
     "max_pnl", "min_pnl", "ml_prob", "regime", "reason", "sl_order_id",
     "entry_quality",
+    # Task #15 BUG 1: exit-logging idempotency guard must survive restarts
+    "exit_logged",
 )
 
 

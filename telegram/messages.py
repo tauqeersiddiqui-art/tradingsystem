@@ -209,7 +209,9 @@ def format_trade_live(position: dict, ltp: float, entry_time: datetime) -> str:
     ml_prob   = position.get("ml_prob", 0.0)
     regime    = position.get("regime", "TREND")
     max_pnl   = position.get("max_pnl", 0.0)
-    lot_size  = position["lot_size"]
+    # Task #15 BUG 2: .get with default — restored/legacy positions may
+    # lack lot_size (format_trade_exit used to KeyError on it).
+    lot_size  = position.get("lot_size") or 30
     lots      = qty // lot_size
 
     pnl       = (ltp - entry) * qty
@@ -285,7 +287,9 @@ def format_trade_exit(data: dict) -> str:
     mae_pts     = data.get("mae_pts", 0.0)
     held_s      = data.get("held_seconds", 0.0)
     raw_reason  = data.get("reason", "")
-    lot_size    = data["lot_size"]
+    # Task #15 BUG 2: .get with default — the exit dict built by
+    # master_runner historically lacked lot_size -> KeyError here.
+    lot_size    = data.get("lot_size") or 30
     lots        = qty // lot_size
 
     reason_label, reason_emoji = _map_exit_reason(raw_reason, entry, stop)
@@ -401,8 +405,11 @@ def format_scalp_exit(pos: dict, fill: float, reason: str, pnl: float) -> str:
     symbol   = fmt_symbol(pos.get("symbol", ""))
     side     = pos.get("side", "").upper()
     entry    = pos.get("entry", 0.0)
-    qty      = pos["qty"]
-    lot_size = pos["lot_size"]
+    # Task #20 FIX 8: .get with defaults — restored/legacy scalp positions
+    # may lack qty/lot_size (same KeyError class fixed in format_trade_live
+    # and format_trade_exit).
+    qty      = pos.get("qty", 0)
+    lot_size = pos.get("lot_size") or 30
     max_pnl  = pos.get("max_pnl", 0.0)
     min_pnl  = pos.get("min_pnl", 0.0)
     entry_ts = pos.get("entry_ts")

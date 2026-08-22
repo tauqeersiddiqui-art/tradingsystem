@@ -1341,24 +1341,53 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     pnl = (exit_price - position["entry"]) * position["qty"]
 
-                    # Update consecutive losses for adaptive threshold
-                    global _consecutive_losses
-                    if pnl < 0:
-                        _consecutive_losses += 1
-                    else:
-                        _consecutive_losses = 0
-
-                    ctx.pnl         += pnl
-                    ctx.positions.append(pnl)
-
                     # Phase 4 — loss classification from entry-quality metrics.
                     # entry_quality may be ABSENT on restored/pre-deployment
                     # positions → classify_loss tolerates None via .get().
+                    # Pure computation — kept outside the Task #15 guard so
+                    # downstream consumers (journal) always see it.
                     loss_class = classify_loss(pnl, position.get("entry_quality"))
-                    if loss_class:
-                        logger.info(
-                            f"[LOSS_CLASS] {position['symbol']} {loss_class} pnl={pnl:.0f}"
+
+                    # Task #15 BUG 1 — exit idempotency guard. If anything
+                    # below throws before `position = None` (e.g. the old
+                    # format_trade_exit KeyError), this branch re-fires next
+                    # cycle; one position produced 1,024 duplicate ledger
+                    # rows and saturated the ML feedback learner. Accounting /
+                    # ledger / learner recording must run at most ONCE per
+                    # position. The flag persists via state_store
+                    # (_PERSIST_KEYS) so it also survives restarts.
+                    _exit_already_logged = bool(position.get("exit_logged"))
+                    position["exit_logged"] = True
+                    # Task #20 FIX 1: persist the guard flag IMMEDIATELY —
+                    # the later save_state runs after position=None and is
+                    # skipped on exception, so a restart before it would lose
+                    # the flag and re-count this exit. Durable before ANY
+                    # guarded side effect below (non-fatal: state_store logs).
+                    try:
+                        save_state(ctx, position, scalp_position)
+                    except Exception as _ss_e:
+                        logger.warning(f"[STATE] exit-guard persist failed: {_ss_e}")
+                    if _exit_already_logged:
+                        logger.warning(
+                            f"[EXIT GUARD] {position.get('symbol')} exit already "
+                            f"logged — skipping repeat accounting/ledger/learner"
                         )
+
+                    if not _exit_already_logged:
+                        # Update consecutive losses for adaptive threshold
+                        global _consecutive_losses
+                        if pnl < 0:
+                            _consecutive_losses += 1
+                        else:
+                            _consecutive_losses = 0
+
+                        ctx.pnl         += pnl
+                        ctx.positions.append(pnl)
+
+                        if loss_class:
+                            logger.info(
+                                f"[LOSS_CLASS] {position['symbol']} {loss_class} pnl={pnl:.0f}"
+                            )
 
                     ctx.last_trade = {
                         "symbol":  position.get("symbol", ""),
@@ -1371,36 +1400,44 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     }
 
                     # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Persist trade to CSV ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
-                    try:
-                        import telegram.notifier as _tn
-                        log_trade(
-                            entry_order  = entry_order_rec or {},
-                            exit_price   = exit_price,
-                            exit_reason  = exit_reason,
-                            position     = position,
-                            entry_time   = entry_time,
-                            exit_time    = ts,
-                            ce_threshold = _tn.CE_THRESHOLD_OVERRIDE or 0.62,
-                            pe_threshold = _tn.PE_THRESHOLD_OVERRIDE or 0.66,
-                        )
-                    except Exception as _log_e:
-                        logger.warning(f"[TRADE LOG] Write failed: {_log_e}")
+                    if not _exit_already_logged:
+                        try:
+                            import telegram.notifier as _tn
+                            log_trade(
+                                entry_order  = entry_order_rec or {},
+                                exit_price   = exit_price,
+                                exit_reason  = exit_reason,
+                                position     = position,
+                                entry_time   = entry_time,
+                                exit_time    = ts,
+                                ce_threshold = _tn.CE_THRESHOLD_OVERRIDE or 0.62,
+                                pe_threshold = _tn.PE_THRESHOLD_OVERRIDE or 0.66,
+                            )
+                        except Exception as _log_e:
+                            logger.warning(f"[TRADE LOG] Write failed: {_log_e}")
 
-                    # FIX-9: record trade result in learner
-                    ctx.ml_learner.record_trade_result(
-                        side=position["side"],
-                        pnl=pnl,
-                        ml_prob=position.get("ml_prob", 0.5),
-                        features=position.get("features", {}),
-                        reason=exit_reason,
-                    )
+                        # FIX-9: record trade result in learner
+                        # Task #20 FIX 4: wrap — an exception here must not
+                        # abort the once-only block (pnl/ledger already
+                        # counted); lose the learner record, not the exit.
+                        try:
+                            ctx.ml_learner.record_trade_result(
+                                side=position["side"],
+                                pnl=pnl,
+                                ml_prob=position.get("ml_prob", 0.5),
+                                features=position.get("features", {}),
+                                reason=exit_reason,
+                            )
+                        except Exception as _rec_e:
+                            logger.warning(f"[LEARNER] record_trade_result failed: {_rec_e}")
 
                     # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ AI BRAIN review (advisory) after 2+ consecutive losses ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
                     # OpenAI-compatible LLM analyses recent trades and trims the
                     # weaker side's multiplier (more selective only ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ never sizes
                     # up or loosens stops). Runs in a daemon thread so it never
                     # blocks the trading loop. No-op if LLM_API_KEY is unset.
-                    if getattr(ctx.ml_learner, "ai_review_pending", False):
+                    if (getattr(ctx.ml_learner, "ai_review_pending", False)
+                            and not _exit_already_logged):
                         def _do_ai_review(_learner=ctx.ml_learner,
                                           _trades=list(ctx.ml_learner.trades_today),
                                           _regime=position.get("regime", "UNKNOWN"),
@@ -1422,12 +1459,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     _mfe_rs   = position.get("max_pnl", 0.0)
                     _mae_rs   = position.get("min_pnl", 0.0)
                     _capture  = round(pnl / _mfe_rs, 3) if _mfe_rs > 0.01 else 0.0
-                    ctx.exit_analytics["mfe_rs_list"].append(_mfe_rs)
-                    ctx.exit_analytics["mae_rs_list"].append(_mae_rs)
-                    ctx.exit_analytics["mfe_pts_list"].append(_mfe_pts)
-                    ctx.exit_analytics["realized_list"].append(pnl)
-                    ctx.exit_analytics["capture_list"].append(_capture)
-                    ctx.exit_analytics["qty_list"].append(position["qty"])
+                    if not _exit_already_logged:
+                        ctx.exit_analytics["mfe_rs_list"].append(_mfe_rs)
+                        ctx.exit_analytics["mae_rs_list"].append(_mae_rs)
+                        ctx.exit_analytics["mfe_pts_list"].append(_mfe_pts)
+                        ctx.exit_analytics["realized_list"].append(pnl)
+                        ctx.exit_analytics["capture_list"].append(_capture)
+                        ctx.exit_analytics["qty_list"].append(position["qty"])
 
                     # F6 ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ exit type classification
                     _exit_type = _classify_exit_type(
@@ -1435,9 +1473,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         position.get("stop_loss", 0.0),
                         position.get("entry", 0.0),
                     )
-                    ctx.exit_type_counts[_exit_type] = (
-                        ctx.exit_type_counts.get(_exit_type, 0) + 1
-                    )
+                    if not _exit_already_logged:
+                        ctx.exit_type_counts[_exit_type] = (
+                            ctx.exit_type_counts.get(_exit_type, 0) + 1
+                        )
 
                     exit_msg = format_trade_exit({
                         "symbol":        position["symbol"],
@@ -1446,6 +1485,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "exit_price":    exit_price,
                         "trigger_price": pos_ltp,
                         "qty":           position["qty"],
+                        # Task #15 BUG 2: belt and braces — messages.py also
+                        # defaults lot_size, but include it here explicitly.
+                        "lot_size":      position.get("lot_size", 30),
                         "pnl":           pnl,
                         "ml_prob":       position.get("ml_prob", 0),
                         "reason":        exit_reason,
@@ -1457,8 +1499,15 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     })
                     # Freeze live trade card to final exit summary (stays in chat),
                     # then post exit summary to channel as a separate message.
-                    freeze_trade_message(exit_msg)
-                    send_trade_channel(exit_msg)
+                    # Task #20 FIX 5: INSIDE the once-only guard (re-fire
+                    # cycles must not re-post) and wrapped (presentation-
+                    # only — a Telegram failure must not re-trigger the exit).
+                    if not _exit_already_logged:
+                        try:
+                            freeze_trade_message(exit_msg)
+                            send_trade_channel(exit_msg)
+                        except Exception as _tg_exit_e:
+                            logger.warning(f"[TG] exit post failed: {_tg_exit_e}")
                     # Repost engine dashboard so it appears fresh at bottom
                     try:
                         _ms_exit = ctx.live_engine.get_market_state(ts)
@@ -1548,7 +1597,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     # Auto-pause after 2 consecutive LOSING stops
                     # A profitable trailing-stop exit is NOT a consecutive loss.
-                    if exit_reason in ("STOP", "Stop Loss", "Drawdown") and pnl < 0:
+                    # Task #20 FIX 6: gate the counter on the guard flag
+                    # (_exit_already_logged was captured before position=None)
+                    # — this block runs after position=None, so a re-fired
+                    # exit would otherwise double-count a losing stop toward
+                    # the 2-strike AUTO-PAUSE (or wrongly reset the counter).
+                    _count_this_stop = not _exit_already_logged
+                    if _count_this_stop and exit_reason in ("STOP", "Stop Loss", "Drawdown") and pnl < 0:
                         consecutive_stops += 1
                         logger.info(
                             f"[GATE] Consecutive losing stops: {consecutive_stops}"
@@ -1564,7 +1619,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 "AUTO-PAUSE: 2 consecutive losing stops hit.\n"
                                 "Send /resume to re-enable entries."
                             )
-                    else:
+                    elif _count_this_stop:
                         consecutive_stops = 0
 
             # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
@@ -1756,6 +1811,18 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         fill_premium, atr_val, regime
                     )
 
+                    # Task #19 (Phase-10 exit config): fixed premium-space
+                    # SL/TARGET override the ATR-derived stops.
+                    # SL = fill - ML_SL_PTS (3 pts), TARGET = fill + ML_TARGET_PTS
+                    # (+80 pts) — exit-grid backtest recommended variant.
+                    _cfg = ctx.config
+                    # Task #20 FIX 2: floor at one NFO tick (0.05) — a cheap
+                    # fill could otherwise make the stop <= 0, the broker
+                    # SL-M would be rejected (engine pause) and the virtual
+                    # stop could never fire. Target is always > 0 (fill+80).
+                    stop_loss = max(fill_premium - float(getattr(_cfg, "ML_SL_PTS", 3.0)), 0.05)
+                    target    = fill_premium + float(getattr(_cfg, "ML_TARGET_PTS", 80.0))
+
                     position = {
                         "symbol":   symbol,
                         "side":     side,
@@ -1931,38 +1998,58 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         )
                         _s_fill = _s_exit_order["price"] if _s_exit_order else _s_ltp
                         _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
-                        ctx.pnl          += _s_pnl
-                        ctx.trades_today += 1
-                        ctx.last_trade = {
-                            "symbol":  scalp_position.get("symbol", ""),
-                            "side":    scalp_position.get("side", ""),
-                            "entry":   scalp_position.get("entry", 0.0),
-                            "exit":    _s_fill,
-                            "pnl":     _s_pnl,
-                            "reason":  f"SCALP_{_s_reason}",
-                            "ts":      ts.strftime("%H:%M:%S"),
-                        }
+                        # Task #15 BUG 1 — symmetric scalp idempotency guard:
+                        # if anything below throws before `scalp_position = None`,
+                        # this branch re-fires next cycle. Accounting + ledger
+                        # must run at most ONCE per scalp position.
+                        _s_already_logged = bool(scalp_position.get("exit_logged"))
+                        scalp_position["exit_logged"] = True
+                        # Task #20 FIX 1 (scalp): persist the guard flag
+                        # IMMEDIATELY — durable before any guarded side
+                        # effect; a restart mid-branch must not re-count.
                         try:
-                            log_trade(
-                                entry_order  = {"symbol": scalp_position["symbol"],
-                                                "price":  scalp_position["entry"],
-                                                "qty":    scalp_position["qty"]},
-                                exit_price   = _s_fill,
-                                exit_reason  = f"SCALP_{_s_reason}",
-                                position     = scalp_position,
-                                entry_time   = scalp_position["entry_ts"],
-                                exit_time    = ts,
-                                ce_threshold = 0.0,
-                                pe_threshold = 0.0,
+                            save_state(ctx, position, scalp_position)
+                        except Exception as _ss_s_e:
+                            logger.warning(f"[STATE] scalp exit-guard persist failed: {_ss_s_e}")
+                        if _s_already_logged:
+                            logger.warning(
+                                f"[EXIT GUARD] {scalp_position.get('symbol')} scalp "
+                                f"exit already logged — skipping repeat accounting/ledger"
                             )
-                        except Exception as _sl_e:
-                            logger.warning(f"[SCALP] log_trade failed: {_sl_e}")
+                        if not _s_already_logged:
+                            ctx.pnl          += _s_pnl
+                            ctx.trades_today += 1
+                            ctx.last_trade = {
+                                "symbol":  scalp_position.get("symbol", ""),
+                                "side":    scalp_position.get("side", ""),
+                                "entry":   scalp_position.get("entry", 0.0),
+                                "exit":    _s_fill,
+                                "pnl":     _s_pnl,
+                                "reason":  f"SCALP_{_s_reason}",
+                                "ts":      ts.strftime("%H:%M:%S"),
+                            }
+                            try:
+                                log_trade(
+                                    entry_order  = {"symbol": scalp_position["symbol"],
+                                                    "price":  scalp_position["entry"],
+                                                    "qty":    scalp_position["qty"]},
+                                    exit_price   = _s_fill,
+                                    exit_reason  = f"SCALP_{_s_reason}",
+                                    position     = scalp_position,
+                                    entry_time   = scalp_position["entry_ts"],
+                                    exit_time    = ts,
+                                    ce_threshold = 0.0,
+                                    pe_threshold = 0.0,
+                                )
+                            except Exception as _sl_e:
+                                logger.warning(f"[SCALP] log_trade failed: {_sl_e}")
                         # Phase 4 — loss classification (entry_quality may be
-                        # absent on restored/pre-deployment positions).
+                        # absent on restored/pre-deployment positions). Pure
+                        # computation — safe outside the guard.
                         _s_loss_class = classify_loss(
                             _s_pnl, scalp_position.get("entry_quality")
                         )
-                        if _s_loss_class:
+                        if _s_loss_class and not _s_already_logged:
                             logger.info(
                                 f"[LOSS_CLASS] {scalp_position['symbol']} "
                                 f"{_s_loss_class} pnl={_s_pnl:.0f}"
@@ -1975,21 +2062,29 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                                            f"SCALP_{_s_reason}", _s_pnl)
                         # Freeze scalp card to final exit summary (stays in chat),
                         # then post exit to channel as separate message.
-                        freeze_scalp_message(_scalp_exit_msg)
-                        send_trade_channel(_scalp_exit_msg)
+                        # Task #20 FIX 5 (scalp): INSIDE the once-only guard
+                        # (re-fire cycles must not re-post) and wrapped
+                        # (presentation-only — never re-trigger the exit).
+                        if not _s_already_logged:
+                            try:
+                                freeze_scalp_message(_scalp_exit_msg)
+                                send_trade_channel(_scalp_exit_msg)
+                            except Exception as _tg_scalp_e:
+                                logger.warning(f"[TG] scalp exit post failed: {_tg_scalp_e}")
                         scalp_position = None
                         ctx.scalp_engine.on_exit()
                         # Track scalp-specific consecutive losses (circuit breaker)
                         global _scalp_consecutive_losses, _scalp_trades_today
-                        _scalp_trades_today += 1
-                        if _s_pnl < 0:
-                            _scalp_consecutive_losses += 1
-                            logger.info(
-                                f"[SCALP GATE] Consecutive scalp losses: "
-                                f"{_scalp_consecutive_losses}"
-                            )
-                        else:
-                            _scalp_consecutive_losses = 0
+                        if not _s_already_logged:
+                            _scalp_trades_today += 1
+                            if _s_pnl < 0:
+                                _scalp_consecutive_losses += 1
+                                logger.info(
+                                    f"[SCALP GATE] Consecutive scalp losses: "
+                                    f"{_scalp_consecutive_losses}"
+                                )
+                            else:
+                                _scalp_consecutive_losses = 0
                         # PHANTOM EXIT FIX: skip re-entry on same cycle
                         continue
 

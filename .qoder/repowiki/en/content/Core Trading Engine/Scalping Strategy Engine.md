@@ -17,11 +17,11 @@
 
 ## Update Summary
 **Changes Made**
-- Updated cost model integration section to reflect streamlined round-trip cost calculations with single computation during initialization
-- Enhanced ScalpEngine initialization documentation to show simplified constructor parameters with cached cost calculations
-- Added details about consolidated cost computation reducing computational overhead through _eq_cost_rs caching
-- Updated performance considerations for live trading operations with optimized cost calculations
-- Revised dependency analysis to show streamlined cost model integration with centralized management
+- Updated adaptive stop-loss calculation section to document enhanced return format with conviction tiers (STRICT, MED, WIDE)
+- Enhanced cost model integration section to reflect LOT_SIZE and COST_PER_LOT parameter usage
+- Added detailed documentation for conviction-based stop-loss tier selection system
+- Updated performance considerations to include optimized cost calculations with configurable parameters
+- Revised dependency analysis to show enhanced cost model integration with configurable parameters
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -37,17 +37,17 @@
 11. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains the scalping strategy engine that identifies intraday, short-term price movements and executes quick trades based on momentum and structure confirmation. The engine now leverages synthetic OHLC candles generated from tick data to apply consistent candle-based quality rules across both the scalping and main ML engines, ensuring unified entry quality standards throughout the trading system. Recent optimizations have streamlined cost model integration by implementing single computation during initialization with cached round-trip costs (_eq_cost_rs), eliminating redundant calculations and reducing computational overhead during live trading operations.
+This document explains the scalping strategy engine that identifies intraday, short-term price movements and executes quick trades based on momentum and structure confirmation. The engine now leverages synthetic OHLC candles generated from tick data to apply consistent candle-based quality rules across both the scalping and main ML engines, ensuring unified entry quality standards throughout the trading system. Recent enhancements have significantly improved the adaptive stop-loss calculation system, which now returns both stop-loss points and conviction tiers (STRICT, MED, WIDE) to provide more granular risk management. Additionally, the cost model integration has been enhanced with configurable LOT_SIZE and COST_PER_LOT parameters for precise round-trip cost calculations.
 
 ## Project Structure
-The scalping layer is a focused module that runs alongside the main ML-driven live engine. It uses a momentum-based approach with strict filters to avoid chasing exhausted moves and to align with higher-timeframe trends. The recent enhancement introduces synthetic candle generation from tick data, enabling the same quality rules used by the main engine to be applied to scalp entries, with optimized cost model integration for improved performance.
+The scalping layer is a focused module that runs alongside the main ML-driven live engine. It uses a momentum-based approach with strict filters to avoid chasing exhausted moves and to align with higher-timeframe trends. The recent enhancement introduces synthetic candle generation from tick data, enabling the same quality rules used by the main engine to be applied to scalp entries, with optimized cost model integration using configurable parameters for improved performance.
 
 ```mermaid
 graph TB
 subgraph "Scalping Layer"
 SE["ScalpEngine<br/>entry/exit logic"]
 SC["Synthetic Candles<br/>tick → OHLC conversion"]
-CM["Cost Model<br/>consolidated calculations"]
+CM["Cost Model<br/>configurable LOT_SIZE & COST_PER_LOT"]
 end
 subgraph "Live Engine"
 LE["LiveEngine<br/>ORB, features, HTF, VWAP"]
@@ -85,19 +85,19 @@ SE --> IND
 - [config.py:89-163](file://engine/config/config.py#L89-L163)
 
 ## Core Components
-- **ScalpEngine**: Momentum entry detection, structure/pullback/exhaustion checks, HTF alignment, adaptive stop selection, and exits (target/time/no-life). Now integrates synthetic candle generation for unified quality filtering with optimized cost model integration using cached round-trip costs.
+- **ScalpEngine**: Momentum entry detection, structure/pullback/exhaustion checks, HTF alignment, enhanced adaptive stop selection with conviction tiers, and exits (target/time/no-life). Now integrates synthetic candle generation for unified quality filtering with optimized cost model integration using configurable LOT_SIZE and COST_PER_LOT parameters.
 - **Synthetic Candle Generator**: Converts raw tick data into synthetic OHLC bars using configurable bucket sizes, enabling candle-based quality rules without requiring actual 1-minute candles.
-- **Entry Quality Filter**: Applies comprehensive candle-based quality rules including move extension, late entry detection, buying-at-top prevention, rejection candle filtering, momentum analysis, and profitability assessment with streamlined cost model integration.
+- **Entry Quality Filter**: Applies comprehensive candle-based quality rules including move extension, late entry detection, buying-at-top prevention, rejection candle filtering, momentum analysis, and profitability assessment with enhanced cost model integration using configurable parameters.
 - **LiveEngine**: Provides ORB levels, higher-timeframe SuperTrend direction, VWAP bias, and feature context; coordinates when scalps can run relative to ML activity.
 - **RiskManager**: Computes tight, capital-aware stops and targets for options bought (CE/PE).
 - **ProfitManager**: Centralized profit-lock ladder and trailing for both normal and scalp positions.
 - **Indicators**: Supertrend, ADX, ATR, and VWAP used by both engines.
-- **Config**: All scalping parameters (thresholds, cooldowns, SL tiers, exhaustion cap, daily caps, etc.).
-- **Cost Model**: Streamlined round-trip cost calculations with consolidated computation to reduce memory usage during live trading, accessed via cached _eq_cost_rs values.
+- **Config**: All scalping parameters (thresholds, cooldowns, SL tiers, exhaustion cap, daily caps, etc.) plus configurable LOT_SIZE and COST_PER_LOT for precise cost calculations.
+- **Cost Model**: Enhanced round-trip cost calculations with configurable LOT_SIZE and COST_PER_LOT parameters for accurate cost modeling across different instruments and market conditions.
 
 **Section sources**
 - [scalp_engine.py:11-280](file://engine/scalping/scalp_engine.py#L11-L280)
-- [filters.py:112-288](file://engine/execution/filters.py#L112-L288)
+- [filters.py:112-288](file://engine/execution/filters.py#L112-288)
 - [candle_builder.py:18-317](file://engine/data/candle_builder.py#L18-L317)
 - [live_engine.py:71-184](file://engine/live_engine.py#L71-L184)
 - [risk_manager.py:20-59](file://engine/risk/risk_manager.py#L20-L59)
@@ -107,7 +107,7 @@ SE --> IND
 - [cost_model.py:29-33](file://engine/execution/cost_model.py#L29-L33)
 
 ## Architecture Overview
-The scalping engine runs as a secondary layer that only acts when the main ML engine is flat or inactive, ensuring it does not interfere with primary directional trades. It scans recent ticks within a short momentum window, validates continuation structure and pullback, avoids exhaustion tails, and requires HTF agreement. The enhanced architecture now generates synthetic OHLC candles from tick data to apply the same comprehensive quality rules used by the main engine, with streamlined cost model integration for improved performance through cached round-trip cost calculations.
+The scalping engine runs as a secondary layer that only acts when the main ML engine is flat or inactive, ensuring it does not interfere with primary directional trades. It scans recent ticks within a short momentum window, validates continuation structure and pullback, avoids exhaustion tails, and requires HTF agreement. The enhanced architecture now generates synthetic OHLC candles from tick data to apply the same comprehensive quality rules used by the main engine, with enhanced cost model integration using configurable LOT_SIZE and COST_PER_LOT parameters for precise cost calculations.
 
 ```mermaid
 sequenceDiagram
@@ -123,12 +123,12 @@ Tick->>LE : OHLCV per minute
 LE->>LE : Update ORB, VWAP, HTF direction
 LE-->>SE : htf5, vwap_confirms, ml_active
 SE->>CM : round_trip_cost(LOT_SIZE, config)
-CM-->>SE : _eq_cost_rs (cached)
+CM-->>SE : cost with LOT_SIZE & COST_PER_LOT
 SE->>SE : check_entry(ltp_history, ts, htf5, safe_mode)
 alt Entry confirmed
 SE->>SC : df_from_ticks(past)
 SC-->>SE : synthetic OHLC DataFrame
-SE->>EQ : compute_entry_quality(df, side, ltp, ts, cost_rs=_eq_cost_rs)
+SE->>EQ : compute_entry_quality(df, side, ltp, ts, cost_rs=calculated)
 EQ-->>SE : accepted/rejected + metrics
 alt Quality approved
 SE->>RM : compute_entry_stops(entry_premium, atr, regime)
@@ -150,7 +150,7 @@ end
 **Diagram sources**
 - [scalp_engine.py:52-170](file://engine/scalping/scalp_engine.py#L52-L170)
 - [scalp_engine.py:186-211](file://engine/scalping/scalp_engine.py#L186-L211)
-- [filters.py:112-288](file://engine/execution/filters.py#L112-L288)
+- [filters.py:112-288](file://engine/execution/filters.py#L112-288)
 - [scalp_engine.py:174-244](file://engine/scalping/scalp_engine.py#L174-L244)
 - [scalp_engine.py:246-280](file://engine/scalping/scalp_engine.py#L246-L280)
 - [risk_manager.py:20-59](file://engine/risk/risk_manager.py#L20-L59)
@@ -169,7 +169,7 @@ end
 - Pullback filter: Enters on a controlled retracement from the extreme (tighter in safe mode).
 - Exhaustion tail filter: Avoids buying/selling at the tail of a vertical spike.
 - HTF alignment: Requires 5m SuperTrend agreement (or at least non-opposition depending on config).
-- **Enhanced**: Synthetic candle generation and comprehensive quality filtering using the same rules as the main engine with optimized cost model integration through cached round-trip costs.
+- **Enhanced**: Synthetic candle generation and comprehensive quality filtering using the same rules as the main engine with optimized cost model integration using configurable LOT_SIZE and COST_PER_LOT parameters.
 
 ```mermaid
 flowchart TD
@@ -188,7 +188,7 @@ Pullback --> |No| EndNone
 Pullback --> |Yes| Tail{"Tail exhaustion?"}
 Tail --> |Yes| EndNone
 Tail --> |Yes| Synthetic["Generate synthetic OHLC"]
-Synthetic --> Cost["Use cached round_trip_cost"]
+Synthetic --> Cost["Use configurable LOT_SIZE & COST_PER_LOT"]
 Cost --> Quality{"Entry quality passed?"}
 Quality --> |No| EndNone
 Quality --> |Yes| HTF{"HTF agree?"}
@@ -205,28 +205,28 @@ HTF --> |Yes| Signal["Return signal {side, reason, move_pts}"]
 - [scalp_engine.py:52-170](file://engine/scalping/scalp_engine.py#L52-L170)
 - [scalp_engine.py:186-211](file://engine/scalping/scalp_engine.py#L186-L211)
 
-### ScalpEngine: Adaptive Stop Selection
-- Conviction score built from:
-  - Momentum burst strength (move size),
-  - HTF agreement,
-  - VWAP confirmation,
-  - ML engine activity.
-- ATR-adaptive stops: When ATR > 0, stop = max(ATR × tier multiplier, fixed floor). Tier depends on conviction score.
-- Open-volatility penalty: Wider stops during first minutes after market open due to elevated volatility.
-- Fallback to fixed tiers when ATR unavailable.
+### ScalpEngine: Enhanced Adaptive Stop Selection with Conviction Tiers
+- **Enhanced Return Format**: The `adaptive_sl_pts` method now returns both stop-loss points AND conviction tier (STRICT, MED, WIDE) instead of simple numeric values.
+- **Conviction Score Calculation**: Built from momentum burst strength, HTF agreement, VWAP confirmation, and ML engine activity.
+- **ATR-Adaptive Stops**: When ATR > 0, stop = max(ATR × tier multiplier, fixed floor). Tier depends on conviction score:
+  - **WIDE** (score ≥ 4.5): Higher conviction trades get wider stops for real moves
+  - **MED** (score ≥ 2.5): Medium conviction gets moderate stops  
+  - **STRICT** (score < 2.5): Lower conviction gets tighter stops
+- **Open-Volatility Penalty**: Wider stops during first minutes after market open due to elevated volatility, with tier prefixes like "OPEN-WIDE", "OPEN-MED", "OPEN-STRICT".
+- **Fallback to Fixed Tiers**: When ATR unavailable, falls back to original fixed tiers with conviction-based selection.
 
 ```mermaid
 flowchart TD
 S0(["adaptive_sl_pts"]) --> Score["Compute conviction score"]
 Score --> ATR{"ATR > 0?"}
-ATR --> |Yes| Tier["Select tier (strict/med/wide)"]
+ATR --> |Yes| Tier["Select tier based on score:<br/>WIDE (≥4.5), MED (≥2.5), STRICT (<2.5)"]
 Tier --> OpenVol{"Within open vol window?"}
-OpenVol --> |Yes| Widen["Multiply SL by open vol factor"]
-OpenVol --> |No| Final["Finalize SL"]
-ATR --> |No| Fixed["Use fixed tiers (STRICT/MED/WIDE)"]
+OpenVol --> |Yes| Widen["Multiply SL by open vol factor<br/>Add OPEN- prefix to tier"]
+OpenVol --> |No| Final["Finalize SL with tier"]
+ATR --> |No| Fixed["Use fixed tiers based on conviction:<br/>WIDE/MED/STRICT"]
 Fixed --> OpenVol
 Widen --> Final
-Final --> Return["Return (sl_pts, tier)"]
+Final --> Return["Return (sl_pts, tier)<br/>e.g., (3.5, 'OPEN-WIDE')"]
 ```
 
 **Diagram sources**
@@ -304,7 +304,7 @@ Quality --> Decision["Accept/Reject entry<br/>based on quality score"]
 
 **Diagram sources**
 - [filters.py:112-133](file://engine/execution/filters.py#L112-L133)
-- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
+- [filters.py:136-288](file://engine/execution/filters.py#L136-288)
 
 ### Entry Quality Rules Applied via Synthetic Candles
 The synthetic candle approach enables the application of comprehensive quality rules:
@@ -315,13 +315,13 @@ The synthetic candle approach enables the application of comprehensive quality r
 4. **Rejection Candle Filtering**: Filters candles with excessive adverse wicks
 5. **Momentum Analysis**: Uses momentum velocity calculations from candle closes
 6. **Quality Scoring**: Composite scoring system for overall entry quality
-7. **Profitability Assessment**: Ensures expected moves can cover transaction costs using streamlined cost model with cached _eq_cost_rs values
+7. **Profitability Assessment**: Ensures expected moves can cover transaction costs using enhanced cost model with configurable LOT_SIZE and COST_PER_LOT parameters
 
 ### Integration with Main Engine Consistency
 The synthetic candle architecture maintains consistency with the main trading engine by:
 - Using identical quality rule logic (`compute_entry_quality`)
 - Applying the same thresholds and scoring mechanisms
-- Leveraging the same cost model for profitability assessments with optimized calculations
+- Leveraging the same enhanced cost model for profitability assessments with configurable parameters
 - Maintaining uniform rejection tracking and analytics
 
 **Section sources**
@@ -370,7 +370,7 @@ CostModel <.. SyntheticCandleGenerator : "provides cost calculations"
 - [indicators.py:97-129](file://ml/indicators.py#L97-L129)
 - [indicators.py:136-169](file://ml/indicators.py#L136-L169)
 - [indicators.py:176-202](file://ml/indicators.py#L176-L202)
-- [filters.py:112-133](file://engine/execution/filters.py#L112-L133)
+- [filters.py:112-133](file://engine/execution/filters.py#L112-133)
 - [cost_model.py:29-33](file://engine/execution/cost_model.py#L29-L33)
 
 **Section sources**
@@ -378,20 +378,20 @@ CostModel <.. SyntheticCandleGenerator : "provides cost calculations"
 - [indicators.py:97-129](file://ml/indicators.py#L97-L129)
 - [indicators.py:136-169](file://ml/indicators.py#L136-L169)
 - [indicators.py:176-202](file://ml/indicators.py#L176-L202)
-- [filters.py:112-133](file://engine/execution/filters.py#L112-L133)
+- [filters.py:112-133](file://engine/execution/filters.py#L112-133)
 
 ### Position Sizing and Risk Management
 - **RiskManager**: Computes tight, capital-aware stops capped at a premium point limit, with a target ratio guidance; actual exits rely on trailing via ProfitManager.
 - **ProfitManager**: Applies a cost-aware profit-lock ladder that ensures locked profits cover costs and trails peak profit once meaningful gains are achieved.
-- **ScalpEngine**: Uses ATR-adaptive stops and fixed tiers based on conviction; also widens stops during open volatility.
-- **Enhanced**: Synthetic candle quality filtering reduces poor-quality entries before risk calculation with streamlined cost model integration using cached _eq_cost_rs values.
+- **ScalpEngine**: Uses enhanced ATR-adaptive stops with conviction tiers (STRICT, MED, WIDE) based on conviction; also widens stops during open volatility.
+- **Enhanced**: Synthetic candle quality filtering reduces poor-quality entries before risk calculation with enhanced cost model integration using configurable LOT_SIZE and COST_PER_LOT parameters.
 
 ```mermaid
 flowchart TD
 P0(["Position Sizing"]) --> Quality["Synthetic Candle Quality Filter"]
 Quality --> |Approved| RM["RiskManager.compute_entry_stops"]
 Quality --> |Rejected| Block["Entry Blocked"]
-RM --> SL["Stop Loss (capped)"]
+RM --> SL["Stop Loss with conviction tier<br/>(STRICT/MED/WIDE)"]
 RM --> TP["Target (guidance)"]
 SL --> PM["ProfitManager.ladder_stop"]
 TP --> PM
@@ -409,18 +409,19 @@ PM --> Trail["Trailing & Scale-out"]
 - [filters.py:112-288](file://engine/execution/filters.py#L112-288)
 
 ### Typical Scalping Scenarios
-- **Strong momentum breakout with structure continuation and pullback**: Enter CE/PE aligned with HTF trend; set adaptive stop; trail using profit ladder; exit on target/time/no-life. Enhanced by synthetic candle quality filtering and optimized cost calculations with cached _eq_cost_rs.
+- **Strong momentum breakout with structure continuation and pullback**: Enter CE/PE aligned with HTF trend; set adaptive stop with conviction tier (WIDE for high conviction); trail using profit ladder; exit on target/time/no-life. Enhanced by synthetic candle quality filtering and optimized cost calculations with configurable parameters.
 - **Exhausted spike**: Skip entry when last quarter accounts for most of the move; prevents chasing tops/bottoms. Synthetic candles help identify exhaustion patterns more reliably.
-- **Early session volatility**: Wider stops initially; patience until stabilization; avoid premature entries. Quality filtering helps avoid false breakouts during volatile periods.
-- **Low-quality setups**: Synthetic candle analysis rejects entries where quality scores fall below thresholds, improving overall win rate with streamlined cost model integration using cached cost values.
+- **Early session volatility**: Wider stops initially with OPEN- prefixed tiers; patience until stabilization; avoid premature entries. Quality filtering helps avoid false breakouts during volatile periods.
+- **Low-quality setups**: Synthetic candle analysis rejects entries where quality scores fall below thresholds, improving overall win rate with enhanced cost model integration using configurable LOT_SIZE and COST_PER_LOT parameters.
 
 ## Cost Model Integration
 
-### Streamlined Round-Trip Cost Calculations
-The ScalpEngine now uses a streamlined approach to cost model integration, eliminating redundant round-trip cost calculations that were previously handled separately. This optimization reduces computational overhead and memory usage during live trading operations through single computation during initialization.
+### Enhanced Round-Trip Cost Calculations with Configurable Parameters
+The ScalpEngine now uses an enhanced approach to cost model integration with configurable LOT_SIZE and COST_PER_LOT parameters, eliminating redundant round-trip cost calculations and providing precise cost modeling for different instruments and market conditions.
 
 **Key Improvements:**
-- **Single Calculation**: Round-trip cost is computed once during ScalpEngine initialization and cached as `_eq_cost_rs`
+- **Configurable Parameters**: LOT_SIZE and COST_PER_LOT parameters allow precise cost modeling for different instruments (NIFTY vs BANKNIFTY) and broker fee structures
+- **Single Calculation**: Round-trip cost is computed once during ScalpEngine initialization using configurable parameters
 - **Consolidated Processing**: Eliminates duplicate cost calculations across different components
 - **Memory Efficiency**: Reduces object creation and garbage collection pressure during high-frequency trading
 - **Performance Optimization**: Minimizes CPU cycles spent on repetitive cost computations
@@ -428,7 +429,7 @@ The ScalpEngine now uses a streamlined approach to cost model integration, elimi
 ```mermaid
 flowchart TD
 Init["ScalpEngine.__init__"] --> CostCalc["round_trip_cost(LOT_SIZE, config)"]
-CostCalc --> Cache["_eq_cost_rs stored in instance"]
+CostCalc --> Cache["_eq_cost_rs stored with configurable params"]
 Cache --> Entry["check_entry()"]
 Entry --> Quality["compute_entry_quality(..., cost_rs=_eq_cost_rs)"]
 Quality --> Decision["Entry decision with cached cost"]
@@ -439,12 +440,12 @@ Quality --> Decision["Entry decision with cached cost"]
 - [scalp_engine.py:186-191](file://engine/scalping/scalp_engine.py#L186-L191)
 - [cost_model.py:29-33](file://engine/execution/cost_model.py#L29-L33)
 
-### Simplified ScalpEngine Initialization
-The ScalpEngine class initialization has been simplified to focus on essential configuration while maintaining robust functionality through centralized cost management:
+### Simplified ScalpEngine Initialization with Enhanced Cost Model
+The ScalpEngine class initialization has been simplified to focus on essential configuration while maintaining robust functionality through centralized cost management with configurable parameters:
 
 **Initialization Parameters:**
 - Configuration-driven parameters for all trading thresholds and risk controls
-- Cached round-trip cost calculation (_eq_cost_rs) for entry quality filtering
+- Cached round-trip cost calculation (_eq_cost_rs) using configurable LOT_SIZE and COST_PER_LOT for entry quality filtering
 - Rejection tracking for entry quality metrics
 - Optimized memory footprint for live trading operations
 
@@ -453,6 +454,7 @@ The ScalpEngine class initialization has been simplified to focus on essential c
 - Better separation of concerns between configuration and execution logic
 - Improved maintainability and testability
 - Enhanced performance through pre-computation of frequently used values
+- Precise cost modeling for different instruments and market conditions
 
 **Section sources**
 - [scalp_engine.py:20-52](file://engine/scalping/scalp_engine.py#L20-L52)
@@ -460,20 +462,20 @@ The ScalpEngine class initialization has been simplified to focus on essential c
 
 ## Dependency Analysis
 - **ScalpEngine** depends on:
-  - Config for thresholds and risk controls.
+  - Config for thresholds and risk controls plus configurable LOT_SIZE and COST_PER_LOT parameters.
   - LiveEngine for HTF direction and VWAP context.
   - **Enhanced**: Synthetic candle generator for unified quality filtering.
-  - **Optimized**: Streamlined cost model integration with cached _eq_cost_rs calculations.
+  - **Optimized**: Streamlined cost model integration with configurable parameters for precise cost calculations.
   - RiskManager for initial stop/target computation.
   - ProfitManager for trailing and scale-out.
   - Indicators for Supertrend, ADX, ATR, VWAP.
 
 ```mermaid
 graph LR
-C["Config"] --> SE["ScalpEngine"]
+C["Config<br/>LOT_SIZE & COST_PER_LOT"] --> SE["ScalpEngine"]
 LE["LiveEngine"] --> SE
 SC["Synthetic Candles"] --> SE
-CM["Cost Model<br/>cached _eq_cost_rs"] --> SE
+CM["Cost Model<br/>configurable parameters"] --> SE
 EQ["Entry Quality Filter"] --> SE
 RM["RiskManager"] --> SE
 PM["ProfitManager"] --> SE
@@ -484,7 +486,7 @@ IND --> SE
 **Diagram sources**
 - [scalp_engine.py:11-170](file://engine/scalping/scalp_engine.py#L11-L170)
 - [scalp_engine.py:186-211](file://engine/scalping/scalp_engine.py#L186-L211)
-- [filters.py:112-288](file://engine/execution/filters.py#L112-L288)
+- [filters.py:112-288](file://engine/execution/filters.py#L112-288)
 - [live_engine.py:71-184](file://engine/live_engine.py#L71-L184)
 - [risk_manager.py:20-59](file://engine/risk/risk_manager.py#L20-L59)
 - [profit_manager.py:116-225](file://engine/execution/profit_manager.py#L116-L225)
@@ -507,15 +509,16 @@ IND --> SE
 - **Latency**: The scalp engine evaluates entries/exits every cycle; synthetic candle generation adds minimal overhead through efficient bucketing algorithms. Ensure minimal overhead in indicator calculations and data access. Use vectorized indicators where possible.
 - **Data resolution**: Backtests scale windows for 1-minute data; live uses tick-level windows with synthetic candle conversion. Ensure deque sizes and sampling rates match intended latency.
 - **Computational load**: HTF computations (resampling to 5m/15m/30m) should be efficient; cache results per bar to avoid recomputation. Synthetic candle generation uses optimized bucketing to minimize CPU usage.
-- **Cost awareness**: Profit ladder ensures locks cover round-trip costs; synthetic candle quality filtering reduces unnecessary entries that would incur costs without proper quality validation. **Enhanced**: Streamlined cost model integration eliminates redundant calculations through cached _eq_cost_rs values, reducing CPU overhead during live trading.
+- **Cost awareness**: Profit ladder ensures locks cover round-trip costs; synthetic candle quality filtering reduces unnecessary entries that would incur costs without proper quality validation. **Enhanced**: Streamlined cost model integration eliminates redundant calculations through configurable LOT_SIZE and COST_PER_LOT parameters, reducing CPU overhead during live trading while providing precise cost modeling.
 - **Overtrading guards**: Daily trade caps and consecutive loss circuit breakers reduce drawdown risk and cost drag. Enhanced quality filtering further reduces overtrading by blocking low-quality setups.
-- **Memory efficiency**: Synthetic candles are generated on-demand and discarded after quality evaluation, minimizing memory footprint. **Improved**: Cached cost calculations (_eq_cost_rs) reduce object creation and garbage collection pressure.
+- **Memory efficiency**: Synthetic candles are generated on-demand and discarded after quality evaluation, minimizing memory footprint. **Improved**: Cached cost calculations with configurable parameters reduce object creation and garbage collection pressure.
 - **Optimization Benefits**: 
-  - Single round-trip cost calculation per ScalpEngine instance stored as _eq_cost_rs
+  - Single round-trip cost calculation per ScalpEngine instance stored as _eq_cost_rs with configurable parameters
   - Reduced memory allocation during high-frequency operations
   - Faster entry quality filtering with pre-computed cost values
   - Lower CPU utilization during peak trading hours
   - Elimination of redundant cost model calls throughout the entry process
+  - Precise cost modeling for different instruments and market conditions
 
 ## Troubleshooting Guide
 - **No entries during expected moves**:
@@ -527,6 +530,7 @@ IND --> SE
   - Review ATR-adaptive stop tiers and open-volatility multiplier.
   - Ensure conviction score is accurate; adjust thresholds if necessary.
   - **Enhanced**: Check if quality filtering is too aggressive, blocking valid entries.
+  - **New**: Verify conviction tier selection is appropriate for market conditions.
 - **Trades held too long**:
   - Check no-life exit and max hold seconds.
   - Validate target and trailing activation settings.
@@ -540,9 +544,10 @@ IND --> SE
   - **Enhanced**: Use synthetic candle metrics to diagnose specific quality issues.
 - **Performance issues**:
   - **New**: Monitor memory usage and CPU utilization during live trading.
-  - **New**: Verify that cost model caching (_eq_cost_rs) is working correctly.
+  - **New**: Verify that cost model caching (_eq_cost_rs) is working correctly with configurable parameters.
   - **New**: Check for any remaining redundant cost calculations in custom modifications.
-  - **New**: Ensure ScalpEngine initialization properly caches round-trip costs.
+  - **New**: Ensure ScalpEngine initialization properly caches round-trip costs with LOT_SIZE and COST_PER_LOT.
+  - **New**: Validate that LOT_SIZE and COST_PER_LOT parameters are correctly configured for your instrument and broker.
 
 **Section sources**
 - [scalp_engine.py:52-170](file://engine/scalping/scalp_engine.py#L52-L170)
@@ -553,8 +558,8 @@ IND --> SE
 - [cost_model.py:29-33](file://engine/execution/cost_model.py#L29-L33)
 
 ## Conclusion
-The scalping engine provides a disciplined, momentum-driven intraday strategy with robust filters to avoid exhaustion and misaligned entries. The recent enhancements introducing synthetic OHLC candles from tick data and streamlined cost model integration significantly improve both entry quality and operational efficiency. The optimized cost model integration eliminates redundant round-trip cost calculations through cached _eq_cost_rs values, reducing computational overhead and memory usage during live trading operations while maintaining the same accuracy and reliability.
+The scalping engine provides a disciplined, momentum-driven intraday strategy with robust filters to avoid exhaustion and misaligned entries. The recent enhancements introducing synthetic OHLC candles from tick data, enhanced adaptive stop-loss calculation with conviction tiers, and streamlined cost model integration with configurable parameters significantly improve both entry quality and operational efficiency. The enhanced adaptive stop-loss system now returns both stop-loss points and conviction tiers (STRICT, MED, WIDE), providing more granular risk management based on trade conviction. The optimized cost model integration eliminates redundant round-trip cost calculations through configurable LOT_SIZE and COST_PER_LOT parameters, reducing computational overhead and memory usage during live trading operations while maintaining the same accuracy and reliability.
 
-The synthetic candle architecture enables sophisticated quality analysis including move extension detection, late entry prevention, buying-at-top avoidance, rejection candle filtering, momentum analysis, and profitability assessment with enhanced cost model integration. Combined with adaptive stops grounded in volatility and conviction, streamlined cost calculations, and a cost-aware profit ladder for consistent risk management, the enhanced scalping engine complements the main ML system while focusing on quick, high-probability intraday opportunities.
+The synthetic candle architecture enables sophisticated quality analysis including move extension detection, late entry prevention, buying-at-top avoidance, rejection candle filtering, momentum analysis, and profitability assessment with enhanced cost model integration using configurable parameters. Combined with enhanced adaptive stops grounded in volatility and conviction, precise cost calculations with configurable parameters, and a cost-aware profit ladder for consistent risk management, the enhanced scalping engine complements the main ML system while focusing on quick, high-probability intraday opportunities.
 
-With careful parameter tuning, attention to latency and data quality, monitoring of synthetic candle quality metrics, and leveraging the optimized cost model integration with cached _eq_cost_rs values, the scalping engine delivers improved entry quality, reduced computational overhead, and minimized drawdown risk while maintaining its role as a complementary strategy to the primary ML-driven approach. The streamlined cost model integration represents a significant improvement in operational efficiency, particularly beneficial for high-frequency scalping operations where every millisecond and byte of memory matters.
+With careful parameter tuning, attention to latency and data quality, monitoring of synthetic candle quality metrics, and leveraging the enhanced cost model integration with configurable LOT_SIZE and COST_PER_LOT parameters, the scalping engine delivers improved entry quality, reduced computational overhead, and minimized drawdown risk while maintaining its role as a complementary strategy to the primary ML-driven approach. The enhanced adaptive stop-loss system with conviction tiers and the optimized cost model integration represent significant improvements in both risk management precision and operational efficiency, particularly beneficial for high-frequency scalping operations where every millisecond and byte of memory matters.

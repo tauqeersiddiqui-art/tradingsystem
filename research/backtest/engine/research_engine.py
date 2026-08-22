@@ -64,6 +64,13 @@ class ResearchEngine:
             enable_pe: Whether to generate PE signals
         """
         self.config = config or Config()
+        # Task #20 FIX 7: force the LEGACY exit regime for research parity.
+        # Config()'s live default ML_TRAIL_ENABLED=True would silently switch
+        # this harness to Phase-10 exits; the parity suite validates the
+        # legacy ladder/drawdown regime. Must be the boolean False (the
+        # consumer checks truthiness — the string "0" would stay truthy).
+        # Live default is NOT changed.
+        self.config.ML_TRAIL_ENABLED = False
 
         # Sizing: whole Bank Nifty lots only (LOT_SIZE=30 for Bank Nifty, NOT 65 for Nifty)
         self.lot_size = 30  # Bank Nifty lot size - hardcoded, not from config
@@ -320,9 +327,11 @@ class ResearchEngine:
 
     def check_exit(self, position, ltp, held_seconds):
         """
-        Mirror LiveEngine.check_exit exactly.
-
-        Delegates to profit_manager.manage_position.
+        Mirror the LEGACY LiveEngine.check_exit exit regime (pre-Phase-10):
+        delegates to profit_manager.manage_position WITHOUT config, so the
+        cost-aware ladder + drawdown exits apply. Live now runs the Phase-10
+        premium-space trail when ML_TRAIL_ENABLED — this harness deliberately
+        stays on the legacy regime for parity (see __init__ override).
         """
         entry = position["entry"]
         size = position.get("qty", self.qty)

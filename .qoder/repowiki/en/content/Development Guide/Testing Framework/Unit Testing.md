@@ -9,6 +9,14 @@
 - [context.py](file://engine/core/context.py)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated HTF neutral conditions behavior - neutral (0) no longer blocks entries, only opposing directions block
+- Revised trap detection thresholds from 65% to 85% give-back tolerance
+- Updated synthetic price levels from artificial values around 100-120 points to realistic NIFTY levels around 25,000 points
+- Enhanced stop-loss assertions to expect tuples with conviction tiers instead of simple point values
+- Updated scalping engine tests to use realistic market data patterns
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -22,13 +30,13 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document explains the unit testing framework used to validate entry confirmation and scalping logic in the trading system. It focuses on how tests create synthetic tick data using deques with timestamps, mock live engine components and context objects, and assert boolean confirmations with reason codes. It also covers test patterns for structure confirmation (higher highs/lower lows), dynamic pullback bands, momentum confirmation, higher timeframe rules, trap filters, adaptive stop loss calculations, exhaustion filters, and no-life exit mechanisms. Guidance is provided for writing isolated tests for complex strategies by simulating market conditions deterministically.
+This document explains the unit testing framework used to validate entry confirmation and scalping logic in the trading system. It focuses on how tests create synthetic tick data using deques with timestamps, mock live engine components and context objects, and assert boolean confirmations with reason codes. The test suite has been comprehensively updated to reflect new behavioral changes including neutral HTF conditions no longer blocking entries, revised trap detection thresholds, realistic price levels around 25,000 points replacing artificial values around 100-120 points, and enhanced stop-loss assertions expecting tuples with conviction tiers.
 
 ## Project Structure
 The testing approach centers around:
 - A dedicated test file that constructs synthetic price histories and mocks external dependencies
 - The production entry confirmation function under test
-- The scalping engine’s entry/exit logic and adaptive stop-loss calculation
+- The scalping engine's entry/exit logic and adaptive stop-loss calculation
 - Supporting runtime components like the candle builder and trading context
 
 ```mermaid
@@ -40,16 +48,16 @@ T --> CB["Candle Builder<br/>engine/data/candle_builder.py"]
 ```
 
 **Diagram sources**
-- [test_entry_confirmation.py:1-389](file://tests/test_entry_confirmation.py#L1-L389)
+- [test_entry_confirmation.py:1-420](file://tests/test_entry_confirmation.py#L1-L420)
 - [master_runner.py:799-886](file://master_runner.py#L799-L886)
-- [scalp_engine.py:11-280](file://engine/scalping/scalp_engine.py#L11-L280)
+- [scalp_engine.py:11-310](file://engine/scalping/scalp_engine.py#L11-L310)
 - [context.py:1-56](file://engine/core/context.py#L1-L56)
 - [candle_builder.py:1-267](file://engine/data/candle_builder.py#L1-L267)
 
 **Section sources**
-- [test_entry_confirmation.py:1-389](file://tests/test_entry_confirmation.py#L1-L389)
+- [test_entry_confirmation.py:1-420](file://tests/test_entry_confirmation.py#L1-L420)
 - [master_runner.py:799-886](file://master_runner.py#L799-L886)
-- [scalp_engine.py:11-280](file://engine/scalping/scalp_engine.py#L11-L280)
+- [scalp_engine.py:11-310](file://engine/scalping/scalp_engine.py#L11-L310)
 - [context.py:1-56](file://engine/core/context.py#L1-L56)
 - [candle_builder.py:1-267](file://engine/data/candle_builder.py#L1-L267)
 
@@ -62,14 +70,16 @@ T --> CB["Candle Builder<br/>engine/data/candle_builder.py"]
 Key responsibilities:
 - should_confirm_entry returns a boolean and a reason code indicating pass or specific block cause
 - ScalpEngine.check_entry returns either a decision dict or None based on multiple filters
-- ScalpEngine.adaptive_sl_pts computes stop distance based on conviction and volatility
+- ScalpEngine.adaptive_sl_pts computes stop distance based on conviction and volatility, returning tuples with conviction tiers
 - ScalpEngine.check_exit enforces stops, targets, time exits, and no-life exits
+
+**Updated** The adaptive SL calculation now returns tuples containing both the stop loss points and conviction tier (STRICT/MED/WIDE), providing more granular risk management information.
 
 **Section sources**
 - [master_runner.py:799-886](file://master_runner.py#L799-L886)
 - [scalp_engine.py:52-172](file://engine/scalping/scalp_engine.py#L52-L172)
 - [scalp_engine.py:174-244](file://engine/scalping/scalp_engine.py#L174-L244)
-- [scalp_engine.py:246-280](file://engine/scalping/scalp_engine.py#L246-L280)
+- [scalp_engine.py:246-310](file://engine/scalping/scalp_engine.py#L246-L310)
 - [test_entry_confirmation.py:25-46](file://tests/test_entry_confirmation.py#L25-L46)
 
 ## Architecture Overview
@@ -105,8 +115,8 @@ SE-->>Test : (should_exit, reason)
 
 **Diagram sources**
 - [scalp_engine.py:52-172](file://engine/scalping/scalp_engine.py#L52-L172)
-- [scalp_engine.py:246-280](file://engine/scalping/scalp_engine.py#L246-L280)
-- [test_entry_confirmation.py:213-389](file://tests/test_entry_confirmation.py#L213-L389)
+- [scalp_engine.py:246-310](file://engine/scalping/scalp_engine.py#L246-L310)
+- [test_entry_confirmation.py:213-420](file://tests/test_entry_confirmation.py#L213-L420)
 
 ## Detailed Component Analysis
 
@@ -115,14 +125,18 @@ The entry confirmation function applies four mandatory checks:
 - Structure confirmation: ensures continuation rather than reversal; blocks if price fully gives back the move
 - Pullback entry: avoids chasing extremes; requires price to have retraced within a dynamic band
 - Momentum confirmation: last few ticks must continue pushing in the intended direction
-- Higher timeframe rule: 5m SuperTrend must agree; neutral may block depending on configuration
-- Trap filters: failed breakouts (ORB snap-back) and spike-and-reverse patterns are blocked
+- Higher timeframe rule: 5m SuperTrend must agree; **updated** neutral (0) is now ALLOWED, only opposing directions block
+- Trap filters: failed breakouts (ORB snap-back) and spike-and-reverse patterns are blocked with **updated** 85% give-back threshold
 
 Tests cover:
 - Valid HH/LL continuation leading to confirmation
 - Blocks when structure breaks or momentum stalls
-- HTF opposition and neutral blocking where required
-- Breakout traps and deep give-backs
+- HTF opposition blocking while allowing neutral readings
+- Breakout traps and deep give-backs with revised thresholds
+
+**Updated** The HTF rule now allows neutral conditions (htf5 == 0) to pass through, only blocking when there's explicit opposition (htf5 == -1 for CE / htf5 == +1 for PE).
+
+**Updated** Trap detection thresholds have been relaxed from 65% to 85% give-back tolerance, making the system less sensitive to minor reversals.
 
 ```mermaid
 flowchart TD
@@ -135,9 +149,9 @@ Structure --> Pullback{"Pullback OK?"}
 Pullback --> |No| BlockChase["Return CONFIRM_CHASING_SPIKE / CONFIRM_PULLBACK_FAIL"]
 Pullback --> Momentum{"Momentum OK?"}
 Momentum --> |No| BlockMom["Return CONFIRM_NO_MOMENTUM"]
-Momentum --> HTF{"HTF agrees?"}
-HTF --> |No| BlockHTF["Return CONFIRM_HTF_OPPOSES / NEUTRAL"]
-HTF --> Traps{"Trap detected?"}
+Momentum --> HTF{"HTF agrees or neutral?"}
+HTF --> |Opposing| BlockHTF["Return CONFIRM_HTF_OPPOSES"]
+HTF --> |Agrees/Neutral| Traps{"Trap detected?"}
 Traps --> |Yes| BlockTrap["Return CONFIRM_BREAKOUT_TRAP / SPIKE_TRAP"]
 Traps --> |No| Confirm["Return CONFIRMED"]
 ```
@@ -165,6 +179,8 @@ Tests cover:
 - Adaptive stop-loss tiers based on conviction and volatility
 - Exhaustion blocking for fresh vertical spikes
 - Sparse sample blocking to ensure sufficient confirmation
+
+**Updated** All synthetic price data now uses realistic NIFTY levels around 25,000 points instead of artificial values around 100-120 points, providing more accurate market simulation.
 
 ```mermaid
 flowchart TD
@@ -202,11 +218,14 @@ Adaptive SL computation uses a conviction score derived from:
 - ML engine activity
 - Optional ATR-based scaling with open-volatility penalty
 
+**Updated** The function now returns tuples containing both the calculated stop loss points and the conviction tier (STRICT/MED/WIDE), providing more detailed risk assessment information.
+
 Tests verify:
 - Strict tier for weak/no-support setups
 - Medium tier for moderate conviction
 - Wide tier for strong aligned setups
 - Open-volatility adjustments when applicable
+- **Updated** Assertions now expect tuple format with conviction tier information
 
 ```mermaid
 flowchart TD
@@ -215,11 +234,11 @@ Score --> ATR{"ATR available?"}
 ATR --> |Yes| Tier["Select tier multiplier"]
 Tier --> OpenVol{"Open volatility penalty?"}
 OpenVol --> |Yes| Adjust["Adjust SL with multiplier"]
-OpenVol --> |No| ReturnSL["Return SL & tier"]
+OpenVol --> |No| ReturnTuple["Return (SL, tier) tuple"]
 ATR --> |No| Fixed["Use fixed tiers"]
 Fixed --> OpenVolFixed{"Open volatility penalty?"}
 OpenVolFixed --> |Yes| AdjustFixed["Adjust fixed SL"]
-OpenVolFixed --> |No| ReturnSL
+OpenVolFixed --> |No| ReturnTuple
 ```
 
 **Diagram sources**
@@ -227,7 +246,7 @@ OpenVolFixed --> |No| ReturnSL
 
 **Section sources**
 - [scalp_engine.py:174-244](file://engine/scalping/scalp_engine.py#L174-L244)
-- [test_entry_confirmation.py:274-285](file://tests/test_entry_confirmation.py#L274-L285)
+- [test_entry_confirmation.py:297-309](file://tests/test_entry_confirmation.py#L297-L309)
 
 ### Exit Logic and No-Life Mechanism
 Exit logic enforces:
@@ -255,11 +274,11 @@ Life --> |No| Continue["Return False, ''"]
 ```
 
 **Diagram sources**
-- [scalp_engine.py:246-280](file://engine/scalping/scalp_engine.py#L246-L280)
+- [scalp_engine.py:246-310](file://engine/scalping/scalp_engine.py#L246-L310)
 
 **Section sources**
-- [scalp_engine.py:246-280](file://engine/scalping/scalp_engine.py#L246-L280)
-- [test_entry_confirmation.py:287-389](file://tests/test_entry_confirmation.py#L287-L389)
+- [scalp_engine.py:246-310](file://engine/scalping/scalp_engine.py#L246-L310)
+- [test_entry_confirmation.py:311-420](file://tests/test_entry_confirmation.py#L311-L420)
 
 ### Creating Mock Objects and Synthetic Data
 Patterns demonstrated in tests:
@@ -268,6 +287,8 @@ Patterns demonstrated in tests:
 - Synthetic history helper: builds a deque of (datetime, float) pairs representing 1-second ticks over a defined window
 
 These patterns allow deterministic scenario construction without broker or network dependencies.
+
+**Updated** Synthetic price data now uses realistic NIFTY spot levels around 25,000 points instead of artificial values around 100-120 points, providing more accurate market simulation for scalping strategies.
 
 **Section sources**
 - [test_entry_confirmation.py:25-46](file://tests/test_entry_confirmation.py#L25-L46)
@@ -278,8 +299,8 @@ These patterns allow deterministic scenario construction without broker or netwo
 - Structure confirmation: tests assert both positive cases (HH/LL continuation) and negative cases (no continuation or full reversal)
 - Dynamic pullback bands: tests assert blocks when price chases extremes or gives back too much
 - Momentum confirmation: tests assert blocks when last ticks do not push in the intended direction
-- Higher timeframe rules: tests assert blocks when HTF opposes or is neutral where required
-- Trap filters: tests assert blocks for failed breakouts and spike-and-reverse patterns
+- Higher timeframe rules: **updated** tests assert blocks when HTF opposes but allows neutral conditions where required
+- Trap filters: **updated** tests assert blocks for failed breakouts and spike-and-reverse patterns with revised 85% thresholds
 - Edge cases: tests assert blocks for insufficient history or sparse samples
 
 **Section sources**
@@ -311,15 +332,15 @@ Scalp --> Config["Config-like attrs"]
 ```
 
 **Diagram sources**
-- [test_entry_confirmation.py:1-389](file://tests/test_entry_confirmation.py#L1-L389)
+- [test_entry_confirmation.py:1-420](file://tests/test_entry_confirmation.py#L1-L420)
 - [master_runner.py:799-886](file://master_runner.py#L799-L886)
-- [scalp_engine.py:11-280](file://engine/scalping/scalp_engine.py#L11-L280)
+- [scalp_engine.py:11-310](file://engine/scalping/scalp_engine.py#L11-L310)
 - [context.py:1-56](file://engine/core/context.py#L1-L56)
 
 **Section sources**
-- [test_entry_confirmation.py:1-389](file://tests/test_entry_confirmation.py#L1-L389)
+- [test_entry_confirmation.py:1-420](file://tests/test_entry_confirmation.py#L1-L420)
 - [master_runner.py:799-886](file://master_runner.py#L799-L886)
-- [scalp_engine.py:11-280](file://engine/scalping/scalp_engine.py#L11-L280)
+- [scalp_engine.py:11-310](file://engine/scalping/scalp_engine.py#L11-L310)
 - [context.py:1-56](file://engine/core/context.py#L1-L56)
 
 ## Performance Considerations
@@ -334,17 +355,18 @@ Scalp --> Config["Config-like attrs"]
 Common issues and resolutions:
 - Insufficient history: ensure at least the minimum number of ticks are provided; tests assert CONFIRM_NO_HISTORY when too few
 - Sparse confirmation: ensure enough samples meet the minimum threshold; otherwise entry is blocked
-- HTF misalignment: verify HTF direction matches side requirements; neutral may block depending on configuration
-- Trap detection: check ORB state and recent extremes; failed breakouts will block entries
+- HTF misalignment: **updated** verify HTF direction matches side requirements; neutral (0) is now allowed, only opposing directions block
+- Trap detection: **updated** check ORB state and recent extremes; failed breakouts will block entries with revised 85% thresholds
 - No-life exit: confirm breakeven trigger status and elapsed time; no-life only fires when trade remains dead beyond threshold
+- **Updated** Stop-loss assertions: ensure tests expect tuple format with conviction tiers when calling adaptive_sl_pts
 
 **Section sources**
 - [test_entry_confirmation.py:198-207](file://tests/test_entry_confirmation.py#L198-L207)
 - [test_entry_confirmation.py:345-352](file://tests/test_entry_confirmation.py#L345-L352)
-- [test_entry_confirmation.py:359-389](file://tests/test_entry_confirmation.py#L359-L389)
+- [test_entry_confirmation.py:359-420](file://tests/test_entry_confirmation.py#L359-L420)
 
 ## Conclusion
-The unit testing framework effectively isolates and validates critical trading logic using synthetic data and minimal mocks. It covers structure confirmation, pullback dynamics, momentum, higher timeframe alignment, trap filters, adaptive stop losses, exhaustion filters, and no-life exits. By following the demonstrated patterns, you can extend coverage to new scenarios, parameterize tests for efficiency, and maintain confidence in strategy behavior under diverse market conditions.
+The unit testing framework effectively isolates and validates critical trading logic using synthetic data and minimal mocks. It covers structure confirmation, pullback dynamics, momentum, higher timeframe alignment, trap filters, adaptive stop losses, exhaustion filters, and no-life exits. The comprehensive updates include relaxed HTF neutral conditions, revised trap detection thresholds, realistic price simulations, and enhanced stop-loss tier reporting. By following the demonstrated patterns, you can extend coverage to new scenarios, parameterize tests for efficiency, and maintain confidence in strategy behavior under diverse market conditions.
 
 [No sources needed since this section summarizes without analyzing specific files]
 
@@ -354,6 +376,7 @@ The unit testing framework effectively isolates and validates critical trading l
 - Build a deque of (datetime, float) pairs representing 1-second ticks
 - Use a base timestamp and increment seconds for each tick
 - Keep lengths consistent with the windows used by the logic under test
+- **Updated** Use realistic NIFTY spot levels around 25,000 points instead of artificial values around 100-120 points
 
 **Section sources**
 - [test_entry_confirmation.py:38-41](file://tests/test_entry_confirmation.py#L38-L41)
@@ -372,7 +395,8 @@ The unit testing framework effectively isolates and validates critical trading l
 - Assert boolean confirmation and exact reason codes for both pass and fail scenarios
 - For scalping engine, assert decision presence or absence and exit tuples
 - Validate adaptive SL tiers and exit reasons against expected conditions
+- **Updated** Expect tuple format with conviction tiers when asserting adaptive SL calculations
 
 **Section sources**
 - [test_entry_confirmation.py:72-207](file://tests/test_entry_confirmation.py#L72-L207)
-- [test_entry_confirmation.py:243-389](file://tests/test_entry_confirmation.py#L243-L389)
+- [test_entry_confirmation.py:297-420](file://tests/test_entry_confirmation.py#L297-L420)

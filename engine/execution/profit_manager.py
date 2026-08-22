@@ -195,6 +195,21 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
     max_pnl = max(max_pnl, pnl)
     reason  = None
 
+    # Task #19 (Phase-10): when the Phase-10 premium-space trail is active
+    # (live_engine.check_exit, ML_TRAIL_ENABLED), it is the SOLE stop
+    # mechanism for ML trades — the legacy Rs-based ladder would otherwise
+    # tighten far beyond the approved breakeven@+10 / trail-8-after-+20
+    # tiers (e.g. locking 62% of peak at +10 pts) and break the validated
+    # backtest semantics. Scalp callers pass config=None and keep the ladder.
+    _p10 = bool(getattr(config, "ML_TRAIL_ENABLED", False)) if config is not None else False
+    if _p10:
+        # Fixed target still fires (Phase-10 TARGET = +80 pts premium).
+        if target is not None and ltp >= target:
+            return stop_loss, max_pnl, "TARGET_HIT", None
+        if ltp <= stop_loss:
+            reason = "Stop Loss"
+        return stop_loss, max_pnl, reason, None
+
     # ── 0  Fixed target hit ───────────────────────────────────────────
     # Target is ABOVE entry for both CE and PE (profit when premium rises)
     if target is not None and ltp >= target:

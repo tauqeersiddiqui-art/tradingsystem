@@ -32,6 +32,10 @@ def _load_today(trade_date: Optional[date] = None) -> list:
                 rows.append(row)
             except Exception:
                 pass
+    # Task #20 FIX 3: since the journal flushes an entry-time row (Task #15
+    # BUG 3), open trades leave rows with empty exit_ts/realized_pnl that
+    # would be counted as 0.0 losses. Keep CLOSED trades only.
+    rows = [r for r in rows if r.get("exit_ts")]
     return rows
 
 

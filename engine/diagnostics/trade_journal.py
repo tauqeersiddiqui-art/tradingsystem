@@ -372,6 +372,16 @@ class TradeJournal:
             "min_pnl":  0.0,
         }
 
+        # Task #15 BUG 3 — flush the entry snapshot to disk IMMEDIATELY so
+        # entry-time data survives a crash/kill before on_exit() runs (it was
+        # held in memory only and lost last week). Same cheap append mechanism
+        # used at exit; the final on_exit() row for this jid carries the
+        # completed record (exit_ts empty here marks the entry-time copy).
+        try:
+            self._write_row(self._journal_path, _JOURNAL_COLUMNS, record)
+        except Exception as _entry_flush_e:
+            logger.warning(f"[JOURNAL] entry flush failed (non-fatal): {_entry_flush_e}")
+
         logger.info(
             f"[JOURNAL] ENTRY jid={jid} {position.get('side')} {position.get('symbol')} "
             f"entry={price:.2f} ml={position.get('ml_prob',0):.3f} "

@@ -12,11 +12,10 @@
 
 ## Update Summary
 **Changes Made**
-- Updated Entry Quality Filter to reflect symmetric coordinate handling for both CE and PE instruments
-- Enhanced documentation of the seven-stage rejection pipeline with consistent behavior across option types
-- Added comprehensive coverage of module-level rejection counters (_REJECTION_COUNTS, _QUALITY_EVALS) for aggregate statistics
-- Updated threshold configuration section to document the mirrored coordinate system where CE uses raw values and PE uses inverted values (1.0 - raw)
-- Enhanced quality scoring mechanism documentation with symmetric coordinate handling
+- Updated HTF SuperTrend validation to allow neutral readings while maintaining strict opposition blocking
+- Increased trap filter threshold from 65% to 85% give-back detection for failed breakouts
+- Refined momentum confirmation logic to compare last tick against tick three positions back instead of collective 5-tick analysis
+- Enhanced documentation to reflect these threshold and logic adjustments across all relevant sections
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -209,10 +208,22 @@ Check -- No --> Success["Return acceptance with metrics"]
 - Checks:
   - Structure confirmation: Avoid full reversal of prior move.
   - Pullback entry: Avoid chasing extremes; require retracement within dynamic band.
-  - Momentum: Last ticks must continue pushing direction.
+  - Momentum: Last tick must continue pushing direction compared to tick three positions back.
   - HTF rule: 5m SuperTrend must agree (neutral/opposing blocks).
-  - Trap filters: Failed breakout snap-back and spike-and-reverse patterns.
+  - Trap filters: Failed breakout snap-back and spike-and-reverse patterns with **85% threshold**.
 - Output: (confirmed, reason).
+
+**Updated HTF Validation Logic:**
+- **Neutral Allowance**: HTF SuperTrend reading of 0 (neutral) is now permitted, only opposing directions (-1 for CE, +1 for PE) block entries
+- **Relaxed Validation**: This change reduces false negatives during transitional market phases while maintaining protection against strong opposing trends
+
+**Updated Trap Filter Threshold:**
+- **Increased Sensitivity**: Trap detection threshold raised from 65% to 85% give-back, allowing more volatile breakouts while still catching genuine traps
+- **Reduced False Positives**: Higher threshold reduces unnecessary entry blocks during normal market volatility
+
+**Updated Momentum Confirmation:**
+- **Refined Logic**: Momentum check now compares the last tick against the tick three positions back (`prices[-3:]` comparison) instead of analyzing the last 5 ticks collectively
+- **Improved Accuracy**: This approach provides more precise momentum assessment by focusing on immediate directional consistency
 
 ```mermaid
 flowchart TD
@@ -223,11 +234,11 @@ Windows --> Struct{"Structure OK?"}
 Struct -- No --> BlockStruct["Block: CONFIRM_STRUCT_BREAK"]
 Struct -- Yes --> Pullback{"Pullback OK?"}
 Pullback -- No --> BlockPull["Block: CONFIRM_CHASING_SPIKE / CONFIRM_PULLBACK_FAIL"]
-Pullback -- Yes --> Mom{"Momentum OK?"}
+Pullback -- Yes --> Mom{"Momentum OK?<br/>(last tick vs 3-back)"}
 Mom -- No --> BlockMom["Block: CONFIRM_NO_MOMENTUM"]
-Mom -- Yes --> HTF{"HTF agrees?"}
+Mom -- Yes --> HTF{"HTF agrees?<br/>(neutral allowed)"}
 HTF -- No --> BlockHTF["Block: CONFIRM_HTF_OPPOSES"]
-HTF -- Yes --> Trap{"Trap detected?"}
+HTF -- Yes --> Trap{"Trap detected?<br/>(85% threshold)"}
 Trap -- Yes --> BlockTrap["Block: CONFIRM_BREAKOUT_TRAP / CONFIRM_SPIKE_TRAP"]
 Trap -- No --> Confirm["Confirmed"]
 ```
@@ -338,6 +349,7 @@ EQ --> Stats["_REJECTION_COUNTS & _QUALITY_EVALS"]
 - Phase 5.5 filter adds minimal overhead via confidence lookups and regime inference.
 - **Symmetric coordinate handling** adds negligible computational overhead while providing consistent behavior across option types.
 - **Module-level counters** provide O(1) increment operations with minimal memory overhead.
+- **Updated momentum logic** reduces computational complexity by comparing only 2 ticks instead of analyzing 5-tick windows.
 
 ## Troubleshooting Guide
 Common rejection reasons and diagnostics:
@@ -363,3 +375,9 @@ Use backtest replay to inspect rejection breakdowns and validate parameter chang
 
 ## Conclusion
 The Entry Quality Filter system combines robust, rejection-first timing and quality checks with **symmetric coordinate handling for CE and PE options**, live confirmation gates, and optional ML-aware Phase 5.5 filtering. The symmetric approach addresses the different characteristics between call and put options through mirrored coordinates, providing consistent behavior across option types while maintaining the same threshold logic. The addition of module-level rejection counters enables comprehensive statistical analysis and reporting. Together, these layers significantly reduce low-probability entries, protect against traps and late entries, and improve the expected profitability of trades. The backtest replay tool enables continuous validation and tuning of parameters and thresholds with detailed rejection statistics.
+
+**Recent Enhancements:**
+- **Relaxed HTF Validation**: Neutral SuperTrend readings now permit entries while maintaining protection against opposing trends
+- **Improved Trap Detection**: 85% threshold provides better balance between catching genuine traps and avoiding false positives
+- **Refined Momentum Analysis**: Direct tick comparison improves accuracy of momentum assessment
+These updates enhance the system's ability to adapt to varying market conditions while maintaining strict quality standards.

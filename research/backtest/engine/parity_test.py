@@ -32,6 +32,13 @@ class ParityTestWrapper:
 
     def __init__(self, config=None, lots_per_trade=1, enable_ce=True, enable_pe=True):
         self.config = config or Config()
+        # Task #20 FIX 7: force the LEGACY exit regime — Config()'s live
+        # default ML_TRAIL_ENABLED=True would silently switch the wrapped
+        # LiveEngine.check_exit to Phase-10 exits, but the parity suite
+        # validates the legacy ladder/drawdown regime. Must be the boolean
+        # False (the consumer checks truthiness — "0" would stay truthy).
+        # Live default is NOT changed.
+        self.config.ML_TRAIL_ENABLED = False
         self.lot_size = lot_qty(self.config)
         self.lots_per_trade = lots_per_trade
         self.qty = self.lot_size * lots_per_trade

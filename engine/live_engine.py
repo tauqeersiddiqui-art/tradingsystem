@@ -1436,6 +1436,31 @@ class LiveEngine:
         ml_prob   = position.get("ml_prob", 0.5)
         side      = position.get("side", "CE")
 
+        # ── Task #19 (Phase-10): premium-space trailing stop ────────────
+        # Backtest-matched trail (scripts/backtest_exit_tuning.py):
+        #   profit >= ML_TRAIL_BE_PTS (+10 pts) -> stop to breakeven
+        #       (entry + round-trip cost, in premium pts)
+        #   profit >= ML_TRAIL_T2_PTS (+20 pts) -> stop trails
+        #       ML_TRAIL_GAP_PTS (8 pts) below the high-water mark.
+        # Same price source as the SL (option premium LTP). Peak is derived
+        # from max_pnl (monotonic), so once a tier arms it stays armed —
+        # identical to the backtest's arm-on-first-touch semantics.
+        # Stop only TIGHTENS (max() ratchet); the profit_manager ladder
+        # below can only tighten further, never loosen.
+        _cfg19 = getattr(self.ctx, "config", None)
+        if _cfg19 is not None and bool(getattr(_cfg19, "ML_TRAIL_ENABLED", False)):
+            _qty19 = max(size, 1)
+            _peak_pts19 = max(max_pnl, (ltp - entry) * _qty19) / _qty19
+            if _peak_pts19 >= float(getattr(_cfg19, "ML_TRAIL_T2_PTS", 20.0)):
+                _hwm_price19 = entry + _peak_pts19
+                stop_loss = max(stop_loss, _hwm_price19 - float(getattr(_cfg19, "ML_TRAIL_GAP_PTS", 8.0)))
+            elif _peak_pts19 >= float(getattr(_cfg19, "ML_TRAIL_BE_PTS", 10.0)):
+                try:
+                    _cost_pts19 = round_trip_cost(_qty19, _cfg19) / _qty19
+                except Exception:
+                    _cost_pts19 = 2.2  # Rs66 / 30 qty baseline fallback
+                stop_loss = max(stop_loss, entry + _cost_pts19)
+
         # ── profit_manager handles trailing + lock system ─────────────
         # Pass config for Tier 2 params (TRAIL_ACTIVATION_PTS, etc.)
         new_sl, new_max_pnl, pm_reason, scale_out_info = manage_position(
@@ -1463,10 +1488,17 @@ class LiveEngine:
             )
 
         # Track highest ladder rung for diagnostics journal
-        from engine.execution.profit_manager import ladder_locked_rs
-        _lrs, _lstage = ladder_locked_rs(new_max_pnl, size)
-        if _lrs > 0:
-            position["_ladder_stage"] = _lstage
+        # Task #20 FIX 9: when the Phase-10 trail is active the legacy
+        # ladder is bypassed (profit_manager returns early) — stamp the
+        # P10 stage instead of a misleading ladder rung.
+        if _cfg19 is not None and bool(getattr(_cfg19, "ML_TRAIL_ENABLED", False)):
+            if new_max_pnl > 0:
+                position["_ladder_stage"] = "P10_TRAIL"
+        else:
+            from engine.execution.profit_manager import ladder_locked_rs
+            _lrs, _lstage = ladder_locked_rs(new_max_pnl, size)
+            if _lrs > 0:
+                position["_ladder_stage"] = _lstage
 
         if pm_reason:
             return True, pm_reason

@@ -1,6 +1,6 @@
 schema_version: 1
 module_path: research
-title: Research Backtest & Parity Validation Suite
+title: Research Backtest & Parity Validation
 scope:
     - research/
 source_files: []

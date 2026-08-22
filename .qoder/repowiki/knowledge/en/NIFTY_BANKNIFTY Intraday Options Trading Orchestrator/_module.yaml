@@ -1,6 +1,6 @@
 schema_version: 1
 module_path: ""
-title: NIFTY/BANKNIFTY Intraday Options Trading System
+title: NIFTY/BANKNIFTY Intraday Options Trading Orchestrator
 scope:
     - SESSION_HANDOFF.md
     - .gitignore

@@ -13,7 +13,15 @@
 - [performance.py](file://engine/analytics/performance.py)
 - [monitor_session.py](file://scripts/monitor_session.py)
 - [supervisor.py](file://scripts/supervisor.py)
+- [state_store.py](file://engine/core/state_store.py)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Enhanced Telegram message formatting with defensive programming practices using .get() methods with sensible defaults
+- Improved error handling for restored or legacy position data to prevent KeyError exceptions
+- Updated trade message formatting functions to handle missing fields gracefully
+- Strengthened position data restoration and deserialization processes
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -143,7 +151,7 @@ AN-->>TG : alerts on threshold breaches
 
 ### Real-Time Dashboards
 - Two persistent Telegram messages are maintained:
-  - AI Engine dashboard: technical indicators, ML bias bars, scoring, decision reason, today’s stats
+  - AI Engine dashboard: technical indicators, ML bias bars, scoring, decision reason, today's stats
   - Live Market dashboard: current position details, trailing stop lock levels, ORB/VWAP, engine state
 - Messages are edited in place using persisted message IDs; if a target message is deleted, the system recreates it automatically.
 - Human-readable formatting includes emojis, bar charts, and concise sections for quick scanning.
@@ -173,7 +181,7 @@ EditOrSend --> End(["Done"])
 - [notifier.py:333-378](file://telegram/notifier.py#L333-L378)
 
 ### Trade Flow Monitoring and Notifications
-- Trade entry messages include an inline “EXIT NOW” button; while open, messages are live-edited with updated PnL, peak PnL, trailing stop locks, and hold time.
+- Trade entry messages include an inline "EXIT NOW" button; while open, messages are live-edited with updated PnL, peak PnL, trailing stop locks, and hold time.
 - Exit messages summarize realized PnL, MFE/MAE, exit reason mapping, and context (ML confidence, regime).
 - Scalp layer has separate entry/live/exit messages with similar live updates.
 - Trade permission prompt appears in live mode with a short timeout; auto-approve in paper/dry-run modes.
@@ -208,8 +216,45 @@ MSG-->>TG : freeze/delete trade message
 - [messages.py:274-324](file://telegram/messages.py#L274-L324)
 - [notifier.py:419-479](file://telegram/notifier.py#L419-L479)
 
+### Enhanced Message Formatting with Defensive Programming
+**Updated** The Telegram message formatting system has been significantly enhanced with defensive programming practices to handle restored or legacy position data gracefully.
+
+Key improvements include:
+- **Defensive Dictionary Access**: All position data access now uses `.get()` methods with sensible defaults instead of direct dictionary access, preventing KeyError exceptions
+- **Legacy Position Support**: Enhanced handling for positions that may lack certain fields due to version upgrades or data corruption
+- **Robust Error Handling**: Graceful degradation when expected fields are missing from position data
+
+Specific enhancements:
+- `format_trade_live()`: Uses `position.get("lot_size") or 30` to handle missing lot_size fields
+- `format_trade_exit()`: Implements `data.get("lot_size") or 30` for backward compatibility
+- `format_scalp_exit()`: Applies defensive programming with `pos.get("qty", 0)` and `pos.get("lot_size") or 30`
+- State restoration: Enhanced `deserialize_position()` function handles timestamp parsing failures gracefully
+
+```mermaid
+flowchart TD
+PositionData["Position Data"] --> CheckFields{"Check Required Fields"}
+CheckFields --> MissingField{"Field Missing?"}
+MissingField -- Yes --> UseDefault["Use Sensible Default"]
+MissingField -- No --> ProcessNormal["Process Normally"]
+UseDefault --> FormatMessage["Format Message"]
+ProcessNormal --> FormatMessage
+FormatMessage --> SendMessage["Send to Telegram"]
+```
+
+**Diagram sources**
+- [messages.py:202-267](file://telegram/messages.py#L202-L267)
+- [messages.py:276-324](file://telegram/messages.py#L276-L324)
+- [messages.py:404-452](file://telegram/messages.py#L404-L452)
+- [state_store.py:85-96](file://engine/core/state_store.py#L85-L96)
+
+**Section sources**
+- [messages.py:202-267](file://telegram/messages.py#L202-L267)
+- [messages.py:276-324](file://telegram/messages.py#L276-L324)
+- [messages.py:404-452](file://telegram/messages.py#L404-L452)
+- [state_store.py:85-96](file://engine/core/state_store.py#L85-L96)
+
 ### End-of-Day Reporting
-- Reads the day’s journal CSV, computes overall metrics (wins, losses, win rate, profit factor, expectancy, net PnL, max drawdown), side-specific breakdowns (CE/PE), exit reasons, loss classes, MFE/MAE, and shadow analysis.
+- Reads the day's journal CSV, computes overall metrics (wins, losses, win rate, profit factor, expectancy, net PnL, max drawdown), side-specific breakdowns (CE/PE), exit reasons, loss classes, MFE/MAE, and shadow analysis.
 - Logs a structured summary and optionally formats a Telegram message.
 - Provides helper functions to generate formatted reports for Telegram.
 
@@ -265,7 +310,7 @@ Notifier --> Messages : "uses for formatting"
 ```
 
 **Diagram sources**
-- [notifier.py:117-163](file://telegram/notifier.py#L117-L163)
+- [notifier.py:117-163](file://telegram/notifier.py#L117-163)
 - [notifier.py:321-378](file://telegram/notifier.py#L321-L378)
 - [notifier.py:544-579](file://telegram/notifier.py#L544-L579)
 - [notifier.py:600-698](file://telegram/notifier.py#L600-L698)
@@ -276,7 +321,7 @@ Notifier --> Messages : "uses for formatting"
 - [messages.py:615-709](file://telegram/messages.py#L615-L709)
 
 **Section sources**
-- [notifier.py:117-163](file://telegram/notifier.py#L117-L163)
+- [notifier.py:117-163](file://telegram/notifier.py#L117-163)
 - [notifier.py:321-378](file://telegram/notifier.py#L321-L378)
 - [notifier.py:544-579](file://telegram/notifier.py#L544-L579)
 - [notifier.py:600-698](file://telegram/notifier.py#L600-L698)
@@ -441,6 +486,7 @@ TG --> MSG["messages.py"]
   - Rotate logs periodically to manage disk usage.
 - Analytics cost:
   - Run drift checks and EOD reports off the hot path; schedule at low-frequency intervals.
+- **Enhanced Resilience**: Defensive programming practices reduce exception handling overhead and improve system stability when processing legacy or corrupted position data.
 
 [No sources needed since this section provides general guidance]
 
@@ -458,6 +504,10 @@ Common issues and resolutions:
 - Process liveness:
   - Supervisor checks PID and last log line; alerts if unresponsive.
   - Monitor script tails logs and filters relevant events for quick diagnosis.
+- **Position Data Issues**: 
+  - Legacy positions without required fields are handled gracefully with default values
+  - State restoration failures are logged but don't crash the system
+  - Missing lot_size or qty fields default to sensible values (30 lots, 0 quantity)
 
 **Section sources**
 - [notifier.py:38-46](file://telegram/notifier.py#L38-L46)
@@ -474,6 +524,7 @@ The platform provides robust monitoring and alerting through:
 - Health monitoring and drift detection to safeguard performance
 - Structured logging and operational tools for troubleshooting
 - Extensibility for custom monitors and integrations with external systems
+- **Enhanced resilience** through defensive programming practices that handle legacy and corrupted data gracefully
 
 [No sources needed since this section summarizes without analyzing specific files]
 
@@ -494,8 +545,11 @@ The platform provides robust monitoring and alerting through:
 - Health snapshot schema includes core metrics, performance, system state, and execution details.
 - Trade logs capture comprehensive fields for post-trade analysis and reporting.
 - EOD journals store daily trade records used for analytics and reporting.
+- **Enhanced Position Data Handling**: State persistence and restoration now includes defensive programming to handle missing or corrupted position data gracefully.
 
 **Section sources**
 - [health_monitor.py:19-42](file://engine/core/health_monitor.py#L19-L42)
 - [trade_logger.py:25-40](file://engine/services/trade_logger.py#L25-L40)
 - [eod_report.py:15-20](file://engine/diagnostics/eod_report.py#L15-L20)
+- [state_store.py:20-28](file://engine/core/state_store.py#L20-L28)
+- [state_store.py:85-96](file://engine/core/state_store.py#L85-L96)

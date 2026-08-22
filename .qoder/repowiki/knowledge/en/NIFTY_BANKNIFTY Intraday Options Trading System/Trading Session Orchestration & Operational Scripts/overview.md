@@ -1,1 +1,0 @@
-Operational scripts that supervise the live trading engine, monitor its logs, refresh Zerodha historical data, backtest entry-timing variants, and auto-start sessions via Windows Task Scheduler.

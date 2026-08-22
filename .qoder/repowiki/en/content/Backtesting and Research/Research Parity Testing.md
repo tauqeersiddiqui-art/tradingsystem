@@ -21,17 +21,26 @@
 - [research-tests.yml](file://.github/workflows/research-tests.yml)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated ResearchEngine architecture section to document ML_TRAIL_ENABLED configuration override
+- Added detailed explanation of Phase-10 vs legacy exit behavior differences
+- Enhanced troubleshooting guide with ML_TRAIL_ENABLED parity issues
+- Updated exit logic diagrams to show Phase-10 trail activation conditions
+- Added new section on exit regime parity validation
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
+6. [Exit Regime Parity](#exit-regime-parity)
+7. [Dependency Analysis](#dependency-analysis)
+8. [Performance Considerations](#performance-considerations)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Conclusion](#conclusion)
+11. [Appendices](#appendices)
 
 ## Introduction
 This document explains the research parity testing framework that ensures consistency between live trading and research environments. It focuses on:
@@ -42,6 +51,7 @@ This document explains the research parity testing framework that ensures consis
 - Practical guidance for writing new parity tests, debugging discrepancies, and maintaining coverage
 - Utilities for simulating market conditions, generating test data, and validating edge cases
 - Common issues such as environment differences, timing variations, and external dependency changes
+- **Critical**: Exit regime parity ensuring backtesting validates established ladder/drawdown behavior rather than new Phase-10 exits
 
 ## Project Structure
 The parity testing framework is organized under research/backtest with supporting components in engine and ml. Key areas:
@@ -88,9 +98,9 @@ LE --> ML
 ```
 
 **Diagram sources**
-- [research_engine.py:1-578](file://research/backtest/engine/research_engine.py#L1-L578)
+- [research_engine.py:1-587](file://research/backtest/engine/research_engine.py#L1-L587)
 - [researchengine.py:1-413](file://research/backtest/engine/researchengine.py#L1-L413)
-- [parity_test.py:1-174](file://research/backtest/engine/parity_test.py#L1-L174)
+- [parity_test.py:1-181](file://research/backtest/engine/parity_test.py#L1-L181)
 - [wrapper.py:1-214](file://research/backtest/wrapper.py#L1-L214)
 - [golden_trades.py:1-62](file://research/backtest/tests/golden_trades.py#L1-L62)
 - [test_parity.py:1-533](file://research/backtest/tests/test_parity.py#L1-L533)
@@ -99,9 +109,9 @@ LE --> ML
 - [live_engine.py:1-200](file://engine/live_engine.py#L1-L200)
 
 **Section sources**
-- [research-engine.py:1-578](file://research/backtest/engine/research_engine.py#L1-L578)
+- [research-engine.py:1-587](file://research/backtest/engine/research_engine.py#L1-L587)
 - [researchengine.py:1-413](file://research/backtest/engine/researchengine.py#L1-L413)
-- [parity_test.py:1-174](file://research/backtest/engine/parity_test.py#L1-L174)
+- [parity_test.py:1-181](file://research/backtest/engine/parity_test.py#L1-L181)
 - [wrapper.py:1-214](file://research/backtest/wrapper.py#L1-L214)
 - [golden_trades.py:1-62](file://research/backtest/tests/golden_trades.py#L1-L62)
 - [test_parity.py:1-533](file://research/backtest/tests/test_parity.py#L1-L533)
@@ -110,9 +120,9 @@ LE --> ML
 - [live_engine.py:1-200](file://engine/live_engine.py#L1-L200)
 
 ## Core Components
-- ResearchEngine (clean room): Mirrors LiveEngine decision logic using shared modules; enforces Bank Nifty lot size invariants and consistent sizing; implements ORB, feature building, entry/exit checks, and PnL accounting via live cost model.
+- ResearchEngine (clean room): Mirrors LiveEngine decision logic using shared modules; enforces Bank Nifty lot size invariants and consistent sizing; implements ORB, feature building, entry/exit checks, and PnL accounting via live cost model. **Critical**: Forces `ML_TRAIL_ENABLED = False` to maintain parity with legacy exit behavior.
 - ResearchBacktestEngine (parity layer): Thin wrapper around LiveEngine to run day-by-day parity comparisons, generate reports, and assert invariants without duplicating logic.
-- ParityTestWrapper: Thin adapter that calls live engine methods directly for entry/exit/close parity checks and validates invariants.
+- ParityTestWrapper: Thin adapter that calls live engine methods directly for entry/exit/close parity checks and validates invariants. **Critical**: Also forces `ML_TRAIL_ENABLED = False` for parity validation.
 - ResearchWrapper: Single-candle simulation harness for golden trades; builds features via live engine, drives deterministic exits, and returns standardized trade records.
 - GoldenTradeCase and canonical cases: Data-driven scenarios describing expected entries, stops, targets, and exit reasons for deterministic validation.
 - Test suites: pytest-based parity and golden trade tests with mocked predictors and learners to ensure determinism while exercising live logic.
@@ -182,12 +192,15 @@ Responsibilities:
 - Mirror exit logic: delegate to profit manager and apply time-based exit when weak
 - Close positions using live cost model and compute MFE/giveback
 
+**Updated** Critical configuration override: Forces `ML_TRAIL_ENABLED = False` in research mode to maintain parity with legacy exit behavior. This prevents the research engine from accidentally switching to Phase-10 premium-space trailing exits during backtesting.
+
 Key behaviors:
 - ORB window gating prevents early entries
 - Predict-first direction selection with ML floors and edge margin
 - Risk stops computed from regime-aware ATR
 - Expected PnL guard filters low-edge signals
 - Phase55 filter can block trades based on regime and confidence
+- **Exit regime parity**: Legacy ladder/drawdown exits enforced via ML_TRAIL_ENABLED override
 
 ```mermaid
 flowchart TD
@@ -206,15 +219,24 @@ PnLGUARD --> |No| BlockPnL["Block: PNL_GUARD"]
 PnLGUARD --> |Yes| Phase55{"Phase55 allow?"}
 Phase55 --> |No| BlockP55["Block: PHASE55_BLOCK"]
 Phase55 --> |Yes| Signal["Return Entry Signal"]
+Signal --> ExitCheck{"Position Open?"}
+ExitCheck --> |Yes| ExitRegime{"ML_TRAIL_ENABLED?"}
+ExitRegime --> |False| LegacyExit["Legacy Ladder/Drawdown Exits"]
+ExitRegime --> |True| Phase10Exit["Phase-10 Premium Trail"]
+LegacyExit --> TimeExit["Time-based Exit if Weak"]
+Phase10Exit --> TimeExit
+TimeExit --> End(["End"])
 ```
 
 **Diagram sources**
 - [research_engine.py:123-319](file://research/backtest/engine/research_engine.py#L123-L319)
+- [research_engine.py:328-365](file://research/backtest/engine/research_engine.py#L328-L365)
 
 **Section sources**
 - [research_engine.py:48-122](file://research/backtest/engine/research_engine.py#L48-L122)
 - [research_engine.py:141-319](file://research/backtest/engine/research_engine.py#L141-L319)
-- [research_engine.py:358-530](file://research/backtest/engine/research_engine.py#L358-L530)
+- [research_engine.py:328-365](file://research/backtest/engine/research_engine.py#L328-L365)
+- [research_engine.py:367-495](file://research/backtest/engine/research_engine.py#L367-L495)
 
 ### ResearchBacktestEngine (parity layer)
 Responsibilities:
@@ -275,9 +297,12 @@ Responsibilities:
 - Verify entry and exit invariants (qty multiples, net PnL arithmetic)
 - Provide a full parity suite runner over historical data windows
 
+**Updated** Critical configuration override: Forces `ML_TRAIL_ENABLED = False` to ensure parity tests validate the legacy exit regime rather than Phase-10 exits.
+
 Key behaviors:
 - Delegates entirely to live engine public methods
 - Validates that signals meet sizing constraints and PnL calculations are consistent
+- **Exit regime enforcement**: Ensures parity tests use legacy ladder/drawdown exits
 
 ```mermaid
 sequenceDiagram
@@ -402,6 +427,69 @@ Key behaviors:
 **Section sources**
 - [run_quick_backtest.py:22-138](file://research/backtest/run_quick_backtest.py#L22-L138)
 
+## Exit Regime Parity
+
+### Phase-10 vs Legacy Exit Behavior
+
+**Critical Configuration Override**: The research engine and parity test wrapper both force `ML_TRAIL_ENABLED = False` to ensure backtesting validates the established ladder/drawdown exit regime rather than the new Phase-10 premium-space trailing exits.
+
+#### Phase-10 Premium-Space Trailing (When Enabled)
+When `ML_TRAIL_ENABLED = True`, the live engine implements a premium-space trailing system:
+- At +10 points profit: Stop moves to breakeven (entry + round-trip cost)
+- At +20 points profit: Stop trails 8 points below high-water mark
+- Bypasses traditional ladder system entirely for ML trades
+- Uses premium point space instead of Rs-based calculations
+
+#### Legacy Ladder/Drawdown System (Research Mode)
+When `ML_TRAIL_ENABLED = False` (research mode):
+- Traditional Rs-based profit ladder activates at various profit levels
+- Drawdown protection kicks in after meaningful profit (≥ qty × 10)
+- Hard stop loss remains active throughout trade lifecycle
+- Maintains parity with established backtested behavior
+
+```mermaid
+flowchart TD
+Start(["Position Open"]) --> CheckTrail{"ML_TRAIL_ENABLED?"}
+CheckTrail --> |True| Phase10["Phase-10 Premium Trail"]
+CheckTrail --> |False| Legacy["Legacy Ladder System"]
+Phase10 --> BECheck{"Profit ≥ +10 pts?"}
+BECheck --> |Yes| MoveBE["Move SL to Breakeven"]
+BECheck --> |No| TrailCheck{"Profit ≥ +20 pts?"}
+TrailCheck --> |Yes| Trail["Trail 8pts below HWM"]
+TrailCheck --> |No| Monitor["Monitor Position"]
+Legacy --> Ladder["Activate Profit Ladder"]
+Ladder --> Drawdown{"Meaningful Profit?"}
+Drawdown --> |Yes| DD["Apply Drawdown Protection"]
+Drawdown --> |No| HardSL["Maintain Hard Stop Loss"]
+MoveBE --> Monitor
+Trail --> Monitor
+DD --> Monitor
+HardSL --> Monitor
+Monitor --> TimeCheck{"Max Hold Reached?"}
+TimeCheck --> |Yes| TimeExit["TIME_EXIT_WEAK"]
+TimeCheck --> |No| CheckTrail
+```
+
+**Diagram sources**
+- [live_engine.py:1439-1525](file://engine/live_engine.py#L1439-L1525)
+- [profit_manager.py:198-240](file://engine/execution/profit_manager.py#L198-L240)
+- [research_engine.py:328-365](file://research/backtest/engine/research_engine.py#L328-L365)
+
+### Configuration Enforcement
+
+Both research components enforce legacy exit behavior:
+
+**ResearchEngine.__init__**: Forces `self.config.ML_TRAIL_ENABLED = False` with explicit comment explaining this prevents silent switching to Phase-10 exits during backtesting.
+
+**ParityTestWrapper.__init__**: Also forces `self.config.ML_TRAIL_ENABLED = False` to ensure parity tests validate the legacy regime.
+
+**Config Default**: The live system defaults to `ML_TRAIL_ENABLED = True` (line 61 in config.py), making the research overrides critical for parity validation.
+
+**Section sources**
+- [research_engine.py:67-73](file://research/backtest/engine/research_engine.py#L67-L73)
+- [parity_test.py:35-41](file://research/backtest/engine/parity_test.py#L35-L41)
+- [config.py:61](file://engine/config/config.py#L61)
+
 ## Dependency Analysis
 The parity framework depends on live engine and shared modules to ensure fidelity:
 - Feature pipeline: build_live_features from ml.feature_config
@@ -429,12 +517,14 @@ LE --> RM
 LE --> CM
 LE --> PM
 LE --> CFG
+CFG --> ML_TRAIL["ML_TRAIL_ENABLED"]
 ```
 
 **Diagram sources**
 - [research_engine.py:17-37](file://research/backtest/engine/research_engine.py#L17-L37)
 - [researchengine.py:20-34](file://research/backtest/engine/researchengine.py#L20-L34)
 - [live_engine.py:13-24](file://engine/live_engine.py#L13-L24)
+- [config.py:61](file://engine/config/config.py#L61)
 
 **Section sources**
 - [research_engine.py:17-37](file://research/backtest/engine/research_engine.py#L17-L37)
@@ -446,8 +536,7 @@ LE --> CFG
 - Deterministic mocks: Tests mock ML components to avoid non-deterministic predictions and reduce runtime variance.
 - Early exits: Time-based exits and session gates prevent unnecessary processing outside valid trading windows.
 - Batch reporting: Parity reports aggregate daily results to minimize overhead and provide concise summaries.
-
-[No sources needed since this section provides general guidance]
+- **Exit regime optimization**: Legacy ladder system provides more granular profit management compared to Phase-10's binary trail activation.
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -457,18 +546,28 @@ Common issues and resolutions:
 - External dependency changes: Patch predictor and learner classes in tests to isolate behavior and maintain parity.
 - Sizing mismatches: Validate that quantities are multiples of 30 and consistent with Bank Nifty lot size; check cost model outputs.
 - Exit reason mismatches: Confirm price paths trigger expected exits (target/stop/time) and that wrapper logic advances feed correctly.
+- **Critical**: Exit regime parity failures - If tests fail due to different exit behavior, verify `ML_TRAIL_ENABLED` is properly set to `False` in research components.
+
+**Updated** Exit regime troubleshooting:
+- **Symptom**: Research backtest shows different exit behavior than live trading
+- **Cause**: `ML_TRAIL_ENABLED` configuration mismatch between research and live environments
+- **Solution**: Ensure research components explicitly set `ML_TRAIL_ENABLED = False` to maintain parity with legacy exit behavior
+- **Verification**: Check that research engine and parity test wrapper both override the default `True` value
 
 Practical steps:
 - Run parity tests locally with pytest -v to see detailed failures
 - Inspect daily parity results for mismatched signals or exit reasons
 - Add golden trade cases to cover new edge cases and regression scenarios
 - Use quick backtest runner to generate sample logs and verify quantity handling
+- **Debug exit regime**: Print `config.ML_TRAIL_ENABLED` values in research components to verify legacy mode
 
 **Section sources**
 - [test_parity.py:68-81](file://research/backtest/tests/test_parity.py#L68-L81)
 - [test_parity.py:130-180](file://research/backtest/tests/test_parity.py#L130-L180)
 - [test_golden_trades.py:100-146](file://research/backtest/tests/test_golden_trades.py#L100-L146)
 - [run_quick_backtest.py:61-138](file://research/backtest/run_quick_backtest.py#L61-L138)
+- [research_engine.py:67-73](file://research/backtest/engine/research_engine.py#L67-L73)
+- [parity_test.py:35-41](file://research/backtest/engine/parity_test.py#L35-L41)
 
 ## Conclusion
 The research parity testing framework ensures that research environments mirror live trading behavior by delegating to the live engine and shared modules. It combines:
@@ -477,10 +576,9 @@ The research parity testing framework ensures that research environments mirror 
 - Golden trades suite for deterministic scenario validation
 - Robust test infrastructure with mocks and price feeds
 - CI integration to catch regressions early
+- **Critical exit regime parity**: Explicit enforcement of legacy ladder/drawdown exits in research mode to validate established backtested behavior
 
-Adhering to these practices helps maintain parity across environments, detect behavioral drift, and ensure reproducible results.
-
-[No sources needed since this section summarizes without analyzing specific files]
+Adhering to these practices helps maintain parity across environments, detect behavioral drift, and ensure reproducible results. The explicit `ML_TRAIL_ENABLED = False` override ensures research backtesting validates the proven legacy exit regime rather than experimental Phase-10 behavior.
 
 ## Appendices
 
@@ -491,6 +589,7 @@ Steps:
 - Use ResearchWrapper to simulate single-candle lifecycle with mocked predictor/learner
 - Assert structure and numeric tolerances for entry/exit fields
 - Add tests to test_parity.py or test_golden_trades.py and run via pytest
+- **Verify exit regime**: Ensure tests validate legacy ladder/drawdown exits, not Phase-10 trails
 
 **Section sources**
 - [golden_trades.py:23-62](file://research/backtest/tests/golden_trades.py#L23-L62)
@@ -504,11 +603,13 @@ Approach:
 - Verify price paths and exit triggers in golden trades
 - Confirm mocked ML values align with expected thresholds
 - Use quick backtest runner to generate logs and compare with live outputs
+- **Debug exit regime**: Print configuration values and verify `ML_TRAIL_ENABLED` is properly overridden
 
 **Section sources**
 - [researchengine.py:201-233](file://research/backtest/engine/researchengine.py#L201-L233)
 - [test_parity.py:288-447](file://research/backtest/tests/test_parity.py#L288-L447)
 - [run_quick_backtest.py:61-138](file://research/backtest/run_quick_backtest.py#L61-L138)
+- [research_engine.py:67-73](file://research/backtest/engine/research_engine.py#L67-L73)
 
 ### Maintaining Test Coverage
 Guidelines:
@@ -517,6 +618,7 @@ Guidelines:
 - Keep mocks stable and aligned with live interfaces
 - Run parity tests on PRs touching research or related paths
 - Periodically review CI failures and update cases as needed
+- **Validate exit regime**: Ensure new tests cover both legacy and Phase-10 exit scenarios when appropriate
 
 **Section sources**
 - [research-tests.yml:13-33](file://.github/workflows/research-tests.yml#L13-L33)

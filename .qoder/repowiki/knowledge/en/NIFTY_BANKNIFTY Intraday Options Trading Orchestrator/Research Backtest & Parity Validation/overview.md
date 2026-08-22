@@ -1,0 +1,1 @@
+Self-contained backtest harness that replays historical Bank Nifty data through a clean-room ResearchEngine and a live-engine parity wrapper to validate decision equivalence without modifying production code.

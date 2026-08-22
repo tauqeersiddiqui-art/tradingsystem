@@ -1,1 +1,0 @@
-Python with pandas/numpy for OHLCV processing; pytest with unittest.mock for deterministic testing; relies on the project's live `LiveEngine`, `ChampionPredictor`, `IntradayMLLearner`, `Phase55FilterConfig`, and `engine.execution.cost_model` rather than reimplementing strategy logic.

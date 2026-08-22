@@ -1,0 +1,6 @@
+- Sizing invariants are enforced at engine construction via `assert qty > 0`, `qty % 30 == 0`, and `qty % lot_size == 0` to guarantee whole Bank Nifty lots.
+- Entry/exit decisions are mirrored from live code by delegating to `LiveEngine.check_entry`, `LiveEngine.check_exit`, `manage_position`, and `compute_entry_stops` rather than duplicating strategy logic.
+- Tests inject deterministic behavior by monkeypatching `ChampionPredictor.predict` and `IntradayMLLearner.update_candle` instead of altering live modules.
+- Block reasons are tracked via a `_log_block(reason)` counter so parity failures can be diagnosed by reason category (e.g. `NO_EDGE`, `ML_BELOW_THRESH`, `PHASE55_BLOCK`, `TIME_EXIT_WEAK`).
+- Historical data loading centralizes CSV discovery, datetime parsing, sorting, and OHLC invariant validation in `market_data.py` functions reused by both the quick runner and tests.
+- Parity reports expose structured dicts (`get_sizing_parity_report`, `get_cost_parity_report`) summarizing lot size, config values, and cost-model validity for CI consumption.

@@ -1,0 +1,1 @@
+All runtime behavior is driven by environment variables loaded into `Config` (e.g. `PAPER_MODE`, `DRY_RUN`, `WARMUP_MINUTES`, `REENTRY_COOLDOWN`, `MAX_ENTRY_SLIP_PTS`, `SCALP_*`, `COST_PER_LOT`); the engine also reads `HIST_CSV` for late-start day-classifier backfill and supports `PREDICT_FIRST=0` to fall back to the legacy SuperTrend-first decision path.

@@ -20,6 +20,8 @@ from ml.feature_config import build_live_features, _safe_build_live_features, FE
 from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
+from engine.execution.filters import compute_entry_quality
+from engine.execution.cost_model import round_trip_cost
 from engine.risk.risk_manager import compute_entry_stops
 
 logger = logging.getLogger("live_engine")
@@ -1249,6 +1251,20 @@ class LiveEngine:
             self._last_block_reason = f"HTF_MISALIGN (15m/30m trend opposes {side})"
             return None
 
+        # 6b. ENTRY QUALITY — rejection-first entry-timing / trade-quality
+        # gate (shared with scalp path). Entry proceeds ONLY if no rule fires.
+        _eq_cost = round_trip_cost(
+            getattr(_cfg, "LOT_SIZE", 30), _cfg) if _cfg is not None else None
+        eq = compute_entry_quality(
+            df_window, side, price, ts,
+            {"breakout_ts": self._breakout_ts, "orb_done": self.orb_done},
+            cost_rs=_eq_cost,
+        )
+        if not eq["accepted"]:
+            self._count_block(eq["reason"])
+            self._last_block_reason = eq["reason"]
+            return None
+
         # 7. FIX B: Pullback entry — wait for retrace after breakout
         if not self._check_pullback_entry(df_window, side, price):
             self._count_block("PULLBACK_WAIT")
@@ -1270,7 +1286,8 @@ class LiveEngine:
 
         self._last_block_reason = f"SIGNAL_FIRE (ML_{side})"
         signal = {"side": side, "ml_prob": prob,
-                  "features": features, "reason": f"ML_{side}"}
+                  "features": features, "reason": f"ML_{side}",
+                  "entry_quality": eq["metrics"]}
         return self._finalize_signal(signal, features, price)
 
     def _ml_percentile(self, prob: float) -> int:

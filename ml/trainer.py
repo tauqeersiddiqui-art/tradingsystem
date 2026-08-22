@@ -37,6 +37,7 @@ except ImportError:
 
 from ml.feature_config import FEATURE_COLUMNS
 from ml.predictor_champion import CalibratedLGBM
+from ml.dataset_builder import validate_training_csv
 
 DATA_PATH = "ml/models/training_dataset.csv"
 MODEL_DIR = "ml/models"
@@ -213,13 +214,12 @@ def main():
     print("=" * 64)
     print("  DIRECTIONAL TRAINER v3  (de-saturated, deploy-gated)")
     print("=" * 64)
-    df = pd.read_csv(DATA_PATH).dropna()
+    # Fail-hard preconditions (existence, row count, required columns, NaN %)
+    df = validate_training_csv(DATA_PATH)
     if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
-    for f in FEATURE_COLUMNS:
-        if f not in df.columns:
-            df[f] = 0.0
+        df["date"] = pd.to_datetime(df["date"], format="mixed")
+        df = df.sort_values("date").reset_index(drop=True)
+    df = df.dropna(subset=list(FEATURE_COLUMNS) + ["label_ce", "label_pe"]).reset_index(drop=True)
 
     # ── LightGBM ──────────────────────────────────────────────────────
     ce = train_one(df, "label_ce", "champion_ce_lgbm")

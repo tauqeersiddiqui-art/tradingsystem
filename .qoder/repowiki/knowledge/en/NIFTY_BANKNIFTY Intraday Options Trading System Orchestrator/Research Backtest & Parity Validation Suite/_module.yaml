@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: research
+title: Research Backtest & Parity Validation Suite
+scope:
+    - research/
+source_files: []
+depends_on: []
+related_to: []

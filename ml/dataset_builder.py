@@ -1,27 +1,36 @@
 # ml/dataset_builder.py
-# Direction-PREDICTING dataset (first-touch barrier labels).
+# ENTRY-QUALITY dataset (replaces the v3 first-touch DIRECTIONAL labels).
 #
-# Merged from dataset_builder_v3 (labels) + dataset_builder_v2 (feature
-# computation — single source of truth for indicators).
+# LABEL SEMANTICS (current):
+#   For each active-session bar i, with H = ENTRY_HORIZON_BARS (5 bars,
+#   matching actual scalp hold times):
+#     future_max_up   = max(high[i+1 .. i+H]) - close[i]
+#     future_max_down = close[i] - min(low[i+1 .. i+H])
+#     label_ce = 1 if future_max_up   >= QUALITY_THRESHOLD_PTS (25 spot pts)
+#     label_pe = 1 if future_max_down >= QUALITY_THRESHOLD_PTS
+#   i.e. the models learn ENTRY QUALITY — "is a CE/PE entered NOW likely to
+#   see >= 25 favorable spot points within the next 5 minutes?" — NOT which
+#   direction price breaks first.
+#   BAD_ENTRY guard: if the prior 20-bar move is already extended
+#   (> EXTENDED_MOVE_PCT of price), the entry is late — the corresponding
+#   label is forced to 0 and bad_entry_ce / bad_entry_pe is set to 1
+#   (kept in the CSV for auditing).
+#   Bars with fewer than H forward bars (day end) get NaN labels and are
+#   dropped — never NaN-filled.
 #
-# WHY the v3 label scheme exists — the wrong-direction root cause:
-#   v2 labelled CE only on Supertrend=UP bars and PE only on Supertrend=DOWN
-#   bars, then trained each model on its own slice. The model therefore never
-#   learned to PREDICT direction — it only learned "given the trend is already
-#   up, will it continue?". At reversals (local tops/bottoms) the 1m Supertrend
-#   flips the WRONG way, the model rubber-stamps it, and the trade goes
-#   immediately negative. That is the "wrong direction most of the time" bug.
+# WHY the change — direction labels trained the models to predict break
+# direction, but live scalps are entered AFTER a move; the real question is
+# whether the entry still has enough favorable excursion left. Entry-quality
+# labels encode exactly that.
 #
-# v3 FIX (kept):
-#   * Label EVERY active-session bar (no direction-eligibility filter).
-#   * First-touch barrier labels: for each bar, does price reach +TARGET
-#     (CE wins) or -TARGET (PE wins) FIRST within LOOKAHEAD? This is a true
-#     directional label — the model learns which way price breaks next.
-#   * Supertrend / VWAP / ADX stay as FEATURES so the model can learn to
-#     trust or distrust them, instead of being gated by them.
+# Supertrend / VWAP / ADX stay as FEATURES so the model can learn to trust
+# or distrust them, instead of being gated by them.
 #
 # Output is drop-in compatible with the live feature pipeline (same 36
 # FEATURE_COLUMNS) so predictor_champion.py needs no change.
+#
+# Also exposes validate_training_csv() — the shared fail-hard precondition
+# used by trainer.py and feedback_trainer.py before any training run.
 #
 # RUN:
 #   python ml/dataset_builder.py
@@ -35,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from ml.indicators import supertrend as compute_supertrend, adx as compute_adx, vwap_session
+from ml.feature_config import FEATURE_COLUMNS
 
 DATA_PATH = "data/historical/nifty_1m_full.csv"
 OUTPUT    = "ml/models/training_dataset.csv"
@@ -43,6 +53,11 @@ ACTIVE_WINDOWS = [
     (9 * 60 + 30,  11 * 60),      # 9:30–11:00
     (14 * 60,      15 * 60 + 15), # 14:00–15:15
 ]
+
+# Indicator periods (match ml.indicators defaults)
+SUPERTREND_PERIOD = 10
+SUPERTREND_MULT   = 3.0
+ADX_PERIOD        = 14
 
 
 def _in_active_session(mins_from_midnight: float) -> bool:
@@ -176,58 +191,116 @@ def compute_all_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Label parameters ──────────────────────────────────────────────────
-LOOKAHEAD          = 12      # candles to look forward
-TARGET_SPOT_POINTS = 50      # barrier distance in spot points
-START_DATE         = os.getenv("V3_START_DATE", "2021-01-01")  # regime relevance
+# ── Label parameters (ENTRY-QUALITY scheme) ───────────────────────────
+ENTRY_HORIZON_BARS    = int(os.getenv("ENTRY_HORIZON_BARS", "5"))    # H forward bars — matches scalp hold times
+QUALITY_THRESHOLD_PTS = float(os.getenv("QUALITY_THRESHOLD_PTS", "25.0"))  # favorable spot points required
+EXTENDED_LOOKBACK     = 20     # bars used for the BAD_ENTRY extension check
+EXTENDED_MOVE_PCT     = 0.004  # prior move above this fraction of price = entry already extended
+START_DATE            = os.getenv("V3_START_DATE", "2021-01-01")  # regime relevance
+
+# ── Shared validation constants (see validate_training_csv) ──────────
+REQUIRED_LABEL_COLUMNS = ["label_ce", "label_pe"]
+MIN_TRAINING_ROWS      = 1000
+MAX_NAN_PCT            = 0.02
 
 
-def create_first_touch_labels(df: pd.DataFrame) -> pd.DataFrame:
+def validate_training_csv(path: str) -> pd.DataFrame:
+    """Shared fail-hard precondition used by trainer.py and
+    feedback_trainer.py before any training run.
+
+    Raises:
+      FileNotFoundError — dataset file missing
+      RuntimeError      — rows <= MIN_TRAINING_ROWS, required columns
+                          missing, or > MAX_NAN_PCT NaN in any required
+                          column (FEATURE_COLUMNS + label columns)
+    Logs the NaN % of every required column before returning the frame.
     """
-    First-touch barrier labels on EVERY active-session bar.
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Training dataset missing: {path} — run 'python ml/dataset_builder.py' first.")
+    df = pd.read_csv(path)
+    required = list(FEATURE_COLUMNS) + REQUIRED_LABEL_COLUMNS
+    if len(df) <= MIN_TRAINING_ROWS:
+        raise RuntimeError(
+            f"{path} has only {len(df):,} rows (need > {MIN_TRAINING_ROWS:,}). "
+            "Rebuild the dataset with 'python ml/dataset_builder.py'.")
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"{path} is missing required columns: {missing}")
+    nan_pct = df[required].isna().mean()
+    print(f"[VALIDATE] {path} — {len(df):,} rows, NaN % per required column:")
+    for c in required:
+        print(f"  {c}: {nan_pct[c]:.3%}")
+    bad = nan_pct[nan_pct > MAX_NAN_PCT]
+    if not bad.empty:
+        worst = ", ".join(f"{c}={v:.2%}" for c, v in bad.items())
+        raise RuntimeError(
+            f"{path} exceeds {MAX_NAN_PCT:.0%} NaN in required columns: {worst}")
+    return df
 
-    For bar i, look at the next LOOKAHEAD bars:
-      - up_hit   = first bar whose HIGH reaches close[i] + TARGET
-      - down_hit = first bar whose LOW  reaches close[i] - TARGET
-      label_ce = 1 if up_hit occurs first (CE would profit)
-      label_pe = 1 if down_hit occurs first (PE would profit)
-    A bar where neither barrier is touched gets both labels = 0 (chop/no-trade)
-    so the model learns to output LOW probability there.
+
+def create_entry_quality_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
-    n      = len(df)
-    close  = df["close"].values.astype(float)
-    high   = df["high"].values.astype(float)
-    low    = df["low"].values.astype(float)
+    Entry-quality labels on EVERY bar (labels only meaningful in-session).
+
+    For bar i, with H = ENTRY_HORIZON_BARS:
+      future_max_up   = max(high[i+1..i+H]) - close[i]
+      future_max_down = close[i] - min(low[i+1..i+H])
+      label_ce = 1 if future_max_up   >= QUALITY_THRESHOLD_PTS else 0
+      label_pe = 1 if future_max_down >= QUALITY_THRESHOLD_PTS else 0
+
+    BAD_ENTRY guard: if the prior move over the last EXTENDED_LOOKBACK bars
+    is already extended (> EXTENDED_MOVE_PCT of price), the entry is late —
+    force the corresponding label to 0 and flag bad_entry_ce / bad_entry_pe.
+
+    Bars with fewer than H forward bars (day end) get NaN labels and are
+    dropped downstream — never NaN-filled. Forward/backward windows never
+    cross a day boundary.
+    """
+    close = df["close"].to_numpy(dtype=float)
+    day   = df["date"].dt.normalize()
+
+    # Future extrema over the next H bars (per day — no cross-day leak)
+    fwd_high = df.groupby(day)["high"].transform(
+        lambda s: s.shift(-1).rolling(ENTRY_HORIZON_BARS,
+                                      min_periods=ENTRY_HORIZON_BARS).max())
+    fwd_low = df.groupby(day)["low"].transform(
+        lambda s: s.shift(-1).rolling(ENTRY_HORIZON_BARS,
+                                      min_periods=ENTRY_HORIZON_BARS).min())
+    future_max_up   = fwd_high.to_numpy(dtype=float) - close
+    future_max_down = close - fwd_low.to_numpy(dtype=float)
+    has_future      = fwd_high.notna().to_numpy()
 
     mins_from_midnight = df["date"].dt.hour * 60 + df["date"].dt.minute
-    in_session = mins_from_midnight.apply(_in_active_session).values
+    in_session = mins_from_midnight.apply(_in_active_session).to_numpy()
 
-    label_ce = np.zeros(n, dtype=np.int8)
-    label_pe = np.zeros(n, dtype=np.int8)
+    # BAD_ENTRY: prior move already extended (window includes bar i)
+    win = EXTENDED_LOOKBACK + 1
+    back_low = df.groupby(day)["low"].transform(
+        lambda s: s.rolling(win, min_periods=1).min()).to_numpy(dtype=float)
+    back_high = df.groupby(day)["high"].transform(
+        lambda s: s.rolling(win, min_periods=1).max()).to_numpy(dtype=float)
+    move_pct_up   = np.where(close > 0, (close - back_low) / close, 0.0)
+    move_pct_down = np.where(close > 0, (back_high - close) / close, 0.0)
 
-    tgt = TARGET_SPOT_POINTS
-    for i in range(n - LOOKAHEAD):
-        if not in_session[i]:
-            continue
-        up_target = close[i] + tgt
-        dn_target = close[i] - tgt
-        up_hit = dn_hit = None
-        for j in range(i + 1, i + LOOKAHEAD + 1):
-            if up_hit is None and high[j] >= up_target:
-                up_hit = j
-            if dn_hit is None and low[j] <= dn_target:
-                dn_hit = j
-            if up_hit is not None and dn_hit is not None:
-                break
-        if up_hit is not None and (dn_hit is None or up_hit <= dn_hit):
-            label_ce[i] = 1
-        elif dn_hit is not None and (up_hit is None or dn_hit < up_hit):
-            label_pe[i] = 1
+    bad_entry_ce = in_session & (move_pct_up   > EXTENDED_MOVE_PCT)
+    bad_entry_pe = in_session & (move_pct_down > EXTENDED_MOVE_PCT)
+
+    label_ce = np.where(future_max_up   >= QUALITY_THRESHOLD_PTS, 1.0, 0.0)
+    label_pe = np.where(future_max_down >= QUALITY_THRESHOLD_PTS, 1.0, 0.0)
+    label_ce[bad_entry_ce] = 0.0   # late entry — CE quality forced to 0
+    label_pe[bad_entry_pe] = 0.0   # late entry — PE quality forced to 0
+    # Bars outside active windows carry no tradable entry (same as v3)
+    label_ce[~in_session] = 0.0
+    label_pe[~in_session] = 0.0
+    # Day-end bars without H forward bars: labels dropped, never NaN-filled
+    label_ce[~has_future] = np.nan
+    label_pe[~has_future] = np.nan
 
     df["label_ce"] = label_ce
     df["label_pe"] = label_pe
-    # Kept for compatibility with any downstream code; in v3 every bar is
-    # eligible for both directions (the model decides).
+    df["bad_entry_ce"] = bad_entry_ce.astype(np.int8)
+    df["bad_entry_pe"] = bad_entry_pe.astype(np.int8)
     df["ce_eligible"] = in_session
     df["pe_eligible"] = in_session
     return df
@@ -235,14 +308,17 @@ def create_first_touch_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     print("=" * 64)
-    print("  DIRECTIONAL DATASET BUILDER  (first-touch barrier labels)")
+    print("  ENTRY-QUALITY DATASET BUILDER")
     print("=" * 64)
-    print(f"  Target={TARGET_SPOT_POINTS}pt  Lookahead={LOOKAHEAD}  Start={START_DATE}")
+    print(f"  Horizon={ENTRY_HORIZON_BARS} bars  Quality>={QUALITY_THRESHOLD_PTS}pt  "
+          f"ExtendedMove>{EXTENDED_MOVE_PCT:.1%}/{EXTENDED_LOOKBACK}bars  Start={START_DATE}")
 
     print(f"\n[DATA] Loading {DATA_PATH} ...")
     df = pd.read_csv(DATA_PATH)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    # History file mixes "YYYY-MM-DD HH:MM:SS" and ISO-T rows — format="mixed"
+    # parses BOTH instead of silently coercing (and dropping) the ISO-T rows.
+    df["date"] = pd.to_datetime(df["date"], format="mixed")
+    df = df.sort_values("date").reset_index(drop=True)
     if "volume" not in df.columns:
         df["volume"] = 0.0
 
@@ -252,17 +328,36 @@ def main():
     print("[FEATURES] Computing indicators ...")
     df = compute_all_features(df)
 
-    print("[LABELS] First-touch directional labels (this is the slow part) ...")
-    df = create_first_touch_labels(df)
+    print("[LABELS] Entry-quality labels ...")
+    df = create_entry_quality_labels(df)
 
+    # ── NaN audit (replaces the old silent blanket dropna) ────────────
+    total = len(df)
+    nan_counts = df.isna().sum()
+    nan_cols = nan_counts[nan_counts > 0]
+    print(f"\n[NAN AUDIT] {total:,} rows, NaN % per column:")
+    if nan_cols.empty:
+        print("  (no NaNs)")
+    for c in nan_cols.index:
+        print(f"  {c}: {nan_counts[c]:,} NaN ({nan_counts[c] / total:.3%})")
+    rows_dropped = int(df.isna().any(axis=1).sum())
+    if total > 0 and rows_dropped / total > MAX_NAN_PCT:
+        raise RuntimeError(
+            f"Refusing to build dataset: {rows_dropped:,} rows "
+            f"({rows_dropped / total:.2%}) contain NaN — exceeds the "
+            f"{MAX_NAN_PCT:.0%} limit. Inspect the NaN audit above.")
     df = df.dropna().reset_index(drop=True)
+    print(f"[NAN AUDIT] dropped {rows_dropped:,} rows "
+          f"({(rows_dropped / total if total else 0.0):.3%}) -> {len(df):,} rows kept")
 
-    ce_rate = df["label_ce"].mean()
-    pe_rate = df["label_pe"].mean()
-    flat    = 1.0 - ce_rate - pe_rate
-    print(f"\n  Bars: {len(df):,}")
-    print(f"  label_ce=1 : {ce_rate:.1%}   label_pe=1 : {pe_rate:.1%}   neither(flat): {flat:.1%}")
-    print("  (CE+PE should be roughly balanced; large skew = directional bias in data)")
+    session_mask = df["ce_eligible"].astype(bool)
+    ce_rate = df.loc[session_mask, "label_ce"].mean()
+    pe_rate = df.loc[session_mask, "label_pe"].mean()
+    print(f"\n  Bars: {len(df):,}  (active-session bars: {int(session_mask.sum()):,})")
+    print(f"  label_ce=1 : {ce_rate:.1%}   label_pe=1 : {pe_rate:.1%}  "
+          f"(among active-session bars)")
+    print(f"  bad_entry_ce=1 : {int(df['bad_entry_ce'].sum()):,}   "
+          f"bad_entry_pe=1 : {int(df['bad_entry_pe'].sum()):,}")
 
     os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
     df.to_csv(OUTPUT, index=False)

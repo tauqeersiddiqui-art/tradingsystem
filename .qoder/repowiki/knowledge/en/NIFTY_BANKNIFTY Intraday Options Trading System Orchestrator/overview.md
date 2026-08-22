@@ -1,0 +1,1 @@
+Top-level entry point that boots the Zerodha broker session, assembles the live trading engine with ML learner and candle builder, and supervises its crash-resilient execution loop.

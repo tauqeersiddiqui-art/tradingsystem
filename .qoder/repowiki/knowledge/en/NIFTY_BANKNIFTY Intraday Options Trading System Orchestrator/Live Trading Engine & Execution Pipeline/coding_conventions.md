@@ -1,0 +1,6 @@
+- Every tunable parameter is exposed as a class attribute on `Config` and sourced from `os.getenv` with a documented default, so behavior can be toggled without code changes.
+- Modules communicate exclusively through the shared `TradingContext` instance (`self.ctx.market`, `self.ctx.broker`, `self.ctx.config`, etc.) rather than via direct imports between sibling packages.
+- Entry signals flow through a fixed multi-step gate pipeline where each failing stage sets `self._last_block_reason` and calls `_count_block(key)` to accumulate daily block analytics with deduplicated transitions.
+- Both CE and PE positions are treated identically as LONG option buys (premium must rise), so stop-loss logic, profit calculations, and trailing use the same formulas regardless of side.
+- Broker interactions branch on `config.DRY_RUN` or `broker.is_paper` to return synthetic `dry_*` order IDs and skip real API calls, keeping test and live paths identical.
+- Per-minute heavy work (VWAP update, learner candle feed, day-candle collection) is guarded by comparing the current minute against a stored `_last_*_minute` timestamp to avoid duplicate processing in the ~1s engine loop.

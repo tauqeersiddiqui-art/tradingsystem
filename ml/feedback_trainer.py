@@ -17,10 +17,11 @@ import lightgbm as lgb
 from datetime import datetime
 from pathlib import Path
 from ml.feature_config import FEATURE_COLUMNS
+from ml.dataset_builder import validate_training_csv
 
 _ROOT         = Path(__file__).resolve().parent.parent
 FEEDBACK_PATH = str(_ROOT / "data" / "ml_feedback.csv")
-HIST_PATH     = str(_ROOT / "ml" / "models" / "training_dataset_trade.csv")
+HIST_PATH     = str(_ROOT / "ml" / "models" / "training_dataset.csv")
 FIELDNAMES    = FEATURE_COLUMNS + ["direction", "outcome", "pnl", "reason", "date"]
 
 BROKERAGE_ROUND_TRIP = 65 * 2   # FIX-2
@@ -28,6 +29,7 @@ BROKERAGE_ROUND_TRIP = 65 * 2   # FIX-2
 
 def log_trade_outcome(features: dict, direction: str, pnl: float,
                       reason: str, entry_time: datetime):
+    """Call after every trade exit in live_engine_v2.py."""
     # ===== FIX: skip corrupt feature rows =====
     ema20 = features.get("ema20", 0)
     atr   = features.get("atr", 0)
@@ -35,7 +37,6 @@ def log_trade_outcome(features: dict, direction: str, pnl: float,
     if ema20 <= 0 or atr <= 0:
         print(f"[FEEDBACK SKIP] bad row ema20={ema20}, atr={atr}")
         return
-    """Call after every trade exit in live_engine_v2.py."""
     outcome     = 1 if pnl > BROKERAGE_ROUND_TRIP else 0   # FIX-2
     file_exists = os.path.isfile(FEEDBACK_PATH)
     os.makedirs(os.path.dirname(FEEDBACK_PATH), exist_ok=True)
@@ -54,7 +55,9 @@ def log_trade_outcome(features: dict, direction: str, pnl: float,
 
 def retrain_with_feedback(live_weight: int = 3):
     """Merges historical + live feedback and retrains both models."""
-    hist  = pd.read_csv(HIST_PATH).dropna()
+    # Fail-hard preconditions (existence, row count, required columns, NaN %)
+    hist = validate_training_csv(HIST_PATH)
+    hist = hist.dropna()
     feats = [f for f in FEATURE_COLUMNS if f in hist.columns]
 
     # Pad any missing new features with 0
@@ -77,7 +80,11 @@ def retrain_with_feedback(live_weight: int = 3):
         combined = hist
         print("  No feedback file yet — training on historical data only")
 
-    combined = combined.dropna()
+    # Drop NaNs only in columns the trainer actually consumes — the audit
+    # columns (bad_entry_*, *_eligible) don't exist in live feedback rows.
+    required = [f for f in FEATURE_COLUMNS if f in combined.columns] + \
+               [c for c in ("label_ce", "label_pe") if c in combined.columns]
+    combined = combined.dropna(subset=required)
     models_dir = str(_ROOT / "ml" / "models")
     os.makedirs(models_dir, exist_ok=True)
 
@@ -95,14 +102,19 @@ def retrain_with_feedback(live_weight: int = 3):
             verbose=-1, random_state=42,
         )
         model.fit(X, y)
-        path = os.path.join(models_dir, f"{out_name}.pkl")
+        # NEVER overwrite live champions from here — save as CANDIDATE only.
+        path = os.path.join(models_dir, f"{out_name}_candidate.pkl")
         joblib.dump(model, path)
         print(f"  Saved {path}  (samples: {len(combined)})")
+    print("  [NOTE] Feedback-retrained models are saved as *_candidate.pkl ONLY.")
+    print("         Promotion to champion_*.pkl requires the gated trainer path:")
+    print("         python ml/trainer.py  (passes AUC/std/expectancy deploy gates).")
 
 
 def train_regime_models():
     """Trains separate CE/PE models per regime."""
-    df    = pd.read_csv(HIST_PATH).dropna()
+    df = validate_training_csv(HIST_PATH)
+    df = df.dropna()
     feats = [f for f in FEATURE_COLUMNS if f in df.columns]
     models_dir = str(_ROOT / "ml" / "models")
     os.makedirs(models_dir, exist_ok=True)

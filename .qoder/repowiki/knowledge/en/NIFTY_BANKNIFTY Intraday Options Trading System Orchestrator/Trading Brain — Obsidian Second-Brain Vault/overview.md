@@ -1,0 +1,1 @@
+Obsidian vault that serves as an auto-generated second brain for the trading system, organizing daily summaries, trade records, recurring failure patterns, and manually curated trading rules.

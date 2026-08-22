@@ -1,0 +1,6 @@
+- All option PnL is computed in premium space via `OptionPriceSimulator.premium(...)` rather than raw spot moves, keeping backtest PnL side-correct and identical to live execution.
+- Entry gates enforce market-hours windows (ORB_END 9:30, NO_ENTRY_AFTER 15:15), daily trade caps, cooldowns since last exit, and HTF (5m Supertrend) + VWAP alignment before any prediction is accepted.
+- Walk-forward folds train models only on data strictly before the test window, applying a LOOKAHEAD-bar embargo equal to the dataset label horizon to prevent forward-label leakage.
+- Cost realism is enforced by subtracting a round-trip spread (`SPREAD_PTS`) and calling `engine.execution.profit_manager._cost_rs(qty)` for brokerage on every simulated exit.
+- Trade and day summaries are emitted as structured dicts/dataclasses and exported to CSV via `get_trade_log()` / `get_day_log()` / `save_results()`, with metrics always including win rate, profit factor, Sharpe, max drawdown, and breakdowns by exit reason / strategy / confidence bucket.
+- Scripts import project root modules by inserting `sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))` so they can reach `ml.*` and `engine.*` without package installs.

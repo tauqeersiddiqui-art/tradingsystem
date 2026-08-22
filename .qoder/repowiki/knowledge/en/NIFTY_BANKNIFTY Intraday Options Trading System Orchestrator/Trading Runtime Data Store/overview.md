@@ -1,0 +1,1 @@
+Persistent on-disk store for the trading bot's runtime state, trade logs, diagnostic journals, shadow backtests, and historical market data used during live sessions.

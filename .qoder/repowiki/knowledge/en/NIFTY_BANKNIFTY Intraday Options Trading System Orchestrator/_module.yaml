@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: ""
+title: NIFTY/BANKNIFTY Intraday Options Trading System Orchestrator
+scope:
+    - SESSION_HANDOFF.md
+    - .gitignore
+    - .telegram_state.json
+    - requirements.txt
+    - login.py
+    - master_runner.py
+    - .github/
+source_files: []
+depends_on: []
+related_to: []

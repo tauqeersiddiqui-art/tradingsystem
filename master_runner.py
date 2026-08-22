@@ -59,7 +59,7 @@ from engine.execution.filters import has_oi_wall
 from engine.risk.risk_manager import compute_entry_stops
 from engine.execution.profit_manager import ladder_stop
 from engine.core.state_store import save_state, load_state, deserialize_position
-from engine.services.trade_logger import log_trade, today_summary
+from engine.services.trade_logger import log_trade, today_summary, classify_loss
 from engine.diagnostics import TradeJournal, generate_eod_report
 from engine.scalping.scalp_engine import ScalpEngine
 
@@ -1349,6 +1349,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                     ctx.pnl         += pnl
                     ctx.positions.append(pnl)
+
+                    # Phase 4 — loss classification from entry-quality metrics.
+                    # entry_quality may be ABSENT on restored/pre-deployment
+                    # positions → classify_loss tolerates None via .get().
+                    loss_class = classify_loss(pnl, position.get("entry_quality"))
+                    if loss_class:
+                        logger.info(
+                            f"[LOSS_CLASS] {position['symbol']} {loss_class} pnl={pnl:.0f}"
+                        )
+
                     ctx.last_trade = {
                         "symbol":  position.get("symbol", ""),
                         "side":    position.get("side", ""),
@@ -1488,6 +1498,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 pnl         = pnl,
                                 exit_ts     = ts,
                                 htf_would_block = _htf_would_block,
+                                loss_class  = loss_class,
                             )
                         except Exception as _je:
                             logger.warning(f"[JOURNAL] on_exit failed (non-fatal): {_je}")
@@ -1758,6 +1769,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "features": decision.get("features", {}),
                         "regime":   decision.get("regime", "UNKNOWN"),
                         "reason":   decision.get("reason", ""),
+                        "entry_quality": decision.get("entry_quality"),
                         "entry_ts": ts,   # for held-time display in dashboard
                         "sl_order_id": None,   # broker protective SL-M id (set below)
                     }
@@ -1944,6 +1956,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             )
                         except Exception as _sl_e:
                             logger.warning(f"[SCALP] log_trade failed: {_sl_e}")
+                        # Phase 4 — loss classification (entry_quality may be
+                        # absent on restored/pre-deployment positions).
+                        _s_loss_class = classify_loss(
+                            _s_pnl, scalp_position.get("entry_quality")
+                        )
+                        if _s_loss_class:
+                            logger.info(
+                                f"[LOSS_CLASS] {scalp_position['symbol']} "
+                                f"{_s_loss_class} pnl={_s_pnl:.0f}"
+                            )
                         logger.info(
                             f"[SCALP EXIT] {_s_reason} | {scalp_position['symbol']} "
                             f"| pnl={_s_pnl:+.0f} | day={ctx.pnl:+.0f}"
@@ -2064,6 +2086,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         "ml_prob":        _s_sig.get("ml_prob", 0.0),
                                         "regime":         "SCALP",
                                         "reason":         _s_sig["reason"],
+                                        "entry_quality":  _s_sig.get("entry_quality"),
                                         "entry_ts":       ts,
                                         "lock_triggered": False,
                                         "sl_mode":        _s_sig.get("sl_tier", "MED"),

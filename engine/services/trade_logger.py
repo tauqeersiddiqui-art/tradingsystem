@@ -13,6 +13,34 @@ _TRADE_DIR  = os.path.join(os.path.dirname(__file__), "..", "..", "data", "trade
 _lock       = threading.Lock()
 _trade_seq  = 0   # increments each session; will re-read on load
 
+# ── Phase 4: post-trade loss classification ───────────────────────────
+# Thresholds mirror the entry-quality filter module.
+MOVE_PCT_GOOD = 0.003   # move_pct above this at entry => chased / LATE_ENTRY
+WICK_RATIO_MAX = 0.6    # wick_ratio above this at entry => exhaustion / REVERSAL
+
+
+def classify_loss(pnl: float, entry_quality: dict | None) -> str:
+    """
+    Classify a losing trade using entry-time quality metrics.
+
+    Returns:
+        ""           — winner (pnl >= 0)
+        "LATE_ENTRY"  — entry chased a large move (move_pct > MOVE_PCT_GOOD)
+        "REVERSAL"    — entry candle was wick-heavy (wick_ratio > WICK_RATIO_MAX)
+        "UNKNOWN"     — loser with missing/absent entry_quality (restored
+                        or pre-deployment positions)
+    """
+    if pnl >= 0:
+        return ""
+    if entry_quality:
+        move_pct = entry_quality.get("move_pct")
+        if move_pct is not None and move_pct > MOVE_PCT_GOOD:
+            return "LATE_ENTRY"
+        wick_ratio = entry_quality.get("wick_ratio")
+        if wick_ratio is not None and wick_ratio > WICK_RATIO_MAX:
+            return "REVERSAL"
+    return "UNKNOWN"
+
 
 def _week_path(dt: date | None = None) -> str:
     if dt is None:

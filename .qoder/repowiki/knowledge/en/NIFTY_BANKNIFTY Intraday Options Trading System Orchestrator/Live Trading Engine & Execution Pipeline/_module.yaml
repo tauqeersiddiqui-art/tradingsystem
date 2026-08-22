@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: engine
+title: Live Trading Engine & Execution Pipeline
+scope:
+    - engine/
+source_files: []
+depends_on: []
+related_to:
+    - path: backtest
+    - path: data_store
+    - path: ml
+    - path: scripts

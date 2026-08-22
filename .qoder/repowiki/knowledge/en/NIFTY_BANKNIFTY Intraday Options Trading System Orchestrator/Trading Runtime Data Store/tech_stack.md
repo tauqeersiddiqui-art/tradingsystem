@@ -1,0 +1,1 @@
+Plain CSV and JSON files on disk; filenames encode time partitions (ISO week for trades, calendar day for diagnostics) and include git/config versioning via `session_version.json`.

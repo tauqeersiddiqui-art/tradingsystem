@@ -1,0 +1,1 @@
+Plain Markdown files consumed by Obsidian; no code, build scripts, or runtime dependencies.

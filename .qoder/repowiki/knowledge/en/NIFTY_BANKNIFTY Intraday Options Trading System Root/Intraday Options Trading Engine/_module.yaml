@@ -1,6 +1,6 @@
 schema_version: 1
 module_path: engine
-title: Live Trading Engine & Execution Pipeline
+title: Intraday Options Trading Engine
 scope:
     - engine/
 source_files: []
@@ -9,4 +9,5 @@ related_to:
     - path: backtest
     - path: data_store
     - path: ml
+    - path: research
     - path: scripts

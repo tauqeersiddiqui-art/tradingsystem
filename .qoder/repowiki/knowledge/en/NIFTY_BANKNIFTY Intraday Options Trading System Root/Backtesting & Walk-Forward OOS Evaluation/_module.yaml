@@ -1,9 +1,10 @@
 schema_version: 1
 module_path: backtest
-title: Backtesting & Walk-Forward Evaluation Suite
+title: Backtesting & Walk-Forward OOS Evaluation
 scope:
     - backtest/
 source_files: []
 depends_on: []
 related_to:
     - path: engine
+    - path: ml

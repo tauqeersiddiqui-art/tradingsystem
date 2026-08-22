@@ -1,1 +1,0 @@
-End-to-end ML pipeline that builds a 36-feature dataset from NIFTY 1m bars, trains LightGBM/CatBoost CE/PE directional classifiers with Platt calibration and deploy gates, and adapts live probabilities via an intraday Bayesian learner.

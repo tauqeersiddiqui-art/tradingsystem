@@ -3,6 +3,7 @@
 <cite>
 **Referenced Files in This Document**
 - [live_engine.py](file://engine/live_engine.py)
+- [filters.py](file://engine/execution/filters.py)
 - [predictor_champion.py](file://ml/predictor_champion.py)
 - [ml_intraday_learner.py](file://ml/ml_intraday_learner.py)
 - [indicators.py](file://ml/indicators.py)
@@ -11,6 +12,13 @@
 - [execution_engine.py](file://engine/execution/execution_engine.py)
 - [profit_manager.py](file://engine/execution/profit_manager.py)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Integrated entry quality filter into live trading engine with proper breakout timestamp handling
+- Added consistent behavior across ML and legacy prediction paths for entry validation
+- Enhanced breakout timestamp management to prevent stale timestamp issues
+- Updated entry quality scoring system with symmetric threshold handling for CE/PE sides
 
 ## Table of Contents
 1. Introduction
@@ -30,12 +38,14 @@ This document explains the architecture and decision-making flow of the LiveEngi
 - ML integration via ChampionPredictor for directional bias and probability-based filtering
 - Session lifecycle management including warmup, lunch chop avoidance, and end-of-day procedures
 - Context management coordinating ML predictors, execution engines, and risk managers
+- **Updated**: Entry quality filter integration with proper breakout timestamp handling and consistent behavior across ML and legacy prediction paths
 - Concrete examples of market data flow, signal generation, validation, and state maintenance across sessions
 
 ## Project Structure
 The LiveEngine resides in engine/live_engine.py and coordinates several subsystems:
 - Market data and indicators: live_engine.py uses rolling windows and computes technical indicators (Supertrend, ADX, VWAP) via ml/indicators.py
 - ML prediction: ml/predictor_champion.py provides calibrated probabilities; ml/ml_intraday_learner.py adapts thresholds and day-type classification
+- **Updated**: Entry quality filtering: engine/execution/filters.py provides rejection-first entry timing and trade quality assessment
 - Risk and execution: engine/risk/risk_manager.py sets entry stops; engine/execution/execution_engine.py handles order placement and protective stops; engine/execution/profit_manager.py manages trailing exits and scale-outs
 - Context: engine/core/context.py centralizes runtime dependencies (broker, executor, risk, config)
 
@@ -45,6 +55,7 @@ LE["LiveEngine<br/>(engine/live_engine.py)"]
 IND["Indicators<br/>(ml/indicators.py)"]
 ML["ChampionPredictor<br/>(ml/predictor_champion.py)"]
 LNR["IntradayMLLearner<br/>(ml/ml_intraday_learner.py)"]
+EQF["EntryQualityFilter<br/>(engine/execution/filters.py)"]
 RISK["RiskManager<br/>(engine/risk/risk_manager.py)"]
 EXE["ExecutionEngine<br/>(engine/execution/execution_engine.py)"]
 PM["ProfitManager<br/>(engine/execution/profit_manager.py)"]
@@ -52,6 +63,7 @@ CTX["TradingContext<br/>(engine/core/context.py)"]
 LE --> IND
 LE --> ML
 LE --> LNR
+LE --> EQF
 LE --> RISK
 LE --> EXE
 LE --> PM
@@ -63,6 +75,7 @@ LE --> CTX
 - [indicators.py:41-90](file://ml/indicators.py#L41-L90)
 - [predictor_champion.py:57-100](file://ml/predictor_champion.py#L57-L100)
 - [ml_intraday_learner.py:46-99](file://ml/ml_intraday_learner.py#L46-L99)
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
 - [risk_manager.py:20-59](file://engine/risk/risk_manager.py#L20-L59)
 - [execution_engine.py:21-47](file://engine/execution/execution_engine.py#L21-L47)
 - [profit_manager.py:173-225](file://engine/execution/profit_manager.py#L173-L225)
@@ -73,9 +86,10 @@ LE --> CTX
 - [context.py:3-62](file://engine/core/context.py#L3-L62)
 
 ## Core Components
-- LiveEngine: Central decision loop that builds features, runs ML predictions, applies ORB and HTF filters, and finalizes signals with risk guards
+- LiveEngine: Central decision loop that builds features, runs ML predictions, applies ORB and HTF filters, validates entry quality, and finalizes signals with risk guards
 - ChampionPredictor: Loads champion models (LightGBM and optional CatBoost), validates features, returns calibrated probabilities per side (CE/PE)
 - IntradayMLLearner: Tracks day type (TREND/RANGE/VOLATILE/GAP), adapts thresholds and side multipliers based on outcomes, and provides early exit logic
+- **Updated**: EntryQualityFilter: Rejection-first entry timing and trade quality assessment with proper breakout timestamp handling and symmetric threshold logic for CE/PE sides
 - Indicators: Vectorized Supertrend, ADX, ATR, and session VWAP accumulator used for feature computation and HTF alignment
 - RiskManager: Computes tight stop-loss and target levels based on ATR and regime
 - ExecutionEngine: Places orders, validates fills, manages protective SL-M orders, and verifies flat positions
@@ -85,6 +99,7 @@ LE --> CTX
 - [live_engine.py:71-184](file://engine/live_engine.py#L71-L184)
 - [predictor_champion.py:57-100](file://ml/predictor_champion.py#L57-L100)
 - [ml_intraday_learner.py:46-99](file://ml/ml_intraday_learner.py#L46-L99)
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
 - [indicators.py:41-90](file://ml/indicators.py#L41-L90)
 - [risk_manager.py:20-59](file://engine/risk/risk_manager.py#L20-L59)
 - [execution_engine.py:21-47](file://engine/execution/execution_engine.py#L21-L47)
@@ -95,11 +110,12 @@ The LiveEngine processes each completed 1-minute candle through a structured pip
 1. Update ORB range (9:15–9:30) and reconstruct if missed
 2. Feed first-30-min candles to IntradayMLLearner for day-type classification at 9:45
 3. Build 28-feature vector using rolling window and compute direction stack (Supertrend, ADX, VWAP bias, EMA alignment)
-4. Predict CE/PE probabilities via ChampionPredictor; adjust with learner’s multipliers and adaptive threshold
+4. Predict CE/PE probabilities via ChampionPredictor; adjust with learner's multipliers and adaptive threshold
 5. Apply session gates (warmup, lunch filter, closing window), regime filters (skip RANGE days), re-entry cooldown
 6. Validate structure (swing highs/lows), trap filter (failed breakouts), pullback entry (retrace after breakout), and HTF alignment (5m/15m/30m SuperTrend + EMA)
-7. Finalize signal with risk stops, expected PnL guard, and slippage checks
-8. Execute via ExecutionEngine and manage exits via ProfitManager
+7. **Updated**: Apply entry quality filter with proper breakout timestamp handling for consistent validation across ML and legacy prediction paths
+8. Finalize signal with risk stops, expected PnL guard, and slippage checks
+9. Execute via ExecutionEngine and manage exits via ProfitManager
 
 ```mermaid
 sequenceDiagram
@@ -107,6 +123,7 @@ participant M as "Market Data"
 participant LE as "LiveEngine"
 participant LNR as "IntradayMLLearner"
 participant ML as "ChampionPredictor"
+participant EQF as "EntryQualityFilter"
 participant RM as "RiskManager"
 participant EX as "ExecutionEngine"
 participant PM as "ProfitManager"
@@ -117,15 +134,17 @@ LE->>LE : "build_features(df_window)"
 LE->>ML : "predict(features, 'CE'/'PE')"
 ML-->>LE : "probabilities"
 LE->>LE : "apply session/regime/cooldown/HTF/structure/trap/pullback"
+LE->>EQF : "compute_entry_quality(signal, breakout_ts)"
+EQF-->>LE : "entry_quality metrics"
+alt Quality accepted
 LE->>RM : "compute_entry_stops(entry, atr, regime)"
 RM-->>LE : "stop_loss, target, stop_pct"
 LE->>LE : "_finalize_signal() expected PnL & slippage"
-alt Signal accepted
 LE->>EX : "execute_entry(symbol, side, qty)"
 EX-->>LE : "order_id, fill_price"
 LE->>PM : "manage_position(entry, ltp, lot_size, stop_loss, max_pnl, ml_prob)"
 PM-->>LE : "updated_stop, reason/scale_out"
-else No signal
+else No signal or quality rejected
 LE-->>M : "block reason logged"
 end
 ```
@@ -135,6 +154,7 @@ end
 - [live_engine.py:375-440](file://engine/live_engine.py#L375-L440)
 - [live_engine.py:445-590](file://engine/live_engine.py#L445-L590)
 - [live_engine.py:798-1144](file://engine/live_engine.py#L798-L1144)
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
 - [predictor_champion.py:151-208](file://ml/predictor_champion.py#L151-L208)
 - [risk_manager.py:20-59](file://engine/risk/risk_manager.py#L20-L59)
 - [execution_engine.py:94-154](file://engine/execution/execution_engine.py#L94-L154)
@@ -147,6 +167,7 @@ end
 - Breakout detection: After the ORB window closes, breakout conditions are checked when price exceeds orb_high (CE) or drops below orb_low (PE). Each side can fire once per day via one-shot flags.
 - Pullback entry: For PE entries, the engine waits for a retrace of a defined percentage of the breakout move before entering, reducing whipsaw risk.
 - Trap filter: Recent failed breakouts (immediate reversal exceeding a threshold within a lookback) block new entries in the same direction to avoid traps.
+- **Updated**: Breakout timestamp handling: Proper tracking of breakout timestamps prevents stale timestamp issues that caused all-day LATE_ENTRY blocks.
 
 ```mermaid
 flowchart TD
@@ -158,7 +179,8 @@ CheckDone --> |No| End(["Wait"])
 CheckDone --> |Yes| Breakout{"Price > orb_high or < orb_low?"}
 Breakout --> |Yes| OneShot{"Side already fired?"}
 OneShot --> |Yes| End
-OneShot --> |No| Pullback{"PE pullback target reached?"}
+OneShot --> |No| SetTimestamp["Set breakout timestamp"]
+SetTimestamp --> Pullback{"PE pullback target reached?"}
 Pullback --> |Yes| Enter["Signal generated"]
 Pullback --> |No| Wait["Wait for retrace"]
 Wait --> End
@@ -205,7 +227,7 @@ class LiveEngine {
 
 ### ML Integration Architecture
 - ChampionPredictor loads LightGBM models for CE and PE, optionally ensembles with CatBoost if available, and validates feature presence and values.
-- Probabilities are calibrated and returned per side; thresholds are loaded from model metadata but overridden by the learner’s adaptive threshold to account for de-saturated outputs.
+- Probabilities are calibrated and returned per side; thresholds are loaded from model metadata but overridden by the learner's adaptive threshold to account for de-saturated outputs.
 - IntradayMLLearner adjusts side multipliers and thresholds based on daily outcomes, detects day type from the first 30 minutes, and provides early exit signals.
 
 ```mermaid
@@ -234,11 +256,48 @@ LNR-->>LE : "adaptive_threshold"
 - [predictor_champion.py:57-100](file://ml/predictor_champion.py#L57-L100)
 - [ml_intraday_learner.py:208-245](file://ml/ml_intraday_learner.py#L208-L245)
 
+### Entry Quality Filter Integration
+- **New**: Rejection-first architecture: Entry quality filter evaluates rules in fixed order with the first failure winning and incrementing module-level rejection counters.
+- **Updated**: Symmetric threshold handling: Both CE and PE sides use mirrored coordinate systems where "buying at top" is detected consistently regardless of direction.
+- **Updated**: Breakout timestamp handling: Proper tracking of breakout timestamps prevents stale timestamp issues that previously caused all-day LATE_ENTRY blocks.
+- **Updated**: Consistent behavior across prediction paths: Both ML predict-first and legacy prediction paths now pass through the same entry quality filter.
+- Quality rules evaluated: MOVE_ALREADY_DONE, LATE_ENTRY, BUYING_AT_TOP, REJECTION_CANDLE, MOMENTUM_DYING, LOW_QUALITY, NOT_PROFITABLE.
+
+```mermaid
+flowchart TD
+Signal["Entry Signal Generated"] --> EQFilter["Entry Quality Filter"]
+EQFilter --> MoveCheck{"Move Already Done?"}
+MoveCheck --> |Yes| Reject1["MOVE_ALREADY_DONE"]
+MoveCheck --> |No| LateCheck{"Late Entry?"}
+LateCheck --> |Yes| Reject2["LATE_ENTRY"]
+LateCheck --> |No| TopCheck{"Buying At Top?"}
+TopCheck --> |Yes| Reject3["BUYING_AT_TOP"]
+TopCheck --> |No| WickCheck{"Rejection Candle?"}
+WickCheck --> |Yes| Reject4["REJECTION_CANDLE"]
+WickCheck --> |No| MomCheck{"Momentum Dying?"}
+MomCheck --> |Yes| Reject5["MOMENTUM_DYING"]
+MomCheck --> |No| ScoreCheck{"Low Quality?"}
+ScoreCheck --> |Yes| Reject6["LOW_QUALITY"]
+ScoreCheck --> |No| ProfitCheck{"Not Profitable?"}
+ProfitCheck --> |Yes| Reject7["NOT_PROFITABLE"]
+ProfitCheck --> |No| Accept["ENTRY ACCEPTED"]
+```
+
+**Diagram sources**
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
+- [live_engine.py:1093-1108](file://engine/live_engine.py#L1093-L1108)
+- [live_engine.py:1275-1287](file://engine/live_engine.py#L1275-L1287)
+
+**Section sources**
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
+- [live_engine.py:1093-1108](file://engine/live_engine.py#L1093-L1108)
+- [live_engine.py:1275-1287](file://engine/live_engine.py#L1275-L1287)
+
 ### Session Lifecycle Management
 - Warmup period: No entries until WARMUP_MINUTES after market open to allow ML learner warmup and avoid early noise.
 - Lunch chop avoidance: Optional filter blocks entries during 11:00–12:30 to reduce low-quality trades.
 - End-of-day procedures: Entries blocked after 15:15; VWAP reset at session open; day classifier locks at 9:45.
-- Day classification: First 30 minutes’ data determines TREND/RANGE/VOLATILE/GAP day type, influencing thresholds and behavior.
+- Day classification: First 30 minutes' data determines TREND/RANGE/VOLATILE/GAP day type, influencing thresholds and behavior.
 
 ```mermaid
 flowchart TD
@@ -301,8 +360,9 @@ LiveEngine --> TradingContext : "uses"
 
 ### Concrete Examples of Market Data Flow and State Maintenance
 - Market data enters via step(market_data, ts), which updates ORB, feeds day classifier, and calls check_entry() to evaluate signals.
-- Signals are validated through multiple layers: session gates, regime filters, re-entry cooldown, structure confirmation, trap filter, pullback entry, HTF alignment, and risk/PnL guards.
-- State is maintained across cycles: ORB range, VWAP accumulator, direction bias, swing highs/lows, recent breakouts, and ML history for percentile scoring.
+- Signals are validated through multiple layers: session gates, regime filters, re-entry cooldown, structure confirmation, trap filter, pullback entry, HTF alignment, entry quality filter, and risk/PnL guards.
+- **Updated**: Entry quality validation: Both ML predict-first and legacy prediction paths now consistently apply the same entry quality filter with proper breakout timestamp handling.
+- State is maintained across cycles: ORB range, VWAP accumulator, direction bias, swing highs/lows, recent breakouts, breakout timestamps, and ML history for percentile scoring.
 
 ```mermaid
 sequenceDiagram
@@ -331,6 +391,7 @@ end
 ## Dependency Analysis
 - LiveEngine depends on:
   - ML components: ChampionPredictor for probabilities, IntradayMLLearner for adaptive thresholds and day-type classification
+  - **Updated**: Entry quality filtering: EntryQualityFilter for rejection-first entry timing and trade quality assessment
   - Indicators: Supertrend, ADX, VWAP for feature computation and HTF alignment
   - Risk and execution: RiskManager for stops, ExecutionEngine for orders, ProfitManager for trailing exits
   - Context: Centralized access to broker, executor, risk, and configuration
@@ -340,6 +401,7 @@ graph TB
 LE["LiveEngine"]
 ML["ChampionPredictor"]
 LNR["IntradayMLLearner"]
+EQF["EntryQualityFilter"]
 IND["Indicators"]
 RM["RiskManager"]
 EX["ExecutionEngine"]
@@ -347,6 +409,7 @@ PM["ProfitManager"]
 CTX["TradingContext"]
 LE --> ML
 LE --> LNR
+LE --> EQF
 LE --> IND
 LE --> RM
 LE --> EX
@@ -356,6 +419,7 @@ LE --> CTX
 
 **Diagram sources**
 - [live_engine.py:71-184](file://engine/live_engine.py#L71-L184)
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
 - [predictor_champion.py:57-100](file://ml/predictor_champion.py#L57-L100)
 - [ml_intraday_learner.py:46-99](file://ml/ml_intraday_learner.py#L46-L99)
 - [indicators.py:41-90](file://ml/indicators.py#L41-L90)
@@ -366,6 +430,7 @@ LE --> CTX
 
 **Section sources**
 - [live_engine.py:71-184](file://engine/live_engine.py#L71-L184)
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
 - [predictor_champion.py:57-100](file://ml/predictor_champion.py#L57-L100)
 - [ml_intraday_learner.py:46-99](file://ml/ml_intraday_learner.py#L46-L99)
 - [indicators.py:41-90](file://ml/indicators.py#L41-L90)
@@ -379,25 +444,25 @@ LE --> CTX
 - Deduplication: Per-minute guards prevent redundant learner updates and VWAP recalculations, avoiding inflated state.
 - Adaptive thresholds: Learner-adjusted thresholds and side multipliers reduce false positives and improve signal quality over time.
 - HTF alignment: Requiring trend agreement on 5m/15m/30m reduces whipsaw entries and improves win rate consistency.
+- **Updated**: Entry quality filtering: Rejection-first architecture with efficient rule evaluation prevents poor-quality entries while maintaining performance.
 - Cost-aware exits: ProfitManager ensures no lock below round-trip costs, protecting against guaranteed losses from small moves.
-
-[No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
 - Missing ORB data: If engine starts after 9:30, reconstruct_orb_if_needed() attempts to fetch historical data; failures log warnings and proceed with ML-only entries.
 - Insufficient features: build_features() requires at least 26 rows; missing columns or invalid values return None and block signals.
 - ML prediction failures: ChampionPredictor logs warnings for missing or invalid features and returns None; ensure feature pipeline completeness.
+- **Updated**: Entry quality rejections: Monitor rejection reasons (MOVE_ALREADY_DONE, LATE_ENTRY, BUYING_AT_TOP, etc.) to understand why entries are being filtered.
+- **Updated**: Breakout timestamp issues: Stale breakout timestamps can cause all-day LATE_ENTRY blocks; ensure proper timestamp clearing when breakout detection resets.
 - Execution issues: ExecutionEngine polls for fill prices and validates orders; failures log errors and skip position tracking.
 - Exit logic: ProfitManager handles trailing stops and drawdown exits; monitor ladder stages and scale-out triggers for performance tuning.
 
 **Section sources**
 - [live_engine.py:222-316](file://engine/live_engine.py#L222-L316)
 - [live_engine.py:445-470](file://engine/live_engine.py#L445-L470)
+- [filters.py:136-288](file://engine/execution/filters.py#L136-L288)
 - [predictor_champion.py:151-208](file://ml/predictor_champion.py#L151-L208)
 - [execution_engine.py:52-88](file://engine/execution/execution_engine.py#L52-L88)
 - [profit_manager.py:173-225](file://engine/execution/profit_manager.py#L173-L225)
 
 ## Conclusion
-The LiveEngine integrates ORB breakout detection, multi-timeframe confirmation, and machine learning to generate robust intraday trading signals. Its modular design, guided by TradingContext, enables clear separation of concerns between prediction, risk management, and execution. The system’s adaptive mechanisms—day-type classification, threshold adjustment, and cost-aware exits—enhance resilience across varying market regimes. By maintaining strict session controls and validating signals through multiple filters, the engine aims to deliver consistent performance while minimizing risk exposure.
-
-[No sources needed since this section summarizes without analyzing specific files]
+The LiveEngine integrates ORB breakout detection, multi-timeframe confirmation, and machine learning to generate robust intraday trading signals. Its modular design, guided by TradingContext, enables clear separation of concerns between prediction, risk management, and execution. The system's adaptive mechanisms—day-type classification, threshold adjustment, and cost-aware exits—enhance resilience across varying market regimes. By maintaining strict session controls and validating signals through multiple filters, including the newly integrated entry quality filter with proper breakout timestamp handling, the engine aims to deliver consistent performance while minimizing risk exposure. The consistent application of entry quality validation across both ML and legacy prediction paths ensures uniform signal quality standards throughout the trading session.

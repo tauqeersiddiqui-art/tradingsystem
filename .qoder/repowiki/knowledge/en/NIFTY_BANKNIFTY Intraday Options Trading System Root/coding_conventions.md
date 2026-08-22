@@ -2,3 +2,4 @@
 - All cross-subsystem communication flows through a single `TradingContext` object passed between `master_runner`, `engine`, `ml`, and `data_store` — children never reach into each other's namespaces directly.
 - Critical failures (broker stop creation/modification failure, watchdog max restarts, orphan position detection) trigger a `CRITICAL` log plus an immediate Telegram alert via `tg_force`, then pause new entries until manual intervention.
 - Per-session state (positions, PnL, trade counts) is persisted to `data/runtime_state.json` via `save_state`/`load_state` and deserialized on every restart so the engine can adopt or flatten broker positions safely.
+- CI workflows install deps from the root `requirements.txt`, write secrets into `.env`, and invoke the same `master_runner.py` entry point used locally, ensuring identical execution semantics across dev, CI, and production.

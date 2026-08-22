@@ -1,1 +1,0 @@
-Implements the live trading engine's signal and risk logic in pure-data backtests, plus walk-forward out-of-sample evaluation and forensic diagnostics for ML-driven NIFTY/BANKNIFTY option strategies.

@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: ml
+title: NIFTY Intraday ML Pipeline (Feature Engineering, Training & Live Prediction)
+scope:
+    - ml/
+source_files: []
+depends_on: []
+related_to:
+    - path: backtest
+    - path: engine
+    - path: research

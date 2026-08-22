@@ -5,5 +5,4 @@ scope:
     - trading_brain/
 source_files: []
 depends_on: []
-related_to:
-    - path: data_store
+related_to: []

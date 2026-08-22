@@ -217,17 +217,11 @@ def main():
     # Fail-hard preconditions (existence, row count, required columns, NaN %)
     df = validate_training_csv(DATA_PATH)
     if "date" in df.columns:
-<<<<<<< HEAD
         # errors="coerce": a malformed row becomes NaT and is dropped below
         # instead of crashing the whole training run.
         df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
         df = df.sort_values("date").reset_index(drop=True)
     df = df.dropna(subset=list(FEATURE_COLUMNS) + ["label_ce", "label_pe", "date"]).reset_index(drop=True)
-=======
-        df["date"] = pd.to_datetime(df["date"], format="mixed")
-        df = df.sort_values("date").reset_index(drop=True)
-    df = df.dropna(subset=list(FEATURE_COLUMNS) + ["label_ce", "label_pe"]).reset_index(drop=True)
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
 
     # ── LightGBM ──────────────────────────────────────────────────────
     ce = train_one(df, "label_ce", "champion_ce_lgbm")

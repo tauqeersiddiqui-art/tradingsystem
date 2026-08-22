@@ -1,0 +1,1 @@
+Pure-data backtests and purged walk-forward out-of-sample evaluation for NIFTY/BANKNIFTY option strategies, reusing live engine signal/risk logic with premium-space PnL and cost realism.

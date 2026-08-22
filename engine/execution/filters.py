@@ -54,21 +54,11 @@ def has_oi_wall(option_chain, atm_strike, direction):
 SWING_LOOKBACK     = 20                                              # bars for swing extreme / avg range
 MOVE_PCT_MAX       = float(os.getenv("EQ_MOVE_PCT_MAX", "0.004"))    # 0.4% — move already done
 BREAKOUT_MAX_AGE_S = float(os.getenv("EQ_BREAKOUT_MAX_AGE_S", "120"))# late entry cutoff
-<<<<<<< HEAD
 CLOSE_POS_MAX      = float(os.getenv("EQ_CLOSE_POS_MAX", "0.85"))    # buying-at-top (symmetric in mirrored coords)
 WICK_RATIO_MAX     = float(os.getenv("EQ_WICK_RATIO_MAX", "0.6"))    # adverse wick / full range
 MIN_QUALITY_SCORE  = int(os.getenv("EQ_MIN_QUALITY_SCORE", "3"))
 MOVE_PCT_GOOD      = float(os.getenv("EQ_MOVE_PCT_GOOD", "0.003"))   # fresh-move bonus
 CLOSE_POS_GOOD     = 0.7                                             # score bonus (symmetric in mirrored coords)
-=======
-CLOSE_POS_MAX      = float(os.getenv("EQ_CLOSE_POS_MAX", "0.85"))    # CE buying-at-top
-CLOSE_POS_MIN      = float(os.getenv("EQ_CLOSE_POS_MIN", "0.15"))    # PE mirror of above
-WICK_RATIO_MAX     = float(os.getenv("EQ_WICK_RATIO_MAX", "0.6"))    # adverse wick / full range
-MIN_QUALITY_SCORE  = int(os.getenv("EQ_MIN_QUALITY_SCORE", "3"))
-MOVE_PCT_GOOD      = float(os.getenv("EQ_MOVE_PCT_GOOD", "0.003"))   # fresh-move bonus
-CLOSE_POS_GOOD_CE  = 0.7                                             # score bonus (CE)
-CLOSE_POS_GOOD_PE  = 0.3                                             # score bonus (PE)
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
 NOT_PROFIT_BUFFER  = 0.2                                             # +20% over round-trip cost
 DELTA_PROXY        = 0.5                                             # rough ATM option delta
 LOT_QTY_PROXY      = 30                                              # one BANKNIFTY lot
@@ -195,12 +185,9 @@ def compute_entry_quality(df_window, side: str, ltp: float, ts,
     rng = h - l
     raw_close_pos = (c - l) / rng if rng > 0 else 0.5
     # PE mirrors: 1 - raw so "closing at the top of the bar" reads as 0.
-<<<<<<< HEAD
     # Thresholds below are SYMMETRIC in these mirrored coordinates — the
     # value is mirrored once, the threshold never (fixes the Task #14
     # double-mirror bug where the two mirrors cancelled each other).
-=======
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
     close_position = raw_close_pos if is_ce else 1.0 - raw_close_pos
     adverse_wick = (h - max(o, c)) if is_ce else (min(o, c) - l)
     wick_ratio = adverse_wick / rng if rng > 0 else 0.0
@@ -229,16 +216,10 @@ def compute_entry_quality(df_window, side: str, ltp: float, ts,
         return _eq_reject("LATE_ENTRY", metrics)
 
     # 3. BUYING_AT_TOP — last candle closed at the adverse extreme.
-<<<<<<< HEAD
     # Identical direction for both sides in mirrored coordinates:
     # CE close at bar top (raw≈1) and PE chase at bar bottom (raw≈0 →
     # mirrored≈1) both read close_position > CLOSE_POS_MAX.
     if close_position > CLOSE_POS_MAX:
-=======
-    if is_ce and close_position > CLOSE_POS_MAX:
-        return _eq_reject("BUYING_AT_TOP", metrics)
-    if (not is_ce) and close_position < CLOSE_POS_MIN:
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
         return _eq_reject("BUYING_AT_TOP", metrics)
 
     # 4. REJECTION_CANDLE — adverse wick dominates the bar.
@@ -257,12 +238,7 @@ def compute_entry_quality(df_window, side: str, ltp: float, ts,
     score = 0
     if move_pct < MOVE_PCT_GOOD:
         score += 1
-<<<<<<< HEAD
     if close_position < CLOSE_POS_GOOD:
-=======
-    if (is_ce and close_position < CLOSE_POS_GOOD_CE) or \
-       ((not is_ce) and close_position > CLOSE_POS_GOOD_PE):
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
         score += 1
     if mom_now > mom_prev:
         score += 1

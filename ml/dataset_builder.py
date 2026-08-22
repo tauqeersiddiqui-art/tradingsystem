@@ -260,7 +260,6 @@ def create_entry_quality_labels(df: pd.DataFrame) -> pd.DataFrame:
     close = df["close"].to_numpy(dtype=float)
     day   = df["date"].dt.normalize()
 
-<<<<<<< HEAD
     # Future extrema over the next H bars (per day — no cross-day leak).
     # pandas rolling is TRAILING, so roll max over bars [i-H+1..i] then shift
     # back by H -> at bar i this is max(high[i+1..i+H]). The last H bars of
@@ -272,18 +271,6 @@ def create_entry_quality_labels(df: pd.DataFrame) -> pd.DataFrame:
     future_max_up   = fwd_high.to_numpy(dtype=float) - close
     future_max_down = close - fwd_low.to_numpy(dtype=float)
     has_future      = fwd_high.notna().to_numpy()   # False = last H bars/day
-=======
-    # Future extrema over the next H bars (per day — no cross-day leak)
-    fwd_high = df.groupby(day)["high"].transform(
-        lambda s: s.shift(-1).rolling(ENTRY_HORIZON_BARS,
-                                      min_periods=ENTRY_HORIZON_BARS).max())
-    fwd_low = df.groupby(day)["low"].transform(
-        lambda s: s.shift(-1).rolling(ENTRY_HORIZON_BARS,
-                                      min_periods=ENTRY_HORIZON_BARS).min())
-    future_max_up   = fwd_high.to_numpy(dtype=float) - close
-    future_max_down = close - fwd_low.to_numpy(dtype=float)
-    has_future      = fwd_high.notna().to_numpy()
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
 
     mins_from_midnight = df["date"].dt.hour * 60 + df["date"].dt.minute
     in_session = mins_from_midnight.apply(_in_active_session).to_numpy()
@@ -330,14 +317,9 @@ def main():
     print(f"\n[DATA] Loading {DATA_PATH} ...")
     df = pd.read_csv(DATA_PATH)
     # History file mixes "YYYY-MM-DD HH:MM:SS" and ISO-T rows — format="mixed"
-<<<<<<< HEAD
     # parses BOTH; errors="coerce" turns any malformed row into NaT so the
     # NaN audit below counts and drops it (fail-hard if >2% affected).
     df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
-=======
-    # parses BOTH instead of silently coercing (and dropping) the ISO-T rows.
-    df["date"] = pd.to_datetime(df["date"], format="mixed")
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
     df = df.sort_values("date").reset_index(drop=True)
     if "volume" not in df.columns:
         df["volume"] = 0.0

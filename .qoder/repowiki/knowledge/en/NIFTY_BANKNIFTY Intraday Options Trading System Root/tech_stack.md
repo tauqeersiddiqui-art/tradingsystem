@@ -1,0 +1,1 @@
+Python with `kiteconnect` for Zerodha WebSocket/REST, `selenium` + Edge WebDriver plus `pyotp` for automated login, `playwright` for headless browser tasks, `python-dotenv` for config, `pandas`/`numpy` for market data, `lightgbm`/`scikit-learn` for ML models; all dependencies declared in the root `requirements.txt` consumed uniformly by every child module.

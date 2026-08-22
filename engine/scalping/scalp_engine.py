@@ -3,10 +3,7 @@ import logging
 from datetime import datetime, time as dtime, timedelta
 
 from engine.execution.filters import compute_entry_quality, df_from_ticks
-<<<<<<< HEAD
 from engine.execution.cost_model import round_trip_cost
-=======
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
 
 logger = logging.getLogger("scalp")
 
@@ -49,13 +46,10 @@ class ScalpEngine:
         # Entry-quality rejection counters (shared filter, Task #7)
         self._eq_rejections: dict = {}
         self._last_eq_reason = None
-<<<<<<< HEAD
         # Task #14: round-trip cost for the EQ NOT_PROFITABLE rule — same
         # source as live_engine (round_trip_cost(LOT_SIZE, config)), computed
         # once since config is not stored on the instance.
         self._eq_cost_rs = round_trip_cost(getattr(config, "LOT_SIZE", 30), config)
-=======
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
 
         logger.info(
             f"[SCALP ENGINE] initialized | threshold={self._mom_thresh}pt "
@@ -193,10 +187,7 @@ class ScalpEngine:
             eq = compute_entry_quality(
                 _eq_df, side, ltp_now, ts,
                 {"breakout_ts": None, "orb_done": False},
-<<<<<<< HEAD
                 cost_rs=self._eq_cost_rs,
-=======
->>>>>>> 0ffedb6e52f77d12da538ecf3eff7c3775c28e28
             )
             if not eq["accepted"]:
                 self._eq_rejections[eq["reason"]] = \

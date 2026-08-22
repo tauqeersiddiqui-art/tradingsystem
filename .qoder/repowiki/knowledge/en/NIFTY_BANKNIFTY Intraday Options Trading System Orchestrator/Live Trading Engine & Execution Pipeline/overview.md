@@ -1,1 +1,0 @@
-Production-grade intraday options trading engine that builds features, runs ML predictions, applies multi-stage entry/exit filters, and executes orders via Zerodha with risk-managed trailing stops.

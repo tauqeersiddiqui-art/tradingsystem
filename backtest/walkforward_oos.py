@@ -5,8 +5,8 @@
 # This is the honest-edge tool. It fixes the three flaws of the in-sample
 # backtest_engine.py:
 #   1. OUT-OF-SAMPLE: models are retrained on each fold using ONLY data BEFORE
-#      the test window (with a LOOKAHEAD-bar embargo so forward labels cannot
-#      leak across the boundary). The model never sees the bars it is graded on.
+#      the test window (with an ENTRY_HORIZON_BARS-bar embargo so forward labels
+#      cannot leak across the boundary). The model never sees the bars it is graded on.
 #   2. TRADE-LEVEL & DE-OVERLAPPED: P&L is measured per independent trade
 #      (one position at a time, cooldown enforced) — NOT per-bar AUC. The
 #      script prints per-bar AUC beside OOS expectancy so the inflation gap is
@@ -44,8 +44,12 @@ from backtest.backtest_engine import OptionPriceSimulator, _mins_to_close
 DATA = "ml/models/training_dataset.csv"
 
 # ── Sim parameters (mirror live config defaults) ──────────────────────
-LOOKAHEAD        = 12          # must match dataset_builder (embargo size)
-TARGET_SPOT_PTS  = 15          # must match dataset_builder (label barrier)
+# Labels are ENTRY-QUALITY (not directional first-touch): label_ce/pe = 1 if
+# the next ENTRY_HORIZON_BARS=5 forward bars show >= QUALITY_THRESHOLD_PTS
+# (25 spot pts) of favorable excursion — CE and PE are NON-EXCLUSIVE (both can
+# be 1), and BAD_ENTRY bars (move already extended) are forced to 0.
+LOOKAHEAD        = 5           # embargo/purge size = dataset label horizon (ENTRY_HORIZON_BARS)
+TARGET_SPOT_PTS  = 15          # matched-mode diagnostic barrier (dataset label threshold is 25)
 # STOP_MODE:
 #   "live"    (default) — production exit: option-premium stop from
 #             compute_entry_stops + trailing manage_position. This is what the
@@ -293,7 +297,8 @@ def main():
         test_fold = oos.iloc[lo:hi].reset_index(drop=True)
         test_start = test_fold["date"].iloc[0]
         # TRAIN: everything strictly before test_start, minus an embargo equal
-        # to the label lookahead (so forward labels cannot leak across).
+        # to the entry-quality label horizon (5 bars, so forward labels cannot
+        # leak across).
         embargo_cut = df["date"].searchsorted(test_start) - LOOKAHEAD
         train = df.iloc[:max(embargo_cut, 0)]
         if len(train) < 20000:

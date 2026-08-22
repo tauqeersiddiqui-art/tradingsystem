@@ -1,0 +1,5 @@
+- Each script resolves `BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))` and builds absolute paths to `data/`, `logs/`, and `master_runner.py` so they run correctly regardless of cwd.
+- Process lifecycle is coordinated through a single PID file at `data/.master_runner.pid` read/written by both the launcher scripts and the supervisor.
+- All logging writes timestamped lines appended to files under `logs/` (e.g. `supervisor_status.log`, `monitor_session.log`, `autostart.log`) rather than using a logger framework.
+- External configuration is loaded lazily from `.env` via `dotenv.load_dotenv` inside functions (e.g. `tg()`, `refresh_zerodha_data.py`) instead of at module import time.
+- Market-hours gating uses explicit `datetime.time` comparisons against hard-coded IST boundaries (9:15–15:30/15:40) rather than relying on timezone-aware clocks.

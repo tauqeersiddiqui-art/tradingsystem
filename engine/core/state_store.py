@@ -22,6 +22,7 @@ _STATE_PATH = os.path.join("data", "runtime_state.json")
 _PERSIST_KEYS = (
     "symbol", "side", "qty", "lot_size", "entry", "stop_loss", "target",
     "max_pnl", "min_pnl", "ml_prob", "regime", "reason", "sl_order_id",
+    "entry_quality",
 )
 
 

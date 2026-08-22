@@ -1,0 +1,1 @@
+LightGBM (`lgb.LGBMClassifier`) as the primary classifier, optional CatBoost (`catboost.CatBoostClassifier`) for ensemble, scikit-learn `TimeSeriesSplit` + `roc_auc_score` for walk-forward validation, `sklearn.linear_model.LogisticRegression` for manual Platt calibration, and joblib for model persistence.

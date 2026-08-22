@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: data_store
+title: Trading Runtime Data Store
+scope:
+    - data/
+source_files: []
+depends_on: []
+related_to:
+    - path: engine
+    - path: trading_brain

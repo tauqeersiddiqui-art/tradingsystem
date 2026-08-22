@@ -1,0 +1,1 @@
+NumPy/Pandas for OHLCV manipulation, LightGBM (`lgb.LGBMClassifier`) with Platt calibration via `ml.predictor_champion.CalibratedLGBM`, scikit-learn ROC-AUC for per-bar AUC reporting, and Python `dataclasses` for trade/day result records.

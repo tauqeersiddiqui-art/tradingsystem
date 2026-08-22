@@ -1,0 +1,4 @@
+- Time-partitioned CSV naming: diagnostics use `*_YYYY_MM_DD.csv` (daily) while trades use `trade_log_YYYY_Www.csv` (ISO week).
+- Session provenance is captured in `diagnostics/session_version.json` by recording `git_commit`, `ce_model_mtime`, `pe_model_mtime`, and `config_version` alongside `session_start`.
+- Live session snapshots are persisted as top-level JSON files (`runtime_state.json`, `system_health.json`) keyed by fields like `session_date`, `pnl`, `positions`, `mode`, and `last_update`.
+- Trade records include both raw execution metrics (slippage_pts, order_to_fill_latency_ms, spread) and derived performance metrics (R_multiple, MFE, MAE, holding_seconds) in a single wide CSV schema.

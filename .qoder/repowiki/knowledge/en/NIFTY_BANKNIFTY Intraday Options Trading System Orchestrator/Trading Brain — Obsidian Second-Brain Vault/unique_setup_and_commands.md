@@ -1,0 +1,1 @@
+Vault is bootstrapped by an external automation process that creates the directory structure and writes timestamped headers (e.g., `Vault initialized: 2026-08-16T23:31:56.125773`) into each README.

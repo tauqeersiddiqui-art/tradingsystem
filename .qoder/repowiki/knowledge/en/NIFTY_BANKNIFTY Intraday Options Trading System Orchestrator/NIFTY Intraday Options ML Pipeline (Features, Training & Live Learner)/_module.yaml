@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: ml
+title: NIFTY Intraday Options ML Pipeline (Features, Training & Live Learner)
+scope:
+    - ml/
+source_files: []
+depends_on: []
+related_to:
+    - path: engine

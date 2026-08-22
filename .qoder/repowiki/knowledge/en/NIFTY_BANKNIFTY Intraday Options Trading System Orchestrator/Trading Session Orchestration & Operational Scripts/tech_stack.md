@@ -1,0 +1,1 @@
+Python 3 with `psutil` for cross-platform process liveness checks, `requests` for direct Telegram API calls, `kiteconnect` for Zerodha historical data, `pandas`/`numpy` for backtesting; Windows Task Scheduler (`schtasks`) plus `taskkill`/`tasklist` for lifecycle management; Bash loop for Linux-style monitoring.

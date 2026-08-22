@@ -429,10 +429,16 @@ class TradeJournal:
         pnl: float,
         exit_ts: datetime,
         htf_would_block: Optional[bool] = None,
+        loss_class: str = "",
     ):
         """
         Finalise the journal record: exit fields, loss classification, shadow analysis.
         Writes one row to journal CSV and one row to shadow CSV.
+
+        loss_class — optional Phase-4 entry-quality class (LATE_ENTRY /
+        REVERSAL / UNKNOWN) supplied by master_runner. Persisted into the
+        existing free-text shadow_notes column (no schema change); the
+        loss_class column keeps the internal Part-2 classifier output.
         """
         if jid not in self._active:
             logger.warning(f"[JOURNAL] on_exit: unknown jid={jid}")
@@ -459,6 +465,11 @@ class TradeJournal:
 
         # Part 2: loss classification
         rec["loss_class"] = classify_loss(rec) if pnl <= 0 else "winner"
+
+        # Phase 4: entry-quality loss class → existing free-text column,
+        # keeping _JOURNAL_COLUMNS unchanged for already-rotated files.
+        if loss_class:
+            rec["shadow_notes"] = f"eq_loss_class={loss_class}"
 
         # Part 6: shadow analysis
         shadow = compute_shadow(rec, htf_would_block)
@@ -493,6 +504,7 @@ class TradeJournal:
         logger.info(
             f"[JOURNAL] EXIT jid={jid} {rec['side']} pnl={pnl:+.2f} "
             f"reason={exit_reason} class={rec['loss_class']} "
+            f"eq_class={loss_class or '-'} "
             f"mfe={rec['mfe_rs']} mae={rec['mae_rs']} held={held:.0f}s"
         )
 

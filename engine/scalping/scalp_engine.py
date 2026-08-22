@@ -2,6 +2,9 @@ import time
 import logging
 from datetime import datetime, time as dtime, timedelta
 
+from engine.execution.filters import compute_entry_quality, df_from_ticks
+from engine.execution.cost_model import round_trip_cost
+
 logger = logging.getLogger("scalp")
 
 _SCALP_START = dtime(9, 30)
@@ -40,6 +43,13 @@ class ScalpEngine:
         # Open-volatility penalty (Aug-20)
         self._open_vol_window = int(getattr(config, "SCALP_OPEN_VOL_WINDOW_S", 900))
         self._open_vol_mult   = float(getattr(config, "SCALP_OPEN_VOL_SL_MULT", 1.5))
+        # Entry-quality rejection counters (shared filter, Task #7)
+        self._eq_rejections: dict = {}
+        self._last_eq_reason = None
+        # Task #14: round-trip cost for the EQ NOT_PROFITABLE rule — same
+        # source as live_engine (round_trip_cost(LOT_SIZE, config)), computed
+        # once since config is not stored on the instance.
+        self._eq_cost_rs = round_trip_cost(getattr(config, "LOT_SIZE", 30), config)
 
         logger.info(
             f"[SCALP ENGINE] initialized | threshold={self._mom_thresh}pt "
@@ -167,9 +177,29 @@ class ScalpEngine:
             if side == "PE" and htf5 == 1:
                 return None
 
-        return {"side": side, "reason": "SCALP_MOM", "move_pts": round(move, 2)}
+        # 4. ENTRY QUALITY — rejection-first timing/quality gate shared with
+        #    the ML path. The tick window is bucketed into synthetic candles
+        #    (scalp has no 1m bars) so the same OHLC rules apply. Any
+        #    rejection = no entry.
+        eq = {"metrics": None}
+        _eq_df = df_from_ticks(past)
+        if _eq_df is not None:
+            eq = compute_entry_quality(
+                _eq_df, side, ltp_now, ts,
+                {"breakout_ts": None, "orb_done": False},
+                cost_rs=self._eq_cost_rs,
+            )
+            if not eq["accepted"]:
+                self._eq_rejections[eq["reason"]] = \
+                    self._eq_rejections.get(eq["reason"], 0) + 1
+                self._last_eq_reason = eq["reason"]
+                logger.debug(
+                    f"[SCALP EQ] REJECT {eq['reason']} | {eq['metrics']}"
+                )
+                return None
 
-        return None
+        return {"side": side, "reason": "SCALP_MOM", "move_pts": round(move, 2),
+                "entry_quality": eq.get("metrics")}
 
     def adaptive_sl_pts(self, side: str, move_pts: float,
                         htf5: int = 0, vwap_confirms: bool = False,

@@ -1,0 +1,2 @@
+- Each subdirectory ships with a README.md that documents its role and includes a timestamp footer marking creation or initialization time.
+- Rules entries follow a fixed three-field template of Condition, Action, and Evidence with links back to source patterns or dates.

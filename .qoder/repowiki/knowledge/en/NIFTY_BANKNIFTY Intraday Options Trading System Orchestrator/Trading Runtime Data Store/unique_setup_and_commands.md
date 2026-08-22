@@ -1,0 +1,1 @@
+No build or setup commands — the directory is created/managed by the running trading bot. Daily CSVs under `diagnostics/journals` and `diagnostics/shadow` are appended per session date, and weekly rotation applies to `trades/trade_log_YYYY_Www.csv`.

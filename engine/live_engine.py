@@ -20,6 +20,8 @@ from ml.feature_config import build_live_features, _safe_build_live_features, FE
 from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
+from engine.execution.filters import compute_entry_quality
+from engine.execution.cost_model import round_trip_cost
 from engine.risk.risk_manager import compute_entry_stops
 
 logger = logging.getLogger("live_engine")
@@ -720,6 +722,7 @@ class LiveEngine:
             self._breakout_detected = False
             self._breakout_price = None
             self._breakout_side = None
+            self._breakout_ts = None   # Task #14: stale ts caused all-day LATE_ENTRY
             return True
 
         self._pullback_wait_count += 1
@@ -744,6 +747,7 @@ class LiveEngine:
             self._breakout_price = None
             self._breakout_side = None
             self._pullback_target = None
+            self._breakout_ts = None   # Task #14: stale ts caused all-day LATE_ENTRY
             return True
 
         return False
@@ -1086,6 +1090,23 @@ class LiveEngine:
             self._count_block(_bk)
             return None
 
+        # ══ STEP 5b: ENTRY QUALITY gate (rejection-first, shared filter) ══
+        # Task #14: legacy path must pass the same entry-timing / quality
+        # gate as the predict-first path. Entry proceeds only if no rule fires.
+        _cfg = getattr(self.ctx, "config", None)
+        _eq_cost = round_trip_cost(
+            getattr(_cfg, "LOT_SIZE", 30), _cfg) if _cfg is not None else None
+        eq = compute_entry_quality(
+            df_window, signal["side"], price, ts,
+            {"breakout_ts": self._breakout_ts, "orb_done": self.orb_done},
+            cost_rs=_eq_cost,
+        )
+        if not eq["accepted"]:
+            self._count_block(eq["reason"])
+            self._last_block_reason = eq["reason"]
+            return None
+        signal["entry_quality"] = eq["metrics"]
+
         # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
         return self._finalize_signal(signal, features, price)
 
@@ -1177,8 +1198,10 @@ class LiveEngine:
         # Per-side thresholds: use the learner's adaptive threshold (base from
         # CHAMPION_THRESHOLD=0.35 + day-type adjustment, clamped 0.45-0.56).
         # The predictor's calibrated threshold FILES (0.79) are stale for the
-        # de-saturated models — live probs top out ~0.46, so the file threshold
-        # made ML unfirable (ML_BELOW_THR forever). Learner adaptive only.
+        # current entry-quality champions — those models output entry-quality
+        # probabilities (measured max 1.0, higher firing frequency), so the
+        # old file threshold made ML unfirable (ML_BELOW_THR forever).
+        # Learner adaptive only.
         learn_thr = self.learner.get_ml_threshold()
         ce_thr = learn_thr
         pe_thr = learn_thr
@@ -1249,6 +1272,20 @@ class LiveEngine:
             self._last_block_reason = f"HTF_MISALIGN (15m/30m trend opposes {side})"
             return None
 
+        # 6b. ENTRY QUALITY — rejection-first entry-timing / trade-quality
+        # gate (shared with scalp path). Entry proceeds ONLY if no rule fires.
+        _eq_cost = round_trip_cost(
+            getattr(_cfg, "LOT_SIZE", 30), _cfg) if _cfg is not None else None
+        eq = compute_entry_quality(
+            df_window, side, price, ts,
+            {"breakout_ts": self._breakout_ts, "orb_done": self.orb_done},
+            cost_rs=_eq_cost,
+        )
+        if not eq["accepted"]:
+            self._count_block(eq["reason"])
+            self._last_block_reason = eq["reason"]
+            return None
+
         # 7. FIX B: Pullback entry — wait for retrace after breakout
         if not self._check_pullback_entry(df_window, side, price):
             self._count_block("PULLBACK_WAIT")
@@ -1270,7 +1307,8 @@ class LiveEngine:
 
         self._last_block_reason = f"SIGNAL_FIRE (ML_{side})"
         signal = {"side": side, "ml_prob": prob,
-                  "features": features, "reason": f"ML_{side}"}
+                  "features": features, "reason": f"ML_{side}",
+                  "entry_quality": eq["metrics"]}
         return self._finalize_signal(signal, features, price)
 
     def _ml_percentile(self, prob: float) -> int:

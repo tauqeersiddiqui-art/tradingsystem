@@ -1,0 +1,1 @@
+Provides a clean-room research backtest engine and parity tests that replay live trading logic against historical Bank Nifty data to validate decision equivalence without modifying production code.

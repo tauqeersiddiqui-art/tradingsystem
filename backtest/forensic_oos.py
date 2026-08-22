@@ -30,8 +30,11 @@ from engine.risk.risk_manager import compute_entry_stops
 from backtest.backtest_engine import OptionPriceSimulator, _mins_to_close
 
 # -- Parameters (mirror walkforward_oos defaults) ----------------------
+# Labels are ENTRY-QUALITY (not directional first-touch): label_ce/pe = 1 if
+# the next ENTRY_HORIZON_BARS=5 forward bars show >= 25 spot pts of favorable
+# excursion — CE and PE are NON-EXCLUSIVE, BAD_ENTRY bars forced to 0.
 DATA         = "ml/models/training_dataset.csv"
-LOOKAHEAD    = 12
+LOOKAHEAD    = 5     # embargo/purge size = dataset label horizon (ENTRY_HORIZON_BARS)
 TARGET_PTS   = 15
 EDGE_MARGIN  = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
 VWAP_TOL     = 0.0015

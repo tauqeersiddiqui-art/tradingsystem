@@ -453,7 +453,8 @@ def _profit_retention_sim(ctx: TradingContext) -> str | None:
     for i in range(n):
         actual   = ea["realized_list"][i]
         mfe_pts  = ea.get("mfe_pts_list", [0] * n)[i]
-        qty      = ea.get("qty_list",     [65] * n)[i]
+        _lot_sz  = int(getattr(ctx.config, "LOT_SIZE", 30))
+        qty      = ea.get("qty_list",     [_lot_sz] * n)[i]
 
         best_lock_pts = None
         for trigger_pts, lock_pts in reversed(_LADDER_LEVELS):

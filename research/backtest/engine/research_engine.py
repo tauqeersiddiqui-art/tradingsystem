@@ -64,16 +64,15 @@ class ResearchEngine:
             enable_pe: Whether to generate PE signals
         """
         self.config = config or Config()
-        # Task #20 FIX 7: force the LEGACY exit regime for research parity.
-        # Config()'s live default ML_TRAIL_ENABLED=True would silently switch
-        # this harness to Phase-10 exits; the parity suite validates the
-        # legacy ladder/drawdown regime. Must be the boolean False (the
-        # consumer checks truthiness — the string "0" would stay truthy).
-        # Live default is NOT changed.
-        self.config.ML_TRAIL_ENABLED = False
+        # Research now MATCHES the live exit regime (Phase-10 trail is the
+        # live default). The old ML_TRAIL_ENABLED=False override made the
+        # parity suite validate a regime live no longer runs. Set env
+        # ML_TRAIL_ENABLED=0 before constructing Config if a legacy-regime
+        # run is ever needed.
 
-        # Sizing: whole Bank Nifty lots only (LOT_SIZE=30 for Bank Nifty, NOT 65 for Nifty)
-        self.lot_size = 30  # Bank Nifty lot size - hardcoded, not from config
+        # Sizing: whole Bank Nifty lots only; lot size comes from Config
+        # (single source of truth — BANKNIFTY = 30).
+        self.lot_size = lot_qty(self.config)
         self.lots_per_trade = lots_per_trade
         self.qty = self.lot_size * self.lots_per_trade
 
@@ -186,7 +185,7 @@ class ResearchEngine:
         last_st_line = float(st_line_arr[-1])
         st_dist = (closes[-1] - last_st_line) / closes[-1] if closes[-1] != 0 else 0.0
 
-        adx_arr, di_plus, _ = _compute_adx(h_arr, l_arr, c_arr, period=14)
+        adx_arr, di_plus, di_minus = _compute_adx(h_arr, l_arr, c_arr, period=14)
         last_adx = float(adx_arr[-1])
 
         vwap_val = self.vwap.value
@@ -202,7 +201,7 @@ class ResearchEngine:
             "supertrend_dist": float(np.clip(st_dist, -0.05, 0.05)),
             "price_vs_vwap": float(np.clip(price_vs_vwap, -0.05, 0.05)),
             "adx": float(np.clip(last_adx, 0, 100)),
-            "di_spread": float(np.clip(di_plus[-1] - di_plus[-1], -60, 60)),  # placeholder
+            "di_spread": float(np.clip(di_plus[-1] - di_minus[-1], -60, 60)),
             "ema_alignment": float(1.0 if ema20 > ema50 else -1.0),
         }
 
@@ -259,13 +258,14 @@ class ResearchEngine:
                 self._log_block("ML_BELOW_THRESH")
                 return None
 
-            # 4. Side enablement (research control)
+            # 4. Side enablement (research control) — actually blocks now
+            # (previously logged but fell through: continue_check was unused).
             if side == "CE" and not self.enable_ce:
                 self._log_block("CE_DISABLED")
-                continue_check = True
+                return None
             if side == "PE" and not self.enable_pe:
                 self._log_block("PE_DISABLED")
-                continue_check = True
+                return None
 
             # 5. Session gates
             now = ts.time()
@@ -327,11 +327,11 @@ class ResearchEngine:
 
     def check_exit(self, position, ltp, held_seconds):
         """
-        Mirror the LEGACY LiveEngine.check_exit exit regime (pre-Phase-10):
-        delegates to profit_manager.manage_position WITHOUT config, so the
-        cost-aware ladder + drawdown exits apply. Live now runs the Phase-10
-        premium-space trail when ML_TRAIL_ENABLED — this harness deliberately
-        stays on the legacy regime for parity (see __init__ override).
+        Mirror LiveEngine.check_exit INCLUDING the Phase-10 premium-space
+        trail when config.ML_TRAIL_ENABLED (the live default): breakeven+cost
+        at +ML_TRAIL_BE_PTS, then trail ML_TRAIL_GAP_PTS below the high-water
+        mark after +ML_TRAIL_T2_PTS. manage_position receives the config so
+        its legacy ladder is bypassed exactly as live does.
         """
         entry = position["entry"]
         size = position.get("qty", self.qty)
@@ -339,6 +339,21 @@ class ResearchEngine:
         max_pnl = position.get("max_pnl", 0.0)
         ml_prob = position.get("ml_prob", 0.5)
         target = position.get("target")
+
+        # ── Phase-10 trail (mirrors live_engine.check_exit) ───────────
+        cfg = self.config
+        if cfg is not None and bool(getattr(cfg, "ML_TRAIL_ENABLED", False)):
+            _qty = max(size, 1)
+            _peak_pts = max(max_pnl, (ltp - entry) * _qty) / _qty
+            if _peak_pts >= float(getattr(cfg, "ML_TRAIL_T2_PTS", 20.0)):
+                _hwm = entry + _peak_pts
+                stop_loss = max(stop_loss, _hwm - float(getattr(cfg, "ML_TRAIL_GAP_PTS", 8.0)))
+            elif _peak_pts >= float(getattr(cfg, "ML_TRAIL_BE_PTS", 10.0)):
+                try:
+                    _cost_pts = round_trip_cost(_qty, cfg) / _qty
+                except Exception:
+                    _cost_pts = 2.2  # Rs66 / 30 qty baseline fallback
+                stop_loss = max(stop_loss, entry + _cost_pts)
 
         new_sl, new_max_pnl, pm_reason, _scale = manage_position(
             entry_price=entry,
@@ -348,6 +363,7 @@ class ResearchEngine:
             max_pnl=max_pnl,
             ml_prob=ml_prob,
             target=target,
+            config=cfg,
             side=position.get("side", "CE"),
         )
 
@@ -483,6 +499,7 @@ class ResearchEngine:
                         "qty": signal["qty"],
                         "lot_size": self.lot_size,
                         "ml_prob": signal["ml_prob"],
+                        "ml_threshold": signal.get("threshold", 0.0),
                         "max_pnl": 0.0,
                         "regime": signal["regime"],
                         "ts": ts,
@@ -527,7 +544,7 @@ class ResearchEngine:
             "net_pnl": net,
             "exit_reason": exit_reason,
             "ml_probability": round(position.get("ml_prob", 0.0), 4),
-            "ml_threshold": round(position.get("stop_loss", 0.0), 2),
+            "ml_threshold": round(position.get("ml_threshold", 0.0), 4),
             "regime": position.get("regime", "UNKNOWN"),
             "orb_high": self.orb_high,
             "orb_low": self.orb_low,
@@ -543,27 +560,11 @@ class ResearchEngine:
     # ───────────────────────────────────────────────────────────────────
 
     def _rsi_wilder(self, prices: np.ndarray, period: int = 14):
-        """Calculate RSI using Wilder's smoothing."""
-        deltas = np.diff(prices)
-        gains = np.where(deltas > 0, deltas, 0)
-        losses = np.where(deltas < 0, -deltas, 0)
-
-        _roll = gains.rolling if hasattr(gains, 'rolling') else None
-
-        # Use pandas rolling for Wilder smoothing
-        if hasattr(gains, 'rolling'):
-            avg_gain = gains.rolling(window=period, min_periods=1).mean().iloc[-1]
-            avg_loss = losses.rolling(window=period, min_periods=1).mean().iloc[-1]
-        else:
-            # Fallback to simple average
-            avg_gain = np.mean(gains[-period:]) if len(gains) >= period else np.mean(gains)
-            avg_loss = np.mean(losses[-period:]) if len(losses) >= period else np.mean(losses)
-
-        if avg_loss == 0:
-            return np.full(len(prices), 100.0)
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return np.full(len(prices), rsi)
+        """Wilder RSI — delegates to ml.indicators.rsi_wilder, the SAME
+        implementation used by training (dataset_builder) and live
+        (live_engine). The old body was Cutler RSI despite the name."""
+        from ml.indicators import rsi_wilder
+        return rsi_wilder(np.asarray(prices, dtype=float), period)
 
     def _atr_wilder(self, high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14):
         """Calculate ATR using Wilder's method."""

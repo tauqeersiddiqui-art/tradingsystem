@@ -18,7 +18,7 @@ from datetime import datetime, time as dtime
 from ml.predictor_champion import ChampionPredictor
 from ml.feature_config import build_live_features, _safe_build_live_features, FEATURE_COLUMNS
 from ml.ml_intraday_learner import IntradayMLLearner
-from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
+from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator, rsi_wilder
 from engine.execution.profit_manager import manage_position
 from engine.execution.filters import compute_entry_quality
 from engine.execution.cost_model import round_trip_cost
@@ -110,6 +110,9 @@ class LiveEngine:
 
         # ── Re-entry cooldown ─────────────────────────────────────────
         self._last_exit_ts: float = 0.0   # epoch seconds of last trade exit
+        # RANGE_RELAX_MODE: True when a RANGE day is allowed through the regime
+        # gate — downstream applies stricter ML prob / SL / size for that signal.
+        self._range_relax: bool = False
         _cfg = getattr(ctx, "config", None)
         # Config-driven (defaults match config.py). Raised 180->300 so a
         # stopped option is not re-entered while still reversing.
@@ -369,6 +372,25 @@ class LiveEngine:
         self.learner.backfill_first_30m(candles)
         # Collect for the DayClassifier model
         self._day_candles_30m = candles
+
+        # Also seed full-day trackers for mid-day reclassification.
+        # Reload the CSV for all of today's candles (9:15 → now).
+        now = datetime.now()
+        _now = datetime.combine(today, dtime(now.hour, now.minute))
+        full_day = df[(df[date_col] >= start) & (df[date_col] <= _now)]
+        if len(full_day) >= 10:
+            full_candles = []
+            for _, row in full_day.iterrows():
+                full_candles.append({
+                    "open":   float(row.get("open",  row.get("close", 0))),
+                    "high":   float(row.get("high",  row.get("close", 0))),
+                    "low":    float(row.get("low",   row.get("close", 0))),
+                    "close":  float(row.get("close", 0)),
+                })
+            self.learner.backfill_full_day(full_candles)
+            # Immediately reclassify with the full-day picture
+            self.learner.maybe_reclassify(_now)
+
         logger.info(
             f"[DAY CLASSIFIER] Backfilled {len(candles)} candles from history | "
             f"learner_day_type={self.learner.get_day_type()}"
@@ -397,6 +419,10 @@ class LiveEngine:
                 low=candle["low"],
                 ts=ts,
             )
+            # Periodic re-classification: a day that opens choppy but then trends
+            # hard (e.g. BankNifty -400pts) stays labeled RANGE_DAY forever without
+            # this, blocking every ML entry via RANGE_REGIME_SKIP.
+            self.learner.maybe_reclassify(ts)
 
         # Accumulate VWAP from market open — once per minute
         if _candle_minute != self._last_vwap_minute:
@@ -491,15 +517,11 @@ class LiveEngine:
         ema20 = ema(closes[-min(n, 60):], 20)
         ema50 = ema(closes[-min(n, 100):], 50) if n >= 50 else ema20
 
-        # RSI-14
+        # RSI-14 (Wilder) — SAME implementation as training
+        # (ml.dataset_builder) via ml.indicators.rsi_wilder. Was Cutler
+        # (simple 14-bar mean) — a train/serve skew.
         if n >= 15:
-            gains, losses = [], []
-            for i in range(-14, 0):
-                diff = closes[i] - closes[i - 1]
-                (gains if diff > 0 else losses).append(abs(diff))
-            avg_g = np.mean(gains) if gains else 1e-6
-            avg_l = np.mean(losses) if losses else 1e-6
-            rsi_1m = 100 - (100 / (1 + avg_g / avg_l))
+            rsi_1m = float(rsi_wilder(np.asarray(closes, dtype=float))[-1])
         else:
             rsi_1m = 50.0
 
@@ -857,13 +879,22 @@ class LiveEngine:
             return None
 
         # ── TIER 1: Regime filter — skip RANGE days (31% WR, negative expectancy) ──
+        # RANGE_RELAX_MODE=1 allows RANGE_DAY entries through with stricter
+        # gates applied downstream (higher ML prob, tighter SL, half size).
+        # UNKNOWN day types are still blocked — no regime signal = no edge.
         _regime_str = str(self.learner.get_day_type()).upper()
         _is_range = "RANGE" in _regime_str or _regime_str in ("UNKNOWN", "")
         _skip_range = bool(getattr(_cfg, "SKIP_RANGE_REGIME", True)) if _cfg else True
+        _relax_range = bool(getattr(_cfg, "RANGE_RELAX_MODE", False)) if _cfg else False
+        self._range_relax = False
         if _skip_range and _is_range:
-            self._count_block("RANGE_REGIME_SKIP")
-            self._last_block_reason = f"RANGE_REGIME_SKIP (day_type={_regime_str})"
-            return None
+            if _relax_range and "RANGE" in _regime_str:
+                # Relaxed: pass through, flag tighter gates for this signal.
+                self._range_relax = True
+            else:
+                self._count_block("RANGE_REGIME_SKIP")
+                self._last_block_reason = f"RANGE_REGIME_SKIP (day_type={_regime_str})"
+                return None
 
         # ── Re-entry cooldown ────────────────────────────────────────────
         _secs_since_exit = time.time() - self._last_exit_ts
@@ -1128,6 +1159,14 @@ class LiveEngine:
         _cfg = getattr(self.ctx, "config", None)
         _sl_mult = float(getattr(_cfg, "INITIAL_SL_MULT", 1.5)) if _cfg else 1.5
 
+        # RANGE_RELAX_MODE: on choppy range days use a TIGHTER stop and HALF
+        # the position size — risk per trade stays bounded even though the
+        # regime filter has been relaxed to allow entries.
+        if getattr(self, "_range_relax", False):
+            _relax_sl   = float(getattr(_cfg, "RANGE_RELAX_SL_MULT", 0.60)) if _cfg else 0.60
+            _relax_lots = float(getattr(_cfg, "RANGE_RELAX_LOT_MULT", 0.50)) if _cfg else 0.50
+            _sl_mult *= _relax_sl
+
         # Temporarily scale ATR for stop calculation to apply INITIAL_SL_MULT
         scaled_atr = atr_val * _sl_mult
         side = signal.get("side", "CE")
@@ -1136,6 +1175,8 @@ class LiveEngine:
                       stop_pct=stop_pct, regime=regime)
 
         lot_size     = self.ctx.config.LOT_SIZE
+        if getattr(self, "_range_relax", False):
+            lot_size = max(1, int(round(lot_size * _relax_lots)))
         exp_win      = (target - price) * lot_size
         exp_loss     = (price - stop_loss) * lot_size
         expected_pnl = signal["ml_prob"] * exp_win - (1 - signal["ml_prob"]) * exp_loss
@@ -1203,6 +1244,11 @@ class LiveEngine:
         # old file threshold made ML unfirable (ML_BELOW_THR forever).
         # Learner adaptive only.
         learn_thr = self.learner.get_ml_threshold()
+        # RANGE_RELAX_MODE: raise the bar on choppy days — require high
+        # conviction before accepting a signal on a RANGE regime.
+        if getattr(self, "_range_relax", False):
+            _relax_min = float(getattr(_cfg, "RANGE_RELAX_MIN_PROB", 0.60)) if _cfg else 0.60
+            learn_thr = max(learn_thr, _relax_min)
         ce_thr = learn_thr
         pe_thr = learn_thr
 

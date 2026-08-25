@@ -41,7 +41,7 @@ VWAP_TOL     = 0.0015
 MAX_TRADES   = int(os.getenv("BT_MAX_TRADES", "6"))
 COOLDOWN_S   = int(os.getenv("BT_COOLDOWN", "300"))
 MAX_HOLD_S   = 300
-LOT_UNITS    = 65
+LOT_UNITS    = int(os.getenv("LOT_SIZE", "30"))   # BANKNIFTY lot = 30 (same env key as Config.LOT_SIZE)
 SPREAD_PTS   = float(os.getenv("BT_SPREAD_PTS", "1.0"))
 FOLDS        = int(os.getenv("FOLDS", "4"))
 OOS_START    = os.getenv("OOS_START", "2024-01-01")
@@ -243,14 +243,14 @@ def _simulate_forensic(test_df, warmup_rows, ce_model, pe_model, thr):
         mtc = _mins_to_close(ts)
         entry_prem = _opt.premium(entry_spot, entry_spot, side, mtc) + SPREAD_PTS / 2.0
         atr_val = float(row.get("atr", entry_spot * 0.01))
-        sl, tgt, _ = compute_entry_stops(entry_prem, atr_val, "RANGE")
+        adx_v = float(row.get("adx", 20.0))
+        di_s  = float(row.get("di_spread", 0.0))
+        # Use the bar's actual regime (was hardcoded "RANGE").
+        sl, tgt, _ = compute_entry_stops(entry_prem, atr_val, _regime(adx_v, di_s))
 
         # did the label agree with our direction?
         lbl_col = "label_ce" if side == "CE" else "label_pe"
         label_correct = int(row.get(lbl_col, 0))
-
-        adx_v = float(row.get("adx", 20.0))
-        di_s  = float(row.get("di_spread", 0.0))
 
         position = {
             "side": side, "entry": entry_prem, "entry_spot": entry_spot,

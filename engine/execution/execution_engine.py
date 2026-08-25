@@ -34,16 +34,17 @@ class ExecutionEngine:
     def get_lot_size(self, symbol: str) -> int:
         """
         Fetch actual lot size from instrument map.
-        Falls back to 75 (NIFTY default) if not found.
+        Falls back to Config.LOT_SIZE (BANKNIFTY = 30) if not found.
         """
+        fallback = int(getattr(self.config, "LOT_SIZE", 30))
         try:
             inst = self.broker.instrument_map.get(symbol)
             if inst and inst.get("lot_size", 0) > 0:
                 return int(inst["lot_size"])
         except Exception as e:
             logger.warning(f"[LOT SIZE] Could not fetch for {symbol}: {e}")
-        logger.warning(f"[LOT SIZE] Falling back to 65 for {symbol}")
-        return 65   # NIFTY lot size from Jan 2026
+        logger.warning(f"[LOT SIZE] Falling back to {fallback} for {symbol}")
+        return fallback
 
     # ══════════════════════════════════════════════════════════════════
     # FILL VALIDATION

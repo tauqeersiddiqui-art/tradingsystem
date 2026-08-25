@@ -1,8 +1,13 @@
 # telegram/messages.py
 # Human-readable trade messages with live in-place updates.
 
+import os
 import re
 from datetime import datetime
+
+# BANKNIFTY lot size — same env key as engine.config.Config.LOT_SIZE so the
+# displayed lot count always matches live sizing.
+_DEFAULT_LOT_SIZE = int(os.getenv("LOT_SIZE", "30"))
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -166,7 +171,7 @@ def format_trade_entry(data: dict) -> str:
     target   = data.get("target", 0.0)
     ml_prob  = data.get("ml_prob", 0.0)
     regime   = data.get("regime", "TREND")
-    lot_size = data.get("lot_size", 60)
+    lot_size = data.get("lot_size") or _DEFAULT_LOT_SIZE
     lots     = qty // lot_size
     side_e   = _side_emoji(side)
     reg_e    = _regime_emoji(regime)

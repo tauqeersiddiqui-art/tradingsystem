@@ -66,7 +66,7 @@ VWAP_TOL         = 0.0015
 MAX_TRADES_DAY   = int(os.getenv("BT_MAX_TRADES", "6"))
 COOLDOWN_S       = int(os.getenv("BT_COOLDOWN", "300"))
 MAX_HOLD_S       = 300
-LOT_UNITS        = 65
+LOT_UNITS        = int(os.getenv("LOT_SIZE", "30"))   # BANKNIFTY lot = 30 (same env key as Config.LOT_SIZE)
 SPREAD_PTS       = float(os.getenv("BT_SPREAD_PTS", "1.0"))   # round-trip option spread (premium pts)
 FOLDS            = int(os.getenv("FOLDS", "4"))
 OOS_START        = os.getenv("OOS_START", "2024-01-01")
@@ -234,7 +234,12 @@ def _simulate(test_df, warmup_rows, ce_model, pe_model, ce_thr, pe_thr):
         mtc = _mins_to_close(ts)
         entry_prem = _opt.premium(entry_spot, entry_spot, side, mtc) + SPREAD_PTS / 2.0
         atr_val = float(row.get("atr", entry_spot * 0.01))
-        sl, tgt, _ = compute_entry_stops(entry_prem, atr_val, "RANGE")
+        # Regime from bar features (was hardcoded "RANGE" — regime-adaptive
+        # stops were never actually exercised).
+        _adx = float(row.get("adx", 0.0) or 0.0)
+        _di  = abs(float(row.get("di_spread", 0.0) or 0.0))
+        _regime = "TREND" if (_adx >= 25 and _di >= 10) else "RANGE"
+        sl, tgt, _ = compute_entry_stops(entry_prem, atr_val, _regime)
         position = {
             "side": side, "entry": entry_prem, "entry_spot": entry_spot,
             "qty": LOT_UNITS, "stop_loss": sl, "target": tgt,

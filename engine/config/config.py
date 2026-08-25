@@ -17,7 +17,7 @@ class Config:
         # 4 keeps cost bounded; scalp + ML share this counter.
         self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 8))
 
-        # Round-trip cost per 65-qty lot (buy+sell). Drives the cost-aware
+        # Round-trip cost per 30-qty lot (buy+sell). Drives the cost-aware
         # profit ladder so it never locks a profit below the trade's own cost.
         self.COST_PER_LOT = float(os.getenv("COST_PER_LOT", 66.0))
 
@@ -36,6 +36,14 @@ class Config:
         self.WARMUP_MINUTES = int(os.getenv("WARMUP_MINUTES", "90"))
         # Skip RANGE regime days (historically 31% WR, negative expectancy)
         self.SKIP_RANGE_REGIME = os.getenv("SKIP_RANGE_REGIME", "1") == "1"
+        # RANGE_RELAX_MODE=1: allow entries on RANGE days but gate them harder
+        # than TREND/VOLATILE days — higher ML prob, tighter SL, reduced size.
+        # UNKNOWN day types remain blocked (no regime signal = no edge).
+        # Default OFF — experimental; enable explicitly via env (e.g. this test).
+        self.RANGE_RELAX_MODE       = os.getenv("RANGE_RELAX_MODE", "0") == "1"
+        self.RANGE_RELAX_MIN_PROB   = float(os.getenv("RANGE_RELAX_MIN_PROB", "0.60"))
+        self.RANGE_RELAX_SL_MULT    = float(os.getenv("RANGE_RELAX_SL_MULT", "0.60"))   # tighter stop
+        self.RANGE_RELAX_LOT_MULT   = float(os.getenv("RANGE_RELAX_LOT_MULT", "0.50"))  # half size
 
         # Execution rules
         self.DEFAULT_SL_PCT = float(os.getenv("DEFAULT_SL_PCT", 0.10))

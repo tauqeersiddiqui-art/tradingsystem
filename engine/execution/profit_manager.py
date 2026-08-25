@@ -20,9 +20,9 @@
 #   MFE >= Rs1200  ->  lock 70% of peak profit
 #   MFE >= Rs 800  ->  lock Rs600
 #   MFE >= Rs 500  ->  lock Rs350
-#   MFE >= Rs 390  ->  lock Rs195   (~+3pt for 65-lot, net-positive floor)
-#   MFE >= Rs 195  ->  lock Rs 65   (~+1pt for 65-lot, cost-recovery floor)
-#   MFE >= Rs 130  ->  lock Rs 32   (~+0.5pt for 65-lot, slippage-proof entry)
+#   MFE >= Rs 390  ->  lock Rs195   (~+13pt for a 30-qty lot, net-positive floor)
+#   MFE >= Rs 195  ->  lock Rs 65   (~+6.5pt for a 30-qty lot, cost-recovery floor)
+#   MFE >= Rs 130  ->  lock Rs 32   (~+4.3pt for a 30-qty lot, slippage-proof entry)
 #
 # RULES (enforced by construction):
 #   * Stop only TIGHTENS (max() ratchet) — it can never loosen.
@@ -35,9 +35,11 @@ import logging
 logger = logging.getLogger("profit_manager")
 
 # Retained for backward-compat (telegram.messages imports LOCK_PTS).
-_LOT_QTY  = 65
+# Lot size mirrors Config.LOT_SIZE / cost_model (BANKNIFTY = 30) — single
+# source of truth is engine.config.Config.LOT_SIZE.
+_LOT_QTY  = 30
 _RS_FLOOR = 200.0
-LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
+LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 6.667 pts
 
 # ─────────────────────────────────────────────────────────────────────────
 # COST-AWARE PROFIT LADDER  (replaces the old fixed Rs rungs)
@@ -59,8 +61,8 @@ LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
 # the initial risk_manager stop. The ladder only ever TIGHTENS the stop.
 # ─────────────────────────────────────────────────────────────────────────
 
-_COST_PER_LOT = 66.0     # round-trip cost per 65-qty lot (overridable via env)
-_LOT_UNITS    = 65
+_COST_PER_LOT = 66.0     # round-trip cost per 30-qty lot (overridable via env)
+_LOT_UNITS    = 30       # BANKNIFTY lot size — mirrors Config.LOT_SIZE
 _TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
 
 # ── TIER 2: Trailing & Scale-Out Configuration ─────────────────────────
@@ -73,11 +75,13 @@ _DEFAULT_SCALE_OUT_PTS        = 2.0   # scale out at +2pt profit
 
 
 def _cost_rs(qty: int) -> float:
-    """Round-trip cost in Rs for a given position qty (scales by lots)."""
-    import os
-    cost_per_lot = float(os.getenv("COST_PER_LOT", _COST_PER_LOT))
-    lots = max(1, round(qty / _LOT_UNITS))
-    return lots * cost_per_lot
+    """Round-trip cost in Rs for a given position qty (scales by lots).
+
+    Delegates to cost_model so profit locking and PnL accounting share ONE
+    cost + lot-size source of truth.
+    """
+    from engine.execution.cost_model import round_trip_cost
+    return round_trip_cost(qty)
 
 
 def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):

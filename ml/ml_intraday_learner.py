@@ -79,6 +79,16 @@ class IntradayMLLearner:
         self.first_30min_low    = 9999999.0
         self.first_30min_closes = []
         self.day_detected_at    = None
+        # Full-day tracking for periodic re-classification. The 9:45 lock is
+        # based only on the first 30 min — a day that opens choppy but then
+        # trends hard (e.g. BankNifty -400pts) stays labeled RANGE forever,
+        # blocking every ML entry via RANGE_REGIME_SKIP. These accumulate the
+        # whole day so we can re-run the classifier and upgrade RANGE -> TREND.
+        self.day_closes   = []
+        self.day_high     = 0.0
+        self.day_low      = 9999999.0
+        self._last_day_minute   = None   # dedup: one full-day sample per minute
+        self._last_reclass_ts   = None   # throttle re-classification
 
         # Dedup guard: only accept one candle per minute in the 30-min window
         self._last_candle_minute = None
@@ -110,17 +120,23 @@ class IntradayMLLearner:
         """
         Feed each candle during the first 30 minutes.
         After 09:45, detect day type once and lock it.
-
-        Deduplication: only one entry per minute is recorded.  The engine loop
-        fires every second; without this guard first_30min_closes would contain
-        ~1800 entries by 9:45 (60/min × 30 min) instead of 30, making
-        range_pct / move_pct / trending completely wrong.
+        Also accumulates full-day data for periodic re-classification, so a
+        day that opens choppy but later trends hard (e.g. BankNifty -400pts)
+        gets re-labeled from RANGE_DAY to TREND/GAP/VOLATILE.
         """
+        candle_minute = ts.replace(second=0, microsecond=0)
+
+        # ── Full-day accumulation (always, once per minute) ──────────────
+        if candle_minute != self._last_day_minute:
+            self._last_day_minute = candle_minute
+            self.day_closes.append(close)
+            self.day_high = max(self.day_high, high)
+            self.day_low  = min(self.day_low, low)
+
         if self.day_type_locked:
             return
 
         if ts.hour == 9 and ts.minute < 45:
-            candle_minute = ts.replace(second=0, microsecond=0)
             if candle_minute != self._last_candle_minute:
                 self._last_candle_minute = candle_minute
                 self.first_30min_closes.append(close)
@@ -129,6 +145,66 @@ class IntradayMLLearner:
 
         elif ts.hour == 9 and ts.minute >= 45 and not self.day_type_locked:
             self._detect_day_type()
+
+    def maybe_reclassify(self, ts: datetime):
+        """
+        Re-run day-type detection on the full day's data so far.
+        Only upgrades: RANGE → GAP/TREND/VOLATILE (never downgrades back to
+        RANGE, which would re-block entries).  Fires at most once every 30 min
+        on :00/:30 boundaries, starting at 10:00.
+        """
+        if not self.day_type_locked or ts.hour < 10:
+            return
+        if ts.minute not in (0, 30):
+            return
+        _minute = ts.hour * 60 + ts.minute
+        if self._last_reclass_ts is not None and (_minute - self._last_reclass_ts) < 30:
+            return
+        self._last_reclass_ts = _minute
+
+        if len(self.day_closes) < 5 or not self.open_price:
+            return
+
+        # Re-run same heuristic on full-day data
+        closes = self.day_closes
+        last   = closes[-1]
+        rng    = self.day_high - self.day_low
+        open_p = self.open_price
+        move_pct = (last - open_p) / open_p if open_p > 0 else 0
+        range_pct = rng / open_p if open_p > 0 else 0
+        gap_size = abs(open_p - closes[0]) / open_p if open_p > 0 else 0
+
+        # trending: split day so far in half
+        mid = len(closes) // 2
+        first_half = closes[:mid]
+        second_half = closes[mid:]
+        trending = (
+            (min(second_half) > max(first_half)) or
+            (max(second_half) < min(first_half))
+        ) if len(closes) >= 6 else False
+
+        # Same classification thresholds as _detect_day_type
+        new_type = DAY_UNKNOWN
+        if range_pct > 0.006:
+            new_type = DAY_VOLATILE
+        elif gap_size > 0.005:
+            new_type = DAY_GAP
+        elif trending and abs(move_pct) > 0.003:
+            new_type = DAY_TREND
+        else:
+            new_type = DAY_RANGE
+
+        # Upgrade-only: never downgrade a directional day back to RANGE.
+        # RANK: UNKNOWN(0) < RANGE(1) < GAP(2) < TREND(3) < VOLATILE(4)
+        _rank = {DAY_UNKNOWN:0, DAY_RANGE:1, DAY_GAP:2, DAY_TREND:3, DAY_VOLATILE:4}
+        if _rank.get(new_type, 0) > _rank.get(self.day_type, 0):
+            old = self.day_type
+            self.day_type = new_type
+            logger.info(
+                f"[RECLASSIFY] {old} -> {new_type} | "
+                f"range_pct={range_pct:.3f} move_pct={move_pct:.3f} "
+                f"gap={gap_size:.3f} trending={trending}"
+            )
 
     def backfill_first_30m(self, candles: list):
         """
@@ -145,7 +221,32 @@ class IntradayMLLearner:
             self.first_30min_closes.append(float(c.get("close", 0)))
             self.first_30min_high = max(self.first_30min_high, float(c.get("high", 0)))
             self.first_30min_low  = min(self.first_30min_low,  float(c.get("low", 0)))
+            # Also seed full-day trackers so a mid-day restart can reclassify.
+            self.day_closes.append(float(c.get("close", 0)))
+            self.day_high = max(self.day_high, float(c.get("high", 0)))
+            self.day_low  = min(self.day_low,  float(c.get("low", 0)))
         self._detect_day_type()
+
+    def backfill_full_day(self, candles: list):
+        """
+        Late-start recovery after a mid-day restart: seed the full-day trackers
+        with ALL of today's candles (9:15 -> now), not just the first 30 min,
+        so periodic re-classification has the true day range/move to work with.
+        Preserves the 9:45 lock if the 30-min window was already backfilled.
+        """
+        if not candles:
+            return
+        for c in candles:
+            self.day_closes.append(float(c.get("close", 0)))
+            self.day_high = max(self.day_high, float(c.get("high", 0)))
+            self.day_low  = min(self.day_low,  float(c.get("low", 0)))
+            if self.open_price is None:
+                self.open_price = float(c.get("close", 0))
+        logger.info(
+            f"[BACKFILL_FULL_DAY] {len(candles)} candles | "
+            f"day_high={self.day_high:.1f} day_low={self.day_low:.1f} "
+            f"day_type={self.day_type}"
+        )
 
     def _detect_day_type(self):
         """

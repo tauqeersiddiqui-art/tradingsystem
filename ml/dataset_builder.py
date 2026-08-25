@@ -68,23 +68,10 @@ def _in_active_session(mins_from_midnight: float) -> bool:
 
 
 def _compute_rsi(series: np.ndarray, period: int = 14) -> np.ndarray:
-    n = len(series)
-    rsi = np.full(n, 50.0)
-    delta = np.diff(series, prepend=series[0])
-    gains = np.where(delta > 0, delta, 0.0)
-    losses = np.where(delta < 0, -delta, 0.0)
-
-    avg_gain = np.zeros(n)
-    avg_loss = np.zeros(n)
-    if n >= period:
-        avg_gain[period - 1] = gains[1:period].mean()
-        avg_loss[period - 1] = losses[1:period].mean()
-        for i in range(period, n):
-            avg_gain[i] = (avg_gain[i - 1] * (period - 1) + gains[i]) / period
-            avg_loss[i] = (avg_loss[i - 1] * (period - 1) + losses[i]) / period
-        rs = avg_gain / (avg_loss + 1e-10)
-        rsi = 100 - (100 / (1 + rs))
-    return rsi
+    """Wilder RSI — canonical implementation lives in ml.indicators.rsi_wilder
+    (shared with live_engine and research_engine for train/serve parity)."""
+    from ml.indicators import rsi_wilder
+    return rsi_wilder(series, period)
 
 
 def _ema(series: np.ndarray, period: int) -> np.ndarray:

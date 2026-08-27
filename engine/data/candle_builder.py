@@ -304,8 +304,8 @@ class CandleBuilder:
     # ══════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def nifty_token() -> int:
-        """Zerodha instrument token for the traded underlying index.
+    def banknifty_token() -> int:
+        """Zerodha instrument token for the traded underlying index (BANK NIFTY).
 
         IMPORTANT: this system trades BANK NIFTY (1 lot = 30 qty). The
         champion ML models were trained on Bank NIFTY data (44k-58k), and
@@ -313,4 +313,4 @@ class CandleBuilder:
         to NIFTY 50 (token 256265, lot 65) which fed ~24k features into
         models trained at ~50k -> ML output 0.000 all day (2026-08-17).
         """
-        return 260105   # NSE:BANKNIFTY index token
+        return 260105   # NSE:BANKNIFTY index token (NIFTY BANK)

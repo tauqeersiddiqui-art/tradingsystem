@@ -193,14 +193,14 @@ class ZerodhaBroker:
                 print(f"[OPTIONS FEED] subscribe() call failed: {exc}")
                 return
 
-        nifty_token  = 260105   # NSE:BANKNIFTY index
+        banknifty_token = 260105   # NSE:BANKNIFTY index (instrument_token for NIFTY BANK)
         chain_count  = len(tokens_to_sub) - (
             (1 if atm_ce_token else 0) + (1 if atm_pe_token else 0)
         )
         total_tokens = len(tokens_to_sub) + 1   # +1 for BANK NIFTY
 
         print(f"[WS SUBSCRIBED]")
-        print(f"  NIFTY      token={nifty_token}")
+        print(f"  BANK NIFTY token={banknifty_token}")
         print(f"  ATM CE     token={atm_ce_token}  ({atm_ce_sym})")
         print(f"  ATM PE     token={atm_pe_token}  ({atm_pe_sym})")
         print(f"  CHAIN TOKENS={chain_count}  (±{strikes_range} strikes excluding ATM)")

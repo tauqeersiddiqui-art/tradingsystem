@@ -161,6 +161,7 @@ class Config:
         self.SCALP_NO_LIFE_SECONDS     = int(os.getenv("SCALP_NO_LIFE_SECONDS", "35"))
         self.SCALP_COOLDOWN           = int(os.getenv("SCALP_COOLDOWN", "240"))  # WFO-optimized: 180->240: more patience avoids re-entry into reversals
         self.SCALP_REQUIRE_HTF_AGREE  = os.getenv("SCALP_REQUIRE_HTF_AGREE", "1") == "1"  # htf5 must AGREE, not merely not-oppose
+        self.SCALP_REQUIRE_VWAP_ALIGN = os.getenv("SCALP_REQUIRE_VWAP_ALIGN", "1") == "1"  # require VWAP side agrees
         self.SCALP_LOTS               = int(os.getenv("SCALP_LOTS", "2"))
         # SAFE_SCALP: if the ML engine produces no signal for this many
         # minutes, scalp trades require STRICTER filters (HTF agreement,

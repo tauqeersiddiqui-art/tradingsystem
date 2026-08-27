@@ -268,22 +268,22 @@ def test_normal_scalp_htf_agreement_required_by_default():
     cfg.SCALP_REQUIRE_HTF_AGREE = True
     e = ScalpEngine(cfg)
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=1, safe_mode=False) is not None
+                         htf5=1, safe_mode=False, vwap_confirms=True) is not None
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=0, safe_mode=False) is None
+                         htf5=0, safe_mode=False, vwap_confirms=True) is None
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=-1, safe_mode=False) is None
+                         htf5=-1, safe_mode=False, vwap_confirms=True) is None
 
 
 def test_safe_scalp_htf_agreement_required():
     """SAFE_SCALP: HTF must AGREE (+1 for CE); neutral (0) and opposing (-1) block."""
     e = ScalpEngine(_ScalpCfg())
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=1, safe_mode=True) is not None
+                         htf5=1, safe_mode=True, vwap_confirms=True) is not None
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=0, safe_mode=True) is None
+                         htf5=0, safe_mode=True, vwap_confirms=True) is None
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=-1, safe_mode=True) is None
+                         htf5=-1, safe_mode=True, vwap_confirms=True) is None
 
 
 def test_normal_scalp_htf_neutral_allowed():
@@ -291,7 +291,7 @@ def test_normal_scalp_htf_neutral_allowed():
     — only opposing blocks."""
     e = ScalpEngine(_ScalpCfg())
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=0, safe_mode=False) is not None
+                         htf5=0, safe_mode=False, vwap_confirms=True) is not None
 
 
 def test_adaptive_sl_by_conviction():
@@ -339,12 +339,12 @@ def test_safe_scalp_higher_momentum_bar():
             25011.6, 25019.6, 25023.6, 25014.5,
             25010.0, 25025.0, 25008.0, 25017.6]
     assert e.check_entry(25013.5, _scalp_hist(_small), datetime(2026, 1, 1, 10, 0),
-                         htf5=1, safe_mode=False) is not None
+                         htf5=1, safe_mode=False, vwap_confirms=True) is not None
     assert e.check_entry(25013.5, _scalp_hist(_small), datetime(2026, 1, 1, 10, 0),
-                         htf5=1, safe_mode=True) is None
+                         htf5=1, safe_mode=True, vwap_confirms=True) is None
     # 20pt move passes the safe bar
     assert e.check_entry(25020.0, _scalp_hist(_big), datetime(2026, 1, 1, 10, 0),
-                         htf5=1, safe_mode=True) is not None
+                         htf5=1, safe_mode=True, vwap_confirms=True) is not None
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -370,7 +370,7 @@ def test_exhaustion_allows_sustained_move():
     only a small share of the total move."""
     e = ScalpEngine(_ScalpCfg())
     assert e.check_entry(25022.0, _scalp_hist(_CE_VALID), datetime(2026, 1, 1, 10, 0),
-                         htf5=1, safe_mode=False) is not None
+                         htf5=1, safe_mode=False, vwap_confirms=True) is not None
 
 
 def test_sparse_window_blocks_confirmation():
@@ -379,7 +379,7 @@ def test_sparse_window_blocks_confirmation():
     e = ScalpEngine(_ScalpCfg())
     sparse = [25000.0, 25004.0, 25010.0, 25018.0]  # only 4 ticks, big move
     assert e.check_entry(25018.0, _scalp_hist(sparse), datetime(2026, 1, 1, 10, 0),
-                         htf5=1, safe_mode=False) is None
+                         htf5=1, safe_mode=False, vwap_confirms=True) is None
 
 
 # ══════════════════════════════════════════════════════════════════════

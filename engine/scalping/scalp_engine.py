@@ -29,6 +29,7 @@ class ScalpEngine:
         # HTF agreement required for ALL scalps (was safe-mode only). Weak
         # counter-trend entries were a top loss driver on Aug-18.
         self._require_htf   = bool(getattr(config, "SCALP_REQUIRE_HTF_AGREE", True))
+        self._require_vwap  = bool(getattr(config, "SCALP_REQUIRE_VWAP_ALIGN", True))
         self._min_samples   = int(getattr(config, "SCALP_CONFIRM_MIN_SAMPLES", 6))
         self._tail_frac     = float(getattr(config, "SCALP_EXHAUST_TAIL_FRAC", 0.65))
         self._no_life_secs  = int(getattr(config, "SCALP_NO_LIFE_SECONDS", 35))
@@ -60,7 +61,7 @@ class ScalpEngine:
         )
 
     def check_entry(self, ltp_now: float, ltp_history, ts: datetime,
-                    htf5: int = 0, safe_mode: bool = False):
+                    htf5: int = 0, safe_mode: bool = False, vwap_confirms: bool = False):
         """
         Returns {"side":"CE"|"PE", "reason":"SCALP_MOM", "move_pts": float} or None.
         ltp_history: deque of (datetime, float) pairs, oldest first.
@@ -176,6 +177,11 @@ class ScalpEngine:
                 return None
             if side == "PE" and htf5 == 1:
                 return None
+
+        # 3b. VWAP ALIGNMENT (Aug-25): require price on correct side of VWAP
+        # CE needs price >= VWAP, PE needs price <= VWAP
+        if self._require_vwap and not vwap_confirms:
+            return None
 
         # 4. ENTRY QUALITY — rejection-first timing/quality gate shared with
         #    the ML path. The tick window is bucketed into synthetic candles

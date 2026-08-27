@@ -573,7 +573,7 @@ def _log_feed_health(broker, ctx, builder) -> None:
 # HISTORICAL DATA ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ fetch from Zerodha + append live candles
 # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
 
-_NIFTY_INDEX_TOKEN = 260105   # NSE:BANKNIFTY index token (fixed)
+_BANKNIFTY_INDEX_TOKEN = 260105   # NSE:BANKNIFTY index token (NIFTY BANK)
 _csv_write_lock    = threading.Lock()
 _last_appended_ts  = None     # guard against double-append
 
@@ -588,10 +588,10 @@ def update_historical_data(broker, csv_path: str, lookback_days: int = 5):
         from_dt = to_dt - timedelta(days=lookback_days)
 
         logger.info(
-            f"[HIST] Fetching NIFTY 1m  {from_dt.date()} -> {to_dt.date()} ..."
+            f"[HIST] Fetching BANK NIFTY 1m  {from_dt.date()} -> {to_dt.date()} ..."
         )
         raw = broker.kite.historical_data(
-            _NIFTY_INDEX_TOKEN, from_dt, to_dt, "minute", oi=False
+            _BANKNIFTY_INDEX_TOKEN, from_dt, to_dt, "minute", oi=False
         )
 
         if not raw:
@@ -690,15 +690,15 @@ def init_broker():
 
     # Wait up to 10 s for the first tick so the engine doesn't start
     # with a stale/flat REST price in the candle buffer.
-    _nifty_token = _NIFTY_INDEX_TOKEN
+    _banknifty_token = _BANKNIFTY_INDEX_TOKEN
     _waited = 0
     while _waited < 10:
         time.sleep(1)
         _waited += 1
-        if _nifty_token in broker._last_ticks:
-            _ltp_check = broker._last_ticks[_nifty_token].get("last_price", 0)
+        if _banknifty_token in broker._last_ticks:
+            _ltp_check = broker._last_ticks[_banknifty_token].get("last_price", 0)
             if _ltp_check > 0:
-                logger.info(f"Feed ready ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ first tick received: NIFTY={_ltp_check:.2f}")
+                logger.info(f"Feed ready ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ first tick received: BANK NIFTY={_ltp_check:.2f}")
                 break
     else:
         logger.warning(
@@ -778,7 +778,7 @@ def build_context(broker) -> TradingContext:
 # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
 
 def init_candle_builder(broker) -> CandleBuilder:
-    token = CandleBuilder.nifty_token()   # 260105 (BANKNIFTY)
+    token = CandleBuilder.banknifty_token()   # 260105 (BANK NIFTY)
 
     builder = CandleBuilder(broker, instrument_token=token, max_candles=300)
 
@@ -896,6 +896,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     position          = None    # current open position dict
     entry_time        = None    # FIX-2: defined at entry, used for held_seconds
     entry_order_rec   = None    # saved order dict for trade_logger
+    _position_pending = False   # ORDER STORM FIX: guard against duplicate entries in same cycle
     max_trades        = ctx.config.MAX_TRADES_PER_DAY
     consecutive_stops = 0       # auto-pause trigger
     _eod_sent         = False   # send EOD summary once at 15:30
@@ -1783,8 +1784,18 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         logger.info(f"[ENTRY CONFIRM] Trade blocked: {block_reason}")
                         ctx.live_engine.record_block(block_reason)
                         decision = None
+                        _position_pending = False  # reset guard on block
                     else:
                         logger.info(f"[ENTRY CONFIRM] Trade confirmed: {block_reason}")
+
+                # ORDER STORM FIX: guard against duplicate entries in same cycle
+                if decision is not None:
+                    if _position_pending:
+                        logger.warning("[GATE] Position already pending ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ skipping duplicate entry")
+                        ctx.live_engine.record_block("POSITION_PENDING")
+                        decision = None
+                    else:
+                        _position_pending = True  # lock until order fills or decision clears
 
                 # F5: capture option LTP just before market order (slippage baseline)
                 _signal_opt_ltp = 0.0
@@ -1840,8 +1851,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "reason":   decision.get("reason", ""),
                         "entry_quality": decision.get("entry_quality"),
                         "entry_ts": ts,   # for held-time display in dashboard
-                        "sl_order_id": None,   # broker protective SL-M id (set below)
+                        "sl_order_id": None,   # broker protective SL-M id (set below),
                     }
+                    _position_pending = False  # ORDER STORM FIX: clear guard on successful fill
                     entry_time      = ts    # FIX-2
                     entry_order_rec = order
                     ctx.trades_today += 1
@@ -2123,20 +2135,30 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         ltp_current, _scalp_ltp_history, ts,
                         htf5=getattr(ctx.live_engine, "_htf5_dir", 0),
                         safe_mode=_ml_inactive,
+                        vwap_confirms=bool(getattr(ctx.live_engine, "_vwap_confirms", False)),
                     )
                     # ML validation for scalp entries (Aug-18 fix):
                     # All 11 scalp trades had ml_prob=0.0 -- no ML gate.
                     # Now require ML prob >= SCALP_ML_MIN_PROB unless ML is inactive.
+                    # FIX (Aug-25): Use DIRECTIONAL probability, not max().
+                    # Also require ML favors the scalp direction (directional alignment).
                     if _s_sig and not _ml_inactive:
-                        _scalp_ml_prob = max(
-                            getattr(ctx.live_engine, "_last_ce_prob", 0.0),
-                            getattr(ctx.live_engine, "_last_pe_prob", 0.0),
-                        )
+                        _s_side = _s_sig["side"]  # "CE" or "PE"
+                        if _s_side == "CE":
+                            _scalp_ml_prob = getattr(ctx.live_engine, "_last_ce_prob", 0.0)
+                            _opp_ml_prob = getattr(ctx.live_engine, "_last_pe_prob", 0.0)
+                        else:
+                            _scalp_ml_prob = getattr(ctx.live_engine, "_last_pe_prob", 0.0)
+                            _opp_ml_prob = getattr(ctx.live_engine, "_last_ce_prob", 0.0)
                         _scalp_ml_min = getattr(ctx.config, "SCALP_ML_MIN_PROB", 0.42)
-                        if _scalp_ml_prob < _scalp_ml_min:
+                        # Require ML prob for scalp direction meets threshold AND ML favors this direction
+                        if _scalp_ml_prob < _scalp_ml_min or _scalp_ml_prob <= _opp_ml_prob:
                             logger.info(
-                                f"[SCALP SKIP] ML prob={_scalp_ml_prob:.3f} < "
-                                f"{_scalp_ml_min:.3f} -- insufficient conviction"
+                                f"[SCALP SKIP] ML prob({_s_side})={_scalp_ml_prob:.3f} "
+                                f"{'< min' if _scalp_ml_prob < _scalp_ml_min else ''}"
+                                f"{' AND' if _scalp_ml_prob < _scalp_ml_min and _scalp_ml_prob <= _opp_ml_prob else ''}"
+                                f"{' ML favors opposite' if _scalp_ml_prob <= _opp_ml_prob else ''}"
+                                f" -- insufficient conviction"
                             )
                             _s_sig = None
                         else:

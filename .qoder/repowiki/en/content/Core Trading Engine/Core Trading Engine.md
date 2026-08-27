@@ -260,7 +260,7 @@ class CandleBuilder {
 +process_tick(ts) bool
 +seed_from_csv(path, n) void
 +seed_paper_mode(path, n) void
-+nifty_token() int
++banknifty_token() int
 -_candles deque
 -_wip dict
 -_lock Lock

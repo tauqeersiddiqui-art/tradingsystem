@@ -48,7 +48,7 @@ def _warmup_end_time(warmup_minutes: int) -> dtime:
     return dtime(total_min // 60, total_min % 60)
 
 # ── Minimum expected PnL to accept a signal (capital safeguard) ───────
-_MIN_EXPECTED_PNL = 150.0
+_MIN_EXPECTED_PNL = float(os.getenv("MIN_EXPECTED_PNL", "150.0"))  # PNL_GUARD floor (dry-run: 0)
 
 # ── ML floors — per-side thresholds ──────────────────────────────────
 # PE: 0.65 (backtest WR=58%, avg+174 at this level)
@@ -852,12 +852,44 @@ class LiveEngine:
                 # F4 — live ML edge
                 self._last_ml_edge = round(abs(self._last_ce_adj - self._last_pe_adj), 3)
 
+            # ── Direction agreement gate: zero out ML prob for side that
+            #     contradicts the direction stack (SuperTrend, VWAP, DI, EMA).
+            #     Models are trained on direction-filtered data; they only
+            #     output meaningful probs when the trend confirms the side.
+            #     DIRECTION_AGREE_GATE=0 (dry-run testing) skips the zeroing
+            #     so the raw model conviction is observable.
+            _cfg_dir = getattr(self.ctx, "config", None)
+            _dir_gate_on = bool(getattr(_cfg_dir, "DIRECTION_AGREE_GATE", True)) if _cfg_dir else True
+            if _dir_gate_on:
+                _st_dir = features.get("supertrend_dir", 0)
+                _pvwap  = features.get("price_vs_vwap", 0.0)
+                _di_sp  = features.get("di_spread", 0.0)
+                _ema_al = features.get("ema_alignment", 0.0)
+                _adx    = features.get("adx", 0.0)
+                _ce_dir_ok = (_st_dir == 1 and _pvwap > 0 and _di_sp > 0
+                              and _ema_al == 1 and _adx > 20)
+                _pe_dir_ok = (_st_dir == -1 and _pvwap < 0 and _di_sp < 0
+                              and _ema_al == -1 and _adx > 20)
+                if not _ce_dir_ok:
+                    self._last_ce_adj = 0.0
+                if not _pe_dir_ok:
+                    self._last_pe_adj = 0.0
+            # Recompute edge after direction zeroing
+            self._last_ml_edge = round(abs(self._last_ce_adj - self._last_pe_adj), 3)
+
         # ══ STEP 2: Session gates ════════════════════════════════════════
         if now < _ORB_END:
             self._last_block_reason = "ORB_BUILD (9:15-9:30)"
             return None
-        if now >= dtime(15, 15):
-            self._last_block_reason = "MARKET_CLOSING (after 15:15)"
+        # FIX TODAY: block NEW entries once the entry window closes. Was
+        # hardcoded 15:15 — a 15:01 entry had no time for the 5-bar forward
+        # prediction to develop before the stop. Now honors
+        # ENTRY_END_HOUR/MINUTE (default 15:00, matches .env).
+        _cfg_gate = getattr(self.ctx, "config", None)
+        _end_h = int(getattr(_cfg_gate, "ENTRY_END_HOUR", 15)) if _cfg_gate else 15
+        _end_m = int(getattr(_cfg_gate, "ENTRY_END_MINUTE", 0)) if _cfg_gate else 0
+        if now >= dtime(_end_h, _end_m):
+            self._last_block_reason = f"MARKET_CLOSING (after {_end_h:02d}:{_end_m:02d})"
             return None
         # LUNCH_FILTER — OFF in dry-run testing. Set LUNCH_FILTER_ENABLED=1
         # (config) when switching to live capital.
@@ -1082,7 +1114,9 @@ class LiveEngine:
         # PE (only if CE not triggered)
         if signal is None:
             # ── FIX A: Structure confirmation (LH/LL) ──────────────────────
-            if not self._structure_confirmed:
+            # REQUIRE_STRUCTURE=0 (dry-run) skips so PE can fire on move onset.
+            _require_struct_pe = bool(getattr(_cfg, "REQUIRE_STRUCTURE", True)) if _cfg else True
+            if _require_struct_pe and not self._structure_confirmed:
                 self._count_block("NO_STRUCTURE")
                 self._last_block_reason = "NO_STRUCTURE (waiting for LH/LL confirmation)"
                 pe_adj = 0.0
@@ -1305,8 +1339,11 @@ class LiveEngine:
                 self._last_block_reason = f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)"
                 return None
 
-        # 5. FIX A: Structure confirmation (HH/HL for CE, LH/LL for PE)
-        if not self._structure_confirmed:
+        # 5. FIX A: Structure confirmation (HH/HL for CE, LH/LL for PE).
+        # REQUIRE_STRUCTURE=0 (dry-run) skips this so the model can fire on
+        # move ONSET before the HH/HL pattern forms.
+        _require_struct = bool(getattr(_cfg, "REQUIRE_STRUCTURE", True)) if _cfg else True
+        if _require_struct and not self._structure_confirmed:
             self._count_block("NO_STRUCTURE")
             self._last_block_reason = f"NO_STRUCTURE ({side} waiting for HH/LL confirmation)"
             return None
@@ -1332,8 +1369,11 @@ class LiveEngine:
             self._last_block_reason = eq["reason"]
             return None
 
-        # 7. FIX B: Pullback entry — wait for retrace after breakout
-        if not self._check_pullback_entry(df_window, side, price):
+        # 7. FIX B: Pullback entry — wait for retrace after breakout.
+        # REQUIRE_PULLBACK=0 (dry-run): skip — the forward-direction model
+        # fires on move onset; waiting for an ORB retrace would block it.
+        _require_pullback = bool(getattr(_cfg, "REQUIRE_PULLBACK", True)) if _cfg else True
+        if _require_pullback and not self._check_pullback_entry(df_window, side, price):
             self._count_block("PULLBACK_WAIT")
             self._last_block_reason = f"PULLBACK_WAIT ({side} waiting for retrace)"
             return None

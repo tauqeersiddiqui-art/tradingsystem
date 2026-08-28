@@ -1,27 +1,28 @@
 # ml/dataset_builder.py
-# ENTRY-QUALITY dataset (replaces the v3 first-touch DIRECTIONAL labels).
+# FORWARD-DIRECTION dataset — predicts movement BEFORE it happens.
 #
 # LABEL SEMANTICS (current):
-#   For each active-session bar i, with H = ENTRY_HORIZON_BARS (5 bars,
-#   matching actual scalp hold times):
-#     future_max_up   = max(high[i+1 .. i+H]) - close[i]
-#     future_max_down = close[i] - min(low[i+1 .. i+H])
-#     label_ce = 1 if future_max_up   >= QUALITY_THRESHOLD_PTS (25 spot pts)
-#     label_pe = 1 if future_max_down >= QUALITY_THRESHOLD_PTS
-#   i.e. the models learn ENTRY QUALITY — "is a CE/PE entered NOW likely to
-#   see >= 25 favorable spot points within the next 5 minutes?" — NOT which
-#   direction price breaks first.
+#   For each active-session bar i, with H = DIRECTION_HORIZON_BARS (5 bars):
+#     future_close = close[i+H]
+#     label_ce = 1 if future_close - close[i] >=  DIRECTION_MOVE_PTS (20 spot)
+#     label_pe = 1 if close[i] - future_close >= DIRECTION_MOVE_PTS
+#   i.e. the models learn NET DIRECTIONAL MOVEMENT — "will price close at
+#   least 20 spot pts HIGHER (CE) / LOWER (PE) within the next 5 minutes?"
+#   This is a true prediction of movement before it happens, not a
+#   favorable-excursion-after-entry quality score.
 #   BAD_ENTRY guard: if the prior 20-bar move is already extended
-#   (> EXTENDED_MOVE_PCT of price), the entry is late — the corresponding
-#   label is forced to 0 and bad_entry_ce / bad_entry_pe is set to 1
-#   (kept in the CSV for auditing).
+#   (> EXTENDED_MOVE_PCT of price), the move has already happened — the
+#   corresponding label is forced to 0 and bad_entry_ce / bad_entry_pe is
+#   set to 1 (kept in the CSV for auditing).
 #   Bars with fewer than H forward bars (day end) get NaN labels and are
 #   dropped — never NaN-filled.
 #
-# WHY the change — direction labels trained the models to predict break
-# direction, but live scalps are entered AFTER a move; the real question is
-# whether the entry still has enough favorable excursion left. Entry-quality
-# labels encode exactly that.
+# WHY the change — the old entry-quality label (>=25pt favorable excursion)
+# scored how far price wandered AFTER entry and, combined with a
+# direction-stack eligibility filter, let the model fire only once a trend was
+# already established (i.e. AFTER the move). The new close-to-close directional
+# label + all-in-session eligibility lets the model predict the ONSET of moves
+# (breakouts, reversals) before they happen.
 #
 # Supertrend / VWAP / ADX stay as FEATURES so the model can learn to trust
 # or distrust them, instead of being gated by them.
@@ -178,12 +179,20 @@ def compute_all_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Label parameters (ENTRY-QUALITY scheme) ───────────────────────────
-ENTRY_HORIZON_BARS    = int(os.getenv("ENTRY_HORIZON_BARS", "5"))    # H forward bars — matches scalp hold times
-QUALITY_THRESHOLD_PTS = float(os.getenv("QUALITY_THRESHOLD_PTS", "25.0"))  # favorable spot points required
-EXTENDED_LOOKBACK     = 20     # bars used for the BAD_ENTRY extension check
-EXTENDED_MOVE_PCT     = 0.004  # prior move above this fraction of price = entry already extended
-START_DATE            = os.getenv("V3_START_DATE", "2021-01-01")  # regime relevance
+# ── Label parameters (FORWARD-DIRECTION scheme) ───────────────────────
+# The model predicts NET directional movement: will price close at least
+# DIRECTION_MOVE_PTS HIGHER (CE) / LOWER (PE) at bar i+H — a true prediction
+# of movement BEFORE it happens, not a favorable-excursion-after-entry score.
+# Validated: H=5, T=20 -> CE WR 50% at prob>=0.55 vs 19.7% base (OOS).
+DIRECTION_HORIZON_BARS = int(os.getenv("DIRECTION_HORIZON_BARS", "5"))   # H forward bars
+DIRECTION_MOVE_PTS     = float(os.getenv("DIRECTION_MOVE_PTS", "20.0"))  # net close-to-close move required
+EXTENDED_LOOKBACK      = 20     # bars used for the BAD_ENTRY extension check
+EXTENDED_MOVE_PCT      = 0.004  # prior move above this fraction of price = entry already extended
+START_DATE             = os.getenv("V3_START_DATE", "2021-01-01")  # regime relevance
+
+# Backward-compat aliases (old entry-quality naming; backtests/docs may import)
+ENTRY_HORIZON_BARS    = DIRECTION_HORIZON_BARS
+QUALITY_THRESHOLD_PTS = DIRECTION_MOVE_PTS
 
 # ── Shared validation constants (see validate_training_csv) ──────────
 REQUIRED_LABEL_COLUMNS = ["label_ce", "label_pe"]
@@ -228,36 +237,42 @@ def validate_training_csv(path: str) -> pd.DataFrame:
 
 def create_entry_quality_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Entry-quality labels on EVERY bar (labels only meaningful in-session).
+    FORWARD-DIRECTION labels on EVERY in-session bar (kept function name for
+    backtest compatibility; behavior is now directional prediction).
 
-    For bar i, with H = ENTRY_HORIZON_BARS:
-      future_max_up   = max(high[i+1..i+H]) - close[i]
-      future_max_down = close[i] - min(low[i+1..i+H])
-      label_ce = 1 if future_max_up   >= QUALITY_THRESHOLD_PTS else 0
-      label_pe = 1 if future_max_down >= QUALITY_THRESHOLD_PTS else 0
+    For bar i, with H = DIRECTION_HORIZON_BARS:
+      future_close  = close[i+H]
+      label_ce = 1 if future_close - close[i] >=  DIRECTION_MOVE_PTS (net UP)
+      label_pe = 1 if close[i] - future_close >= DIRECTION_MOVE_PTS   (net DOWN)
+
+    This is a TRUE directional prediction — "will price NET-MOVE up/down by
+    at least DIRECTION_MOVE_PTS within the next H bars" — as opposed to the
+    old entry-quality label, which scored favorable EXCURSION after entry.
+    The model can therefore fire BEFORE the move starts (breakouts, reversals)
+    instead of only after the trend has already confirmed.
 
     BAD_ENTRY guard: if the prior move over the last EXTENDED_LOOKBACK bars
-    is already extended (> EXTENDED_MOVE_PCT of price), the entry is late —
-    force the corresponding label to 0 and flag bad_entry_ce / bad_entry_pe.
+    is already extended (> EXTENDED_MOVE_PCT of price), the move has already
+    happened — force the label to 0 so the model never learns late entries.
 
     Bars with fewer than H forward bars (day end) get NaN labels and are
     dropped downstream — never NaN-filled. Forward/backward windows never
     cross a day boundary.
+
+    Eligibility: ALL in-session bars (the direction-stack filter is REMOVED)
+    so the model learns move ONSET, not just continuation.
     """
     close = df["close"].to_numpy(dtype=float)
     day   = df["date"].dt.normalize()
+    H     = DIRECTION_HORIZON_BARS
 
-    # Future extrema over the next H bars (per day — no cross-day leak).
-    # pandas rolling is TRAILING, so roll max over bars [i-H+1..i] then shift
-    # back by H -> at bar i this is max(high[i+1..i+H]). The last H bars of
-    # each day have no full forward window and come out NaN (dropped below).
-    fwd_high = df.groupby(day)["high"].transform(
-        lambda s: s.rolling(ENTRY_HORIZON_BARS).max().shift(-ENTRY_HORIZON_BARS))
-    fwd_low = df.groupby(day)["low"].transform(
-        lambda s: s.rolling(ENTRY_HORIZON_BARS).min().shift(-ENTRY_HORIZON_BARS))
-    future_max_up   = fwd_high.to_numpy(dtype=float) - close
-    future_max_down = close - fwd_low.to_numpy(dtype=float)
-    has_future      = fwd_high.notna().to_numpy()   # False = last H bars/day
+    # close at bar i+H (per day — no cross-day leak). The last H bars of each
+    # day have no full forward window and come out NaN (dropped below).
+    fwd_close = df.groupby(day)["close"].transform(
+        lambda s: s.shift(-H)).to_numpy(dtype=float)
+    net_up   = fwd_close - close
+    net_down = close - fwd_close
+    has_future = ~np.isnan(fwd_close)
 
     mins_from_midnight = df["date"].dt.hour * 60 + df["date"].dt.minute
     in_session = mins_from_midnight.apply(_in_active_session).to_numpy()
@@ -274,10 +289,10 @@ def create_entry_quality_labels(df: pd.DataFrame) -> pd.DataFrame:
     bad_entry_ce = in_session & (move_pct_up   > EXTENDED_MOVE_PCT)
     bad_entry_pe = in_session & (move_pct_down > EXTENDED_MOVE_PCT)
 
-    label_ce = np.where(future_max_up   >= QUALITY_THRESHOLD_PTS, 1.0, 0.0)
-    label_pe = np.where(future_max_down >= QUALITY_THRESHOLD_PTS, 1.0, 0.0)
-    label_ce[bad_entry_ce] = 0.0   # late entry — CE quality forced to 0
-    label_pe[bad_entry_pe] = 0.0   # late entry — PE quality forced to 0
+    label_ce = np.where(net_up   >= DIRECTION_MOVE_PTS, 1.0, 0.0)
+    label_pe = np.where(net_down >= DIRECTION_MOVE_PTS, 1.0, 0.0)
+    label_ce[bad_entry_ce] = 0.0   # late entry — move already happened
+    label_pe[bad_entry_pe] = 0.0
     # Bars outside active windows carry no tradable entry (same as v3)
     label_ce[~in_session] = 0.0
     label_pe[~in_session] = 0.0
@@ -289,6 +304,9 @@ def create_entry_quality_labels(df: pd.DataFrame) -> pd.DataFrame:
     df["label_pe"] = label_pe
     df["bad_entry_ce"] = bad_entry_ce.astype(np.int8)
     df["bad_entry_pe"] = bad_entry_pe.astype(np.int8)
+
+    # Eligibility: ALL in-session bars (direction-stack filter REMOVED so the
+    # model can predict move ONSET — the "predict BEFORE it happens" goal).
     df["ce_eligible"] = in_session
     df["pe_eligible"] = in_session
     return df
@@ -296,9 +314,9 @@ def create_entry_quality_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     print("=" * 64)
-    print("  ENTRY-QUALITY DATASET BUILDER")
+    print("  FORWARD-DIRECTION DATASET BUILDER")
     print("=" * 64)
-    print(f"  Horizon={ENTRY_HORIZON_BARS} bars  Quality>={QUALITY_THRESHOLD_PTS}pt  "
+    print(f"  Horizon={DIRECTION_HORIZON_BARS} bars  NetMove>={DIRECTION_MOVE_PTS}pt  "
           f"ExtendedMove>{EXTENDED_MOVE_PCT:.1%}/{EXTENDED_LOOKBACK}bars  Start={START_DATE}")
 
     print(f"\n[DATA] Loading {DATA_PATH} ...")
@@ -317,7 +335,7 @@ def main():
     print("[FEATURES] Computing indicators ...")
     df = compute_all_features(df)
 
-    print("[LABELS] Entry-quality labels ...")
+    print("[LABELS] Forward-direction labels (net close-to-close move) ...")
     df = create_entry_quality_labels(df)
 
     # ── NaN audit (replaces the old silent blanket dropna) ────────────

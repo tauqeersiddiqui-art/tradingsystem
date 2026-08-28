@@ -327,8 +327,16 @@ class IntradayMLLearner:
 
         adaptive_threshold = base + day_adj
 
-        # Keep thresholds realistic for intraday ML
-        adaptive_threshold = max(0.45, min(adaptive_threshold, 0.56))
+        # Keep thresholds realistic for intraday ML. The 0.45-0.56 clamp was
+        # tuned for the OLD entry-quality label semantics (model output was
+        # "favorable excursion prob", heavily CE-biased). The forward-direction
+        # model outputs P(net >= DIRECTION_MOVE_PTS move in next 5 bars) —
+        # well-calibrated, so it reads ~0.15-0.25 on quiet range days and only
+        # rises toward 0.5+ when it detects an actual move setup. Env override
+        # lets dry-run testing lower the floor so the new model can fire.
+        _floor = float(os.getenv("ML_THRESHOLD_FLOOR", "0.45"))
+        _ceil  = float(os.getenv("ML_THRESHOLD_CEIL", "0.56"))
+        adaptive_threshold = max(_floor, min(adaptive_threshold, _ceil))
 
         return round(adaptive_threshold, 3)
 

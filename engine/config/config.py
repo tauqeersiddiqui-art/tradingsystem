@@ -57,7 +57,12 @@ class Config:
         # ATR-derived stops at position entry; trailing = breakeven once
         # profit reaches ML_TRAIL_BE_PTS, then trail ML_TRAIL_GAP_PTS below
         # the high-water mark after ML_TRAIL_T2_PTS. MAX_HOLD stays 300s.
-        self.ML_SL_PTS        = float(os.getenv("ML_SL_PTS", "3.0"))       # was ATR-derived 4-10 pts
+        # ML_SL_PTS widened 3.0 -> 8.0 (FIX TODAY): the forward-direction
+        # model needs room for the 5-bar move to develop; a 3pt stop on a
+        # ~577 premium is 0.5% noise and stops out on the first counter-wick
+        # (MFE +5.25 then stopped in 31s). 8pt sits in the ATR-derived 4-10
+        # range and still gives 10R at the 80pt target.
+        self.ML_SL_PTS        = float(os.getenv("ML_SL_PTS", "8.0"))       # was ATR-derived 4-10 pts
         self.ML_TARGET_PTS    = float(os.getenv("ML_TARGET_PTS", "80.0"))  # was 3.5x SL distance
         # NO_LIFE exit (premium profit < floor at N seconds) — DISABLED by
         # Phase-10: grid shows it only hurts once trailing is active. The
@@ -85,8 +90,36 @@ class Config:
         self.REQUIRE_VWAP_ALIGN = os.getenv("REQUIRE_VWAP_ALIGN", "1") == "1"
         # Require 5m SuperTrend alignment with trade direction
         self.REQUIRE_5M_TREND = os.getenv("REQUIRE_5M_TREND", "1") == "1"
+        # Require HTF (15m/30m) trend alignment with trade direction
+        self.REQUIRE_HTF_ALIGN = os.getenv("REQUIRE_HTF_ALIGN", "1") == "1"
+        # Require swing structure (HH/HL for CE, LH/LL for PE) — set 0 in
+        # dry-run so the model can fire on move ONSET (breakouts/reversals)
+        # before the structure forms.
+        self.REQUIRE_STRUCTURE = os.getenv("REQUIRE_STRUCTURE", "1") == "1"
+        # Pullback entry (wait for ORB-breakout retrace). OFF in dry-run — the
+        # forward-direction model fires on move ONSET; waiting for a breakout
+        # retrace just delays the model's signal.
+        self.REQUIRE_PULLBACK = os.getenv("REQUIRE_PULLBACK", "1") == "1"
+        # Min ML prob the allocator accepts before sizing a position. 0.45 was
+        # tuned for the OLD entry-quality label scale; the forward-direction
+        # model outputs ~0.30-0.45 on normal days. Lowered in dry-run.
+        self.ALLOC_MIN_ML_PROB = float(os.getenv("ALLOC_MIN_ML_PROB", "0.45"))
+        # OI wall (has_oi_wall) filter at the master-runner entry stage.
+        # OFF in dry-run so the raw model signal is observable end-to-end.
+        self.OI_WALL_ENABLED = os.getenv("OI_WALL_ENABLED", "1") == "1"
+        # Direction agreement gate: zero out ML prob for a side unless the
+        # direction stack (SuperTrend+VWAP+DI+EMA+ADX) all agree. OFF in
+        # dry-run testing so the raw model conviction is observable.
+        self.DIRECTION_AGREE_GATE = os.getenv("DIRECTION_AGREE_GATE", "1") == "1"
         # Maximum slippage allowed at entry (points) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ skip if spread > 1pt
         self.MAX_ENTRY_SLIP_PTS = float(os.getenv("MAX_ENTRY_SLIP_PTS", "1.0"))
+
+        # Entry window end — MARKET_CLOSING gate in live_engine honors these.
+        # FIX TODAY: was hardcoded 15:15 in the engine; the 15:01 entry had
+        # no time for the 5-bar prediction to develop. Now 15:00 by default
+        # (matches .env ENTRY_END_HOUR/MINUTE).
+        self.ENTRY_END_HOUR   = int(os.getenv("ENTRY_END_HOUR", "15"))
+        self.ENTRY_END_MINUTE = int(os.getenv("ENTRY_END_MINUTE", "0"))
 
         # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ TIER 1: Entry Confirmation & Timing Gates ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
         # Confirmation window seconds (wait for next candle or 5-15 sec)

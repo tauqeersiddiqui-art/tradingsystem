@@ -56,6 +56,7 @@ from engine.core.health_monitor import update_health, snapshot
 from engine.live_engine import LiveEngine
 from engine.portfolio.allocator import CapitalAllocator
 from engine.execution.filters import has_oi_wall
+from engine.execution.cost_model import net_pnl as _net_pnl   # FIX TODAY: single authoritative net PnL
 from engine.risk.risk_manager import compute_entry_stops
 from engine.execution.profit_manager import ladder_stop
 from engine.core.state_store import save_state, load_state, deserialize_position
@@ -891,7 +892,7 @@ def should_confirm_entry(decision, ts, ltp_history, ctx):
 
 def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     logger.info("Engine loop started")
-    tg_force("Engine Loop Started ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Monitoring Market...")
+    tg_force("Engine Loop Started - Monitoring Market...")
 
     position          = None    # current open position dict
     entry_time        = None    # FIX-2: defined at entry, used for held_seconds
@@ -1341,7 +1342,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 f"fill={exit_price:.2f} SL={position.get('stop_loss',0):.2f})"
                             )
 
-                    pnl = (exit_price - position["entry"]) * position["qty"]
+                    # FIX TODAY: report NET PnL (gross minus round-trip cost)
+                    # — the same number trade_logger writes to the CSV. Before,
+                    # the log/journal showed gross (-132) while the CSV showed
+                    # net (-198) for the same trade, so totals never matched.
+                    # cost_model is the authoritative source (see its docstring).
+                    try:
+                        pnl = _net_pnl((exit_price - position["entry"]) * position["qty"],
+                                       position["qty"], ctx.config)
+                    except Exception:
+                        pnl = (exit_price - position["entry"]) * position["qty"]
 
                     # Phase 4 — loss classification from entry-quality metrics.
                     # entry_quality may be ABSENT on restored/pre-deployment
@@ -1722,7 +1732,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     atm_strike = round(current_price / 100) * 100
                     option_chain = ctx.broker.get_option_chain_near_atm(strikes_range=5)
                     
-                    if has_oi_wall(option_chain, atm_strike, side):
+                    _oi_wall_hit = has_oi_wall(option_chain, atm_strike, side)
+                    # dry-run: OI_WALL_ENABLED=0 -> observe raw signals, never block
+                    if _oi_wall_hit and getattr(ctx.config, "OI_WALL_ENABLED", True):
                         logger.info(
                             f"[GATE] OI wall blocked {side} entry | ATM={atm_strike}"
                         )
@@ -2010,7 +2022,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             side=scalp_position["side"],
                         )
                         _s_fill = _s_exit_order["price"] if _s_exit_order else _s_ltp
-                        _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
+                        # FIX TODAY: net PnL (gross minus cost) — matches
+                        # trade_logger CSV, same as the ML exit path.
+                        try:
+                            _s_pnl  = _net_pnl((_s_fill - scalp_position["entry"]) * scalp_position["qty"],
+                                               scalp_position["qty"], ctx.config)
+                        except Exception:
+                            _s_pnl  = (_s_fill - scalp_position["entry"]) * scalp_position["qty"]
                         # Task #15 BUG 1 — symmetric scalp idempotency guard:
                         # if anything below throws before `scalp_position = None`,
                         # this branch re-fires next cycle. Accounting + ledger

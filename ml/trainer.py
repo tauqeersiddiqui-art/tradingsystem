@@ -80,11 +80,14 @@ def find_threshold(probs, y):
     return best
 
 
-def train_one(df, label_col, name):
-    print(f"\n{'-'*60}\n  {name}  (label={label_col})\n{'-'*60}")
-    X = df[FEATURE_COLUMNS].values
-    y = df[label_col].values.astype(int)
-    ts = df["date"].values if "date" in df.columns else None
+def train_one(df, label_col, eligible_col, name):
+    print(f"\n{'-'*60}\n  {name}  (label={label_col}, eligible={eligible_col})\n{'-'*60}")
+    # Filter to direction-eligible rows only
+    mask = df[eligible_col].astype(bool)
+    df_f = df[mask].reset_index(drop=True)
+    X = df_f[FEATURE_COLUMNS].values
+    y = df_f[label_col].values.astype(int)
+    ts = df_f["date"].values if "date" in df_f.columns else None
     print(f"  samples={len(y):,}  positive_rate={y.mean():.1%}")
 
     params = dict(
@@ -130,13 +133,16 @@ def train_one(df, label_col, name):
             "wr": thr["wr"], "trades": thr["trades"]}
 
 
-def train_one_cat(df, label_col, name):
+def train_one_cat(df, label_col, eligible_col, name):
     """Train + Platt-calibrate one CatBoost directional model."""
-    print(f"\n{'-'*60}\n  {name} [CatBoost]  (label={label_col})\n{'-'*60}")
-    X   = df[FEATURE_COLUMNS].values
+    print(f"\n{'-'*60}\n  {name} [CatBoost]  (label={label_col}, eligible={eligible_col})\n{'-'*60}")
+    # Filter to direction-eligible rows only
+    mask = df[eligible_col].astype(bool)
+    df_f = df[mask].reset_index(drop=True)
+    X   = df_f[FEATURE_COLUMNS].values
     Xdf = pd.DataFrame(X, columns=FEATURE_COLUMNS)
-    y   = df[label_col].values.astype(int)
-    ts  = df["date"].values if "date" in df.columns else None
+    y   = df_f[label_col].values.astype(int)
+    ts  = df_f["date"].values if "date" in df_f.columns else None
     print(f"  samples={len(y):,}  positive_rate={y.mean():.1%}")
 
     cat_params = dict(
@@ -224,8 +230,8 @@ def main():
     df = df.dropna(subset=list(FEATURE_COLUMNS) + ["label_ce", "label_pe", "date"]).reset_index(drop=True)
 
     # ── LightGBM ──────────────────────────────────────────────────────
-    ce = train_one(df, "label_ce", "champion_ce_lgbm")
-    pe = train_one(df, "label_pe", "champion_pe_lgbm")
+    ce = train_one(df, "label_ce", "ce_eligible", "champion_ce_lgbm")
+    pe = train_one(df, "label_pe", "pe_eligible", "champion_pe_lgbm")
 
     print(f"\n{'='*64}")
     print(f"  LGBM  CE: AUC={ce['auc']:.3f} std={ce['std']:.3f} thr={ce['threshold']} "
@@ -257,8 +263,8 @@ def main():
         print("  [CATBOOST] Library not installed — skipping.")
         print("             Install with:  pip install catboost")
     else:
-        ce_cat = train_one_cat(df, "label_ce", "champion_ce_cat")
-        pe_cat = train_one_cat(df, "label_pe", "champion_pe_cat")
+        ce_cat = train_one_cat(df, "label_ce", "ce_eligible", "champion_ce_cat")
+        pe_cat = train_one_cat(df, "label_pe", "pe_eligible", "champion_pe_cat")
 
         print(f"\n{'='*64}")
         print(f"  CAT   CE: AUC={ce_cat['auc']:.3f} std={ce_cat['std']:.3f} "

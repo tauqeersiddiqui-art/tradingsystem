@@ -1,12 +1,20 @@
 {
-  "last_update": "2026-08-27 10:31:50.790000",
-  "pnl": 0.0,
-  "positions": 0,
+  "last_update": "2026-08-27 16:15:59.033798",
+  "pnl": -132.00000000000273,
+  "positions": 1,
   "active_position": null,
   "win_rate": 0,
   "drawdown": 0,
   "regime": null,
-  "signal": {},
+  "signal": {
+    "symbol": "BANKNIFTY26SEP57600PE",
+    "side": "PE",
+    "entry": 577.45,
+    "exit": 573.05,
+    "pnl": -132.00000000000273,
+    "reason": "STOP",
+    "ts": "15:01:41"
+  },
   "mode": "UNKNOWN",
   "latency_ms": 0,
   "last_order": null

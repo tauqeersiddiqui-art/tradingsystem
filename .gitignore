@@ -38,3 +38,4 @@ ml/models/training_dataset*.csv
 ml/tmp/
 Thumbs.db
 venv/
+.env

@@ -1,41 +1,103 @@
-
-# Added by code-review-graph
-# Archive (old experiments / backups)
-# Large datasets
-# Large training datasets GÇö too big for git
-# Logs
-# logs, backtest results, model backups
-# ML models GÇö large training data stays local, trained model files are committed
-# OS files
-# Python cache
-# Python virtual environments
-# runtime / local state
-# Secrets
-# Temporary ML files
-*.pyc
-*.pyo
-.code-review-graph/
-.DS_Store
+# ============================================================
+# SECRETS â€” NEVER commit these
+# ============================================================
 .env
-.telegram_state.json
-__pycache__/
+.env.*
+env
+env.*
 access_token.txt
-archive/
-backtest/results/
-catboost_info/
-data/**/*.csv
-data/runtime_state.json
-data/system_health.json
-env/
-logs/
-master_runner.log
-ml/**/*.csv
+*.key
+*.pem
+*.p12
+
+# ============================================================
+# ML ARTIFACTS â€” trained models, datasets, training output
+# ============================================================
+ml/models/*.pkl
 ml/models/*.h5
 ml/models/*.pt
+ml/models/*.joblib
+ml/models/*.onnx
 ml/models/backup_*
-ml/models/day_classifier_labels.csv
 ml/models/training_dataset*.csv
+ml/models/day_classifier_labels.csv
 ml/tmp/
-Thumbs.db
+ml/**/__pycache__/
+
+# ============================================================
+# DATA â€” large CSVs, historical data, runtime state
+# ============================================================
+data/**/*.csv
+data/**/*.json
+data/historical/
+data/runtime_state.json
+data/system_health.json
+data/.telegram_state.json
+*.csv
+
+# ============================================================
+# BACKTEST â€” results, logs
+# ============================================================
+backtest/results/
+backtest/forensic_trades.csv
+
+# ============================================================
+# LOGS
+# ============================================================
+logs/
+*.log
+
+# ============================================================
+# TELEGRAM â€” session state
+# ============================================================
+.telegram_state.json
+
+# ============================================================
+# PYTHON
+# ============================================================
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ============================================================
+# VIRTUAL ENVIRONMENTS
+# ============================================================
+env/
 venv/
-.env
+.venv/
+ENV/
+
+# ============================================================
+# IDE / TOOLING
+# ============================================================
+.code-review-graph/
+.mcp.json
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ============================================================
+# OS
+# ============================================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+
+# ============================================================
+# RESEARCH â€” local-only notebooks, experiments
+# ============================================================
+research/
+archive/
+
+# ============================================================
+# CATBOOST
+# ============================================================
+catboost_info/

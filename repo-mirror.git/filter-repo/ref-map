@@ -1,0 +1,10 @@
+old                                      new                                      ref
+57b1c0b065e1bed441a8fa42ec310d22a134f596 4af07753d27a86f3cd85b8c391bf1845d0fa1382 refs/heads/backup-before-push-20260902_1227
+6fa187dc0dd48923157513044d9e13d6a9a666c1 511dfac4a2f2b16cbc34cf43269dd42cf05eaaee refs/heads/chore/clean-unnecessary-files
+8b23f9c64320a7d9cd5ad2edb3c50dcf518a870b 8f9cc0a0a775576080134cad518c18819bfa1c86 refs/heads/feat/obsidian-clean
+da282b287b9cb2dcf9dfe83e682df393ba7f713f 2ca62617b439f3b9413138bedd2c7c91cf1cae71 refs/heads/feat/obsidian-logging-and-golden-trades
+f0bd4747ebce86bc04c402020d9cd82433d5ecec 0f9687c9d9e57404dd389021a0940d29282f20c6 refs/heads/fix/cost-aware-labels
+94cf87d3085737f59768c4f372ac2f1c71733659 87abc3d2ffdfd5707fa5cf711b417a3221e02158 refs/heads/main
+6fa187dc0dd48923157513044d9e13d6a9a666c1 511dfac4a2f2b16cbc34cf43269dd42cf05eaaee refs/pull/1/head
+94cf87d3085737f59768c4f372ac2f1c71733659 87abc3d2ffdfd5707fa5cf711b417a3221e02158 refs/pull/2/head
+51ab6dff8c2118ba4c79f841bc8e857f560b820d 43374e4e6fdaf479a4b18ec39862047dcfd8d085 refs/tags/paper-trading-ready-v1.0

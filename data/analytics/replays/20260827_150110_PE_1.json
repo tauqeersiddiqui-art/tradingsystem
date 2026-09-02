@@ -1,0 +1,67 @@
+{
+  "symbol": "BANKNIFTY26SEP57600PE",
+  "side": "PE",
+  "entry": 577.45,
+  "qty": 30,
+  "summary": {
+    "max_pnl": 157.5,
+    "mae_rs": -132.0,
+    "mae_pts": -4.4,
+    "ladder_stage": "S2_TRAIL62%",
+    "locked_profit": 97.65,
+    "retained_profit_pct": -0.838,
+    "exit_reason": "STOP",
+    "exit_price": 573.05,
+    "final_stop_loss": 574.45,
+    "pnl": -132.0
+  },
+  "events": [
+    {
+      "t": "15:01:10",
+      "type": "ENTRY",
+      "price": 577.45,
+      "spot": 57630.75,
+      "ml_ce": 0.128,
+      "ml_pe": 0.307,
+      "adx": 10.3,
+      "rsi": 50.0,
+      "vwap": "above",
+      "st_dir": -1,
+      "stop": 574.45,
+      "regime": "EXPANSION"
+    },
+    {
+      "t": "15:01:14",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.55,
+      "price": 579.8
+    },
+    {
+      "t": "15:01:15",
+      "type": "MFE_PEAK",
+      "mfe_pts": 2.35,
+      "price": 580.8
+    },
+    {
+      "t": "15:01:16",
+      "type": "MFE_PEAK",
+      "mfe_pts": 3.35,
+      "price": 582.7
+    },
+    {
+      "t": "15:01:17",
+      "type": "MFE_PEAK",
+      "mfe_pts": 5.25,
+      "price": 582.7
+    },
+    {
+      "t": "15:01:41",
+      "type": "EXIT",
+      "price": 573.05,
+      "reason": "STOP",
+      "pnl": -132.0,
+      "mfe_pts": 5.25,
+      "mae_pts": -4.4
+    }
+  ]
+}

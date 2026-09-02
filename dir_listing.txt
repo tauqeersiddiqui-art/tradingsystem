@@ -1,0 +1,769 @@
+﻿Directory 2026-09-02 10:34 D:\All Bots\trading_system\.claude
+Archive 2026-09-02 10:34 D:\All Bots\trading_system\.claude\settings.local.json
+Directory 2026-09-02 12:26 D:\All Bots\trading_system\.code-review-graph
+Archive 2026-08-19 01:31 D:\All Bots\trading_system\.code-review-graph\.gitignore
+Archive 2026-08-19 01:31 D:\All Bots\trading_system\.code-review-graph\graph.db
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\.cursorrules
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\.env
+Archive 2026-09-02 09:59 D:\All Bots\trading_system\.env.bak
+Archive 2026-09-02 10:53 D:\All Bots\trading_system\.env.debug.bak
+Archive 2026-09-02 10:58 D:\All Bots\trading_system\.env.permissive.bak
+Hidden, Directory 2026-09-02 12:30 D:\All Bots\trading_system\.git
+Archive 2026-09-02 12:29 D:\All Bots\trading_system\.git\.COMMIT_EDITMSG.swp
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.git\COMMIT_EDITMSG
+Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\config
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\description
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.git\FETCH_HEAD
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.git\HEAD
+Directory 2026-05-06 19:41 D:\All Bots\trading_system\.git\hooks
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\applypatch-msg.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\commit-msg.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\fsmonitor-watchman.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\post-update.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\pre-applypatch.sample
+Archive 2026-05-06 19:41 D:\All Bots\trading_system\.git\hooks\pre-commit
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\pre-commit.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\pre-merge-commit.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\prepare-commit-msg.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\pre-push.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\pre-rebase.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\pre-receive.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\push-to-checkout.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\sendemail-validate.sample
+Archive 2026-04-30 01:08 D:\All Bots\trading_system\.git\hooks\update.sample
+Archive 2026-09-02 12:29 D:\All Bots\trading_system\.git\index
+Directory 2026-08-25 09:29 D:\All Bots\trading_system\.git\info
+Archive 2026-08-03 10:31 D:\All Bots\trading_system\.git\info\exclude
+Archive 2026-08-25 09:29 D:\All Bots\trading_system\.git\info\refs
+Archive 2026-08-06 19:54 D:\All Bots\trading_system\.git\kilo
+Directory 2026-08-03 10:31 D:\All Bots\trading_system\.git\logs
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.git\logs\HEAD
+Directory 2026-08-18 12:18 D:\All Bots\trading_system\.git\logs\refs
+Directory 2026-09-02 12:27 D:\All Bots\trading_system\.git\logs\refs\heads
+Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\logs\refs\heads\backup-before-push-20260902_1227
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\logs\refs\heads\chore
+Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\logs\refs\heads\chore\clean-unnecessary-files
+Directory 2026-08-16 21:05 D:\All Bots\trading_system\.git\logs\refs\heads\feat
+Archive 2026-09-02 12:01 D:\All Bots\trading_system\.git\logs\refs\heads\feat\obsidian-clean
+Archive 2026-08-16 20:48 D:\All Bots\trading_system\.git\logs\refs\heads\feat\obsidian-logging-and-golden-trades
+Directory 2026-08-03 10:31 D:\All Bots\trading_system\.git\logs\refs\heads\fix
+Archive 2026-08-12 20:16 D:\All Bots\trading_system\.git\logs\refs\heads\fix\cost-aware-labels
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.git\logs\refs\heads\main
+Directory 2026-09-02 12:08 D:\All Bots\trading_system\.git\logs\refs\remotes
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\logs\refs\remotes\origin
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\logs\refs\remotes\origin\chore
+Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\logs\refs\remotes\origin\chore\clean-unnecessary-files
+Directory 2026-09-02 12:08 D:\All Bots\trading_system\.git\logs\refs\remotes\origin\feat
+Archive 2026-09-02 12:08 D:\All Bots\trading_system\.git\logs\refs\remotes\origin\feat\obsidian-clean
+Archive 2026-09-02 12:11 D:\All Bots\trading_system\.git\logs\refs\remotes\origin\HEAD
+Archive 2026-09-02 12:21 D:\All Bots\trading_system\.git\logs\refs\remotes\origin\main
+Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\logs\refs\stash
+Directory 2026-09-02 12:30 D:\All Bots\trading_system\.git\objects
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\01
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\01\24b79575865f0a3296bb74d07664546ecd9966
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\04
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\04\26bf147309265c66a4c4bcea7d5091387b5d9f
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\04\f5bc11daf4c5b5dac984f12f6852845e64ca2d
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\06
+ReadOnly, Archive 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\06\d29d23673d68e18548c665ab42982f143ebaba
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\07
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\07\51a8bc87ab2702888ad32f3db00afeca4bb9ed
+Directory 2026-09-02 12:27 D:\All Bots\trading_system\.git\objects\08
+ReadOnly, Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\objects\08\1bb87b381883f8c4c001c12abbd9fccd0be7f9
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\08\45d466129c9cafb8079541f45a8dd969d3ca68
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\08\6e5fc06580ade6081104f79cb659e45f836bb5
+Directory 2026-09-02 12:00 D:\All Bots\trading_system\.git\objects\09
+ReadOnly, Archive 2026-09-02 12:00 D:\All Bots\trading_system\.git\objects\09\314721829b13fde784ac175a54e2b2c12b8cae
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\0a
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\0a\09dfe2277607058af52b5be1fc502835041c25
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\0d
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\0d\cefb33db0983a6eab5f668b67ac698c01f591e
+Directory 2026-09-02 12:27 D:\All Bots\trading_system\.git\objects\0f
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\0f\93e8c546ac12b3aee9b4263ce1492bf1e1b6a4
+ReadOnly, Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\objects\0f\f969afcbe57e9d735117fd1074d6e0c73840d7
+Directory 2026-09-02 12:29 D:\All Bots\trading_system\.git\objects\10
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\10\25a09433402f1c9265871355355ee8c23cbdad
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\10\2a071d5a1563cbf5d5332162d23234e05710d7
+ReadOnly, Archive 2026-09-02 12:29 D:\All Bots\trading_system\.git\objects\10\6efd8517820adc7ecc559850895d4dfe62a40a
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\11
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\11\11fb4f2c1326d92435f49941328f4c484bef4b
+Directory 2026-09-02 12:01 D:\All Bots\trading_system\.git\objects\14
+ReadOnly, Archive 2026-09-02 12:01 D:\All Bots\trading_system\.git\objects\14\dd08d61b65ad3fb3fba6731f8a90ec322fd880
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\15
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\15\e441115b4373501005c09de88b2a34dd97024f
+Directory 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\18
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\18\38a0af283c6d8f4bd27fada0791b7847a4bb42
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\1b
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\1b\9904b880cac68606b5232f56b27b6083044fde
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\1b\a9255d553152fbb7dd6be7f8221251793ebde6
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\1d
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\1d\c373725e728e7921b5ade12b57795d7b8e32e4
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\1f
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\1f\6f6e1c03328edbbb99e40a03964ddeceb44551
+Directory 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\22
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\22\ef6d3ad11ffbd8f513e8b9a769d05f00d5fd22
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\23
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\23\80d8e4773522c6fa5f214ce592b156285aae3b
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\23\b5a3a79a54fab0b124596f1650c162750b2414
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\26
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\26\9fef53581acc3ba0c7763e26fa8593dc74ae97
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\2d
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\2d\ebc7c44e54de86ac5316603efc90d0c6e4212f
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\2e
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\2e\7f8472efd9991168d33a17278de64bb114fa90
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\30
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\30\028f85e9ec566a1f82ce1d367b51ed2d09000d
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\31
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\31\687b23c40e347dc2915cd56e8e3d0c0aa9c1eb
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\32
+ReadOnly, Archive 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\32\7ea865cfd74e63a6ca66829f66e72cb5b29e26
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\32\dd7e5ba04f27612cc323666329ba7294a15145
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\32\e9c60c274b1b3d142ec65b76dc96d6ac96a726
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\33
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\33\811f05cea35da86293bbcb5ae1b49f017013af
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\34
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\34\42004652c61c48217c1a60ff8cc250aace79a1
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\34\e9eaf78eb6d66eed085aaca0325e1068d052ee
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\35
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\35\627f1c7f17b8d80e756a657b2b3d84a2c15363
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\37
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\37\560a70f00aaa8ea63389d48a47bf623698f2bb
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\37\dd63112eb2a06aa110c04ec9a5d136d3bba157
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\38
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\38\d72cc157e69e418d6957eea3a77132658cb09b
+Directory 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\39
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\39\4b4cbf97dd3694e41bd28be6d661532f677ef3
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\3c
+ReadOnly, Archive 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\3c\94e8e15fcc06bee16cf448cce4e1de58b6e691
+Directory 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\3f
+ReadOnly, Archive 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\3f\a844c1e1b42dcdd18e951d05fc52599c42eaa2
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\41
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\41\565c70084b750e2211e14e4f25853d79af40b9
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\42
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\42\9c4261bef2802aeeb25fa410428535bfb194a8
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\42\a724fbae238a139505b138a7e3d4d216740105
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\44
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\44\477c33af17be9e1ed601893bcc65923da8b3a6
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\46
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\46\8b8dd3c7eb5a50a70b51af074ec09d224194a6
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\4a
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\4a\06309e61b7d2da166e5fe7de539b9ed1ba756e
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\4a\2044464ebed346fe6de9d79edad4f63c5e3c2d
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\4b
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\4b\4c497b1e11cf8b230d724f7a3133311831448b
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\4d
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\4d\07679c219e0b4e37392b35387d012903833dc3
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\4e
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\4e\1743e7d4ae7d91b9a9f5b86f6984d97a1ff1e7
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\4e\24bd03e111a2093f5116e33fc323f6d0741104
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\51
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\51\507d8014ae19ecbd3d4f413936953ea006ad30
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\54
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\54\b84214738af76149467f1cf4c5704d7da93618
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\54\d686af92ec56d480149a13f9c7e548dcf9c1fa
+Directory 2026-09-02 12:26 D:\All Bots\trading_system\.git\objects\57
+ReadOnly, Archive 2026-09-02 12:26 D:\All Bots\trading_system\.git\objects\57\b1c0b065e1bed441a8fa42ec310d22a134f596
+Directory 2026-08-27 10:32 D:\All Bots\trading_system\.git\objects\5a
+ReadOnly, Archive 2026-08-27 10:32 D:\All Bots\trading_system\.git\objects\5a\abfaffddc97a58f901f10a1db7c58b1c02e192
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\5b
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\5b\3d32d605acd6d52efc37145943ec1be2aa223c
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\5c
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\5c\5745d6936771ef767ab4abe09576a5c1b1304f
+Directory 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\5d
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\5d\d15bbc52d2926b3c959b0e9f1169fd2e923a4a
+ReadOnly, Archive 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\5d\ff967e27887abe18c6f4fdf6f05ca1a3cf9182
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\5e
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\5e\659d98cca2660625b8d9a88775c57f01d104f0
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\5e\8ce0ded0711a3d78491ecbd37a24aa07b8f856
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\60
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\60\0629b443afa7dbd40e4b9ba8fe4bbd301aed9d
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\61
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\61\9f141de678ea0fabc877a74d375b1ea752b59f
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\63
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\63\0871a17c9d92a3e7964ce699518b7f536bb931
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\64
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\64\dc1a297528c3eb3a4ec72eba9d4d6c15c8ed50
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\64\ebd606ed692e0dea73982fe40a514721343c05
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\6a
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\6a\52e2ebb350668c9e33fb183c0dc4ef1f29f269
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\6a\cca26156fba67af7ba9ddabea6dfe18ba2b610
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\6b
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\6b\f46dec280dad29ee68f727241d1ff5e57fbc55
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\6d
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\6d\cd953de1f7ea6e59e6e5c5809cc1650a05c97c
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\6f
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\6f\a187dc0dd48923157513044d9e13d6a9a666c1
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\70
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\70\dfd68928dd10d9d3f15dc9bf4cb43cae717600
+Directory 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\71
+ReadOnly, Archive 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\71\148a4328162088a7471cf6a33b3aab6fc7637e
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\72
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\72\582d8cecd97d7be534c5c95b3c0a34b19127b6
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\73
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\73\2d355ea59c02f6b5f4cbee0479ae8597377c53
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\74
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\74\f446eadb361cfdf1593a5e45e7bbcd6162eec6
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\75
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\75\271844b03fed797279e3b04e6d3e675e15f491
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\75\9a9fa5b65583710264648b914a807be1879fe1
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\76
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\76\ffd0667229e9042e851b1945d0a094eee077b3
+Directory 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\77
+ReadOnly, Archive 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\77\f4da4fc3a02a43f46b64f0445c4515c1603fed
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\7a
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\7a\9a4068fa735505af5ebecfaa8b1a4241b00c9c
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\7b
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\7b\822cc0d82fc7192ee8a4ec98a3d7defe34d9c0
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\7c
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\7c\67d3069477636f2a6c4ce9cc8c37f492220625
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\7f
+ReadOnly, Archive 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\7f\49c9507cfe7387176378834987770c89cd19cd
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\7f\63e591152cae4ef23b0e35036f1229e5e701d1
+Directory 2026-09-02 12:30 D:\All Bots\trading_system\.git\objects\83
+ReadOnly, Archive 2026-09-02 12:30 D:\All Bots\trading_system\.git\objects\83\78c01b48763435b4c35fd898e687c6414069b7
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\84
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\84\6df3a063ee99a43432273ea0cb535fb4ddaebf
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\84\cf5dfc1b6f79ab118b5eb3c53b4467b558d5e6
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\84\f3f9ca6842ca89c8a60cb974a5ce164ff344c0
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\87
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\87\9af69b5dbf54cfd55b9a0ceee94b03db024534
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\89
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\89\0ba898261bf0d72668f2742d6c2b6decf03f96
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\89\f07d64dd12adb46d2d20cda967dc268a999e3d
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\8a
+ReadOnly, Archive 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\8a\003db049f5a2c6178d92791f2fd44a879df802
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\8a\8aaea39a850cdd730134ef54dec82a9825e8c3
+Directory 2026-09-02 12:01 D:\All Bots\trading_system\.git\objects\8b
+ReadOnly, Archive 2026-09-02 12:01 D:\All Bots\trading_system\.git\objects\8b\23f9c64320a7d9cd5ad2edb3c50dcf518a870b
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\8b\879455e1230c54c5059d76b7ea76b8430156a9
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\8c
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\8c\019dedd33df50dd900ab84eaa71cb5694930d3
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\8e
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\8e\5605a7902e36d4d68708ffee3a7b66b674c2cb
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\8e\99aa4729500552f77c49d6dbb5ac85234bd184
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\8f
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\8f\ea3b5ecd7367784c1995541adee247cda222c1
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\93
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\93\ef3b9f9192997561539aa3b2da4c4ce0efb9e6
+Directory 2026-09-02 12:26 D:\All Bots\trading_system\.git\objects\94
+ReadOnly, Archive 2026-09-02 12:26 D:\All Bots\trading_system\.git\objects\94\d5a16a701b21327013964978d60b979aaca593
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\97
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\97\bc21e4c8a1a118033a314a25ae16d165dae730
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\99
+ReadOnly, Archive 2026-09-02 12:22 D:\All Bots\trading_system\.git\objects\99\728d2ec96d4a0b1a88c649861291e056b24008
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\99\e249775a4cf8c4394b973167ca25b41c47c06b
+Directory 2026-09-02 12:21 D:\All Bots\trading_system\.git\objects\9b
+ReadOnly, Archive 2026-09-02 12:21 D:\All Bots\trading_system\.git\objects\9b\ebfb0b2c98741c2ecc65f6e6e1f92f24a4401b
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\9c
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\9c\50469d2fd3cbbb5585ef034d394a9b575d0416
+Directory 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\9d
+ReadOnly, Archive 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\9d\04d76acd26d6786d9bc6252df07169c6a3fcfb
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\9e
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\9e\6e5c3b8f77be7743b39ec469c47125778c0701
+Directory 2026-09-02 12:29 D:\All Bots\trading_system\.git\objects\a0
+ReadOnly, Archive 2026-09-02 12:29 D:\All Bots\trading_system\.git\objects\a0\fc20b1dac4d6d7cd50c0343173c919c57a9f1a
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\a5
+ReadOnly, Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\objects\a5\b3d93b63c78da95a335f72cf81d0608e27ebe8
+Directory 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\a6
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\a6\4aaa63b9cf41868d8744f0a361ee3bff58cbea
+ReadOnly, Archive 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\a6\e88e65b96ae053127abdbc690658ac3ae18979
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\a7
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\a7\f9d63b4834bfc2e274c6ad1909c0d4987a1510
+Directory 2026-09-02 12:25 D:\All Bots\trading_system\.git\objects\ab
+ReadOnly, Archive 2026-09-02 12:25 D:\All Bots\trading_system\.git\objects\ab\6d4ceaed8eb8919c7195adbbde2d4bca0c0e44
+Directory 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\ac
+ReadOnly, Archive 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\ac\2ed71112c1d54f4daa959b33f7523b33143f9d
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\ac\b319f9198b9fe37d393bc175f34d297a146e6e
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\ad
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\ad\6cc45e1703dd4a1f48462c36e0e168c8148051
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\ae
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\ae\653a6c28700a330a9b7d13ea6e8dfee1535fd8
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\af
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\af\5941331f414bce3b78961014c629c7d175ec33
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\af\6e46d19384d47796b014f65968b9d446a25bec
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\b1
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\b1\f293bfb1e3a10ac145b4350037d20cf83ea218
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\b4
+ReadOnly, Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\objects\b4\3318a70849dc2ae7699bcd987045d5305bf89f
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\b6
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\b6\6aeced0896ab69f48e0a749fade9d03269d1da
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\b8
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\b8\4e52da63ed75a534c6cb5cfdc7ee14304ba46e
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\b9
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\b9\d78c9dced3147c0e2ca294c73aa528fed8a2ae
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\ba
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\ba\39a3c798fd07acd45a5911557ed4e3b659e440
+Directory 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\bc
+ReadOnly, Archive 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\bc\a590b45de8ce13d21a83bb8f442d3dfbaab309
+Directory 2026-09-02 12:01 D:\All Bots\trading_system\.git\objects\bd
+ReadOnly, Archive 2026-09-02 12:01 D:\All Bots\trading_system\.git\objects\bd\71222b51c49a3c83a446a5b1ab5cb96f883c3a
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\bd\cf37d80b869a3d037d51086232f9cce666ab58
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\c0
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\c0\1f574feadfc98cc3c734eb90ffb6bbc452fae9
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\c7
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\c7\df1260188124445039c4bc125993d2cd7acb9b
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\c9
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\c9\9588c6f9fd4477c6c3807738c8a31891a9e26c
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\d2
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\d2\bb75e2eeae0513b6fb9a2d468b7106dfe7fa05
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\d3
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\d3\2d224a227b7ba6bfe71dd49cd42d6d168661ca
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\d7
+ReadOnly, Archive 2026-09-02 09:59 D:\All Bots\trading_system\.git\objects\d7\8249cf354335a82d9bb1f011ea1867b1d1ed18
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\d7\f237f14c25a950a77e4dbf9988b81dfa92d6ed
+Directory 2026-09-02 12:21 D:\All Bots\trading_system\.git\objects\d9
+ReadOnly, Archive 2026-09-02 12:21 D:\All Bots\trading_system\.git\objects\d9\47eaaa798045ac04554f300022dba9b80eb890
+Directory 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\da
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\da\bae240e9fcda787f98811dddfaaaffde5141dc
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\db
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\db\346d0a8a06de9fabda86f5f8c469074064dba4
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\dd
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\dd\c7c1dd5f399931646e84abe384bcb1bf0bb507
+Directory 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\de
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\de\3a8f7685e2af4f4bb5ba4349c5beadb7dedb58
+ReadOnly, Archive 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\de\4974f484f5ae13d084a7c28409c3258aebbbb7
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\df
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\df\f7e40c98134d03e40b8be9a58bb9ad4da2cff5
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\e0
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\e0\56d1bfc1fb0b96032f0eff1b5bc0c73f746ca5
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\e3
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\e3\2d1c4caf3254bdee817894bbbabb63f7a5a833
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\e3\3ad8e32a5a1719acf94b923e8fbc16a044abc5
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\e3\52a7004240b4bf8cbd7d4dd12abc1be98c26a4
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\e3\57c5c7e1ab95b6f2de3410644d1947835f757b
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\e5
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\e5\748403eb35a2a09e630a5c159b84889819b992
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\e6
+ReadOnly, Archive 2026-09-02 12:18 D:\All Bots\trading_system\.git\objects\e6\f68377c9822f283ef0b5eb513d66bc6a17c0c0
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\e7
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\e7\9793f9bd78a20942fb7434ffb774949515ed4f
+ReadOnly, Archive 2026-09-02 12:21 D:\All Bots\trading_system\.git\objects\e7\d0efde514289fcb3586ebc22e154d12f53a84c
+Directory 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\e8
+ReadOnly, Archive 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\e8\41542087b580cf467d96f9293ee66301422edf
+ReadOnly, Archive 2026-09-02 12:15 D:\All Bots\trading_system\.git\objects\e8\feb7c227bfb40b8238b2d3b8c38ed30714f57a
+Directory 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\ea
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\ea\1116d8a57dc9c99797fbbb133b3c8913e10615
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\ea\8f1839ce96cbc9fb26de93066bc5ba60e15fc5
+Directory 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\ec
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\ec\365a82e458be81cdfbb502c5257bc5a5f505fe
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\ed
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\ed\3a8e9286844ab1f9e5acb9e2f8271ec1ca9c79
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\ed\9a3e99eaec53c048594561ec916df38e4f597f
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\ed\ebeff345966c98e51df178431663cd6c1e12f7
+Directory 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\ee
+ReadOnly, Archive 2026-08-28 15:32 D:\All Bots\trading_system\.git\objects\ee\4a1982a28034dde2ff91c9527eb9ff42da22d7
+ReadOnly, Archive 2026-08-27 10:31 D:\All Bots\trading_system\.git\objects\ee\e6b042d8c92613b47a4552d8ae24fda6517872
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\f1
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\f1\2e602f56e361cadf59642820e885296ca0239e
+Directory 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\f5
+ReadOnly, Archive 2026-09-02 10:00 D:\All Bots\trading_system\.git\objects\f5\0dad2e15a5c8275a503dac4e04c4c9772f9fa2
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\f6
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\f6\fafb703267723415fe59dd170b0a6c24a87fee
+Directory 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\f7
+ReadOnly, Archive 2026-09-02 10:01 D:\All Bots\trading_system\.git\objects\f7\4adb432198c1646346dbe04d2de5eb0e0c8915
+ReadOnly, Archive 2026-09-02 11:54 D:\All Bots\trading_system\.git\objects\f7\bcc9fb2446b0c07f5fc8c1ac8ce5287a3ff12c
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\fb
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\fb\6f29fbb9e83a8a1817cf4fcf4c3bf405e65896
+Directory 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\fd
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\fd\ffb023859b44f0531761a1358a73eea398e63f
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\fe
+ReadOnly, Archive 2026-09-02 11:56 D:\All Bots\trading_system\.git\objects\fe\167504d71ca776f0bfab1efd39ce10826ecdb9
+ReadOnly, Archive 2026-09-02 11:20 D:\All Bots\trading_system\.git\objects\fe\c5530ffb9c62692864e34ab5dac0c3b5c65d75
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\fe\e6a5261a656d0b9f390395cd9be78f151a6dac
+Directory 2026-08-25 09:29 D:\All Bots\trading_system\.git\objects\info
+Directory 2026-07-03 13:09 D:\All Bots\trading_system\.git\objects\info\commit-graphs
+ReadOnly, Archive 2026-07-03 13:09 D:\All Bots\trading_system\.git\objects\info\commit-graphs\commit-graph-chain
+ReadOnly, Archive 2026-07-03 13:09 D:\All Bots\trading_system\.git\objects\info\commit-graphs\graph-5dcc4d307fc4c08f2bd0a46c93b16b67fd5d41d1.graph
+Archive 2026-08-25 09:29 D:\All Bots\trading_system\.git\objects\info\packs
+Directory 2026-08-25 09:29 D:\All Bots\trading_system\.git\objects\pack
+Archive 2026-08-25 09:29 D:\All Bots\trading_system\.git\objects\pack\multi-pack-index
+ReadOnly, Archive 2026-08-22 15:20 D:\All Bots\trading_system\.git\objects\pack\pack-3fe8963477987f0e2440405f42e4a34482126b67.idx
+ReadOnly, Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\objects\pack\pack-3fe8963477987f0e2440405f42e4a34482126b67.pack
+ReadOnly, Archive 2026-08-22 15:20 D:\All Bots\trading_system\.git\objects\pack\pack-3fe8963477987f0e2440405f42e4a34482126b67.rev
+ReadOnly, Archive 2026-08-22 18:13 D:\All Bots\trading_system\.git\objects\pack\pack-5cc0b27e36b26810644754fd142bea0115dab4d0.idx
+ReadOnly, Archive 2026-08-28 09:07 D:\All Bots\trading_system\.git\objects\pack\pack-5cc0b27e36b26810644754fd142bea0115dab4d0.pack
+ReadOnly, Archive 2026-08-22 18:13 D:\All Bots\trading_system\.git\objects\pack\pack-5cc0b27e36b26810644754fd142bea0115dab4d0.rev
+ReadOnly, Archive 2026-08-25 09:29 D:\All Bots\trading_system\.git\objects\pack\pack-6745d370a607a8997517e276813a71a6b6f43d73.idx
+ReadOnly, Archive 2026-08-25 09:29 D:\All Bots\trading_system\.git\objects\pack\pack-6745d370a607a8997517e276813a71a6b6f43d73.pack
+ReadOnly, Archive 2026-08-25 09:29 D:\All Bots\trading_system\.git\objects\pack\pack-6745d370a607a8997517e276813a71a6b6f43d73.rev
+ReadOnly, Archive 2026-08-22 15:20 D:\All Bots\trading_system\.git\objects\pack\pack-a95762c2b9c3a75ffd23471bd687f63dafab0fd5.idx
+ReadOnly, Archive 2026-08-22 15:20 D:\All Bots\trading_system\.git\objects\pack\pack-a95762c2b9c3a75ffd23471bd687f63dafab0fd5.mtimes
+ReadOnly, Archive 2026-08-22 15:20 D:\All Bots\trading_system\.git\objects\pack\pack-a95762c2b9c3a75ffd23471bd687f63dafab0fd5.pack
+ReadOnly, Archive 2026-08-22 15:20 D:\All Bots\trading_system\.git\objects\pack\pack-a95762c2b9c3a75ffd23471bd687f63dafab0fd5.rev
+Archive 2026-08-12 19:01 D:\All Bots\trading_system\.git\opencode
+Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\ORIG_HEAD
+Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\REBASE_HEAD
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\refs
+Directory 2026-06-12 10:10 D:\All Bots\trading_system\.git\refs\codex
+Directory 2026-06-12 10:10 D:\All Bots\trading_system\.git\refs\codex\turn-diffs
+Directory 2026-06-12 10:10 D:\All Bots\trading_system\.git\refs\codex\turn-diffs\1781239202985
+Directory 2026-06-12 10:10 D:\All Bots\trading_system\.git\refs\codex\turn-diffs\1781239202985\a00a68de-fe5c-48cd-ae95-da99a2c11fb4
+Archive 2026-06-12 10:10 D:\All Bots\trading_system\.git\refs\codex\turn-diffs\1781239202985\a00a68de-fe5c-48cd-ae95-da99a2c11fb4\base
+Directory 2026-09-02 12:30 D:\All Bots\trading_system\.git\refs\heads
+Archive 2026-09-02 12:27 D:\All Bots\trading_system\.git\refs\heads\backup-before-push-20260902_1227
+Directory 2026-09-02 12:19 D:\All Bots\trading_system\.git\refs\heads\chore
+Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\refs\heads\chore\clean-unnecessary-files
+Directory 2026-09-02 12:01 D:\All Bots\trading_system\.git\refs\heads\feat
+Archive 2026-09-02 12:01 D:\All Bots\trading_system\.git\refs\heads\feat\obsidian-clean
+Archive 2026-08-16 20:48 D:\All Bots\trading_system\.git\refs\heads\feat\obsidian-logging-and-golden-trades
+Directory 2026-08-12 20:16 D:\All Bots\trading_system\.git\refs\heads\fix
+Archive 2026-08-12 20:16 D:\All Bots\trading_system\.git\refs\heads\fix\cost-aware-labels
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.git\refs\heads\main
+Directory 2026-08-06 19:51 D:\All Bots\trading_system\.git\refs\kilo
+Directory 2026-09-02 12:08 D:\All Bots\trading_system\.git\refs\remotes
+Directory 2026-09-02 12:30 D:\All Bots\trading_system\.git\refs\remotes\origin
+Directory 2026-09-02 12:22 D:\All Bots\trading_system\.git\refs\remotes\origin\chore
+Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\refs\remotes\origin\chore\clean-unnecessary-files
+Directory 2026-09-02 12:08 D:\All Bots\trading_system\.git\refs\remotes\origin\feat
+Archive 2026-09-02 12:08 D:\All Bots\trading_system\.git\refs\remotes\origin\feat\obsidian-clean
+Archive 2026-09-02 12:11 D:\All Bots\trading_system\.git\refs\remotes\origin\HEAD
+Archive 2026-09-02 12:21 D:\All Bots\trading_system\.git\refs\remotes\origin\main
+Archive 2026-09-02 12:19 D:\All Bots\trading_system\.git\refs\stash
+Directory 2026-07-06 00:18 D:\All Bots\trading_system\.git\refs\tags
+Archive 2026-07-06 00:18 D:\All Bots\trading_system\.git\refs\tags\paper-trading-ready-v1.0
+Directory 2026-06-15 01:16 D:\All Bots\trading_system\.github
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.github\workflows
+Archive 2026-06-16 16:12 D:\All Bots\trading_system\.github\workflows\trading_afternoon.yml
+Archive 2026-06-16 16:12 D:\All Bots\trading_system\.github\workflows\trading_morning.yml
+Archive 2026-06-16 16:12 D:\All Bots\trading_system\.github\workflows\trading_test.yml
+Archive 2026-09-02 12:29 D:\All Bots\trading_system\.gitignore
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.gitignore.ours
+Archive 2026-09-02 12:30 D:\All Bots\trading_system\.gitignore.theirs
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\.mcp.json
+Directory 2026-08-22 13:55 D:\All Bots\trading_system\.qoder
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.qoder\repowiki
+Directory 2026-08-22 18:19 D:\All Bots\trading_system\.qoder\repowiki\knowledge
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\.qoder\repowiki\knowledge\en
+Directory 2026-08-22 18:19 D:\All Bots\trading_system\.qoder\repowiki\knowledge\en\Resilient-First Error Handling Logging, Graceful Degradation, and Process-Level
+Archive 2026-09-02 12:33 D:\All Bots\trading_system\.telegram_state.json
+Archive 2026-09-02 12:00 D:\All Bots\trading_system\.telegram_state.json.bak
+Directory 2026-06-07 18:56 D:\All Bots\trading_system\.vscode
+Archive 2026-06-07 18:56 D:\All Bots\trading_system\.vscode\settings.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\.windsurfrules
+Archive 2026-09-02 09:59 D:\All Bots\trading_system\access_token.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\AGENTS.md
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\backtest
+Directory 2026-08-27 09:52 D:\All Bots\trading_system\backtest\__pycache__
+Archive 2026-08-27 09:52 D:\All Bots\trading_system\backtest\__pycache__\backtest_engine.cpython-312.pyc
+Archive 2026-08-22 15:11 D:\All Bots\trading_system\backtest\__pycache__\forensic_oos.cpython-312.pyc
+Archive 2026-08-22 15:11 D:\All Bots\trading_system\backtest\__pycache__\walkforward_oos.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\backtest\backtest_engine.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\backtest\forensic_oos.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\backtest\forensic_trades.csv
+Directory 2026-09-02 12:23 D:\All Bots\trading_system\backtest\results
+Archive 2026-09-02 12:23 D:\All Bots\trading_system\backtest\results\day_log.csv
+Archive 2026-09-02 12:23 D:\All Bots\trading_system\backtest\results\trade_log.csv
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\backtest\walkforward_oos.py
+Directory 2026-09-02 12:23 D:\All Bots\trading_system\catboost_info
+Archive 2026-09-02 12:23 D:\All Bots\trading_system\catboost_info\catboost_training.json
+Directory 2026-09-02 12:23 D:\All Bots\trading_system\catboost_info\learn
+Archive 2026-09-02 12:23 D:\All Bots\trading_system\catboost_info\learn\events.out.tfevents
+Archive 2026-09-02 12:23 D:\All Bots\trading_system\catboost_info\learn_error.tsv
+Archive 2026-09-02 12:23 D:\All Bots\trading_system\catboost_info\time_left.tsv
+Directory 2026-08-27 12:41 D:\All Bots\trading_system\catboost_info\tmp
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\CLAUDE.md
+Directory 2026-09-02 12:34 D:\All Bots\trading_system\data
+Archive 2026-09-02 12:21 D:\All Bots\trading_system\data\.telegram_state.json
+Directory 2026-08-19 01:27 D:\All Bots\trading_system\data\analysis
+Directory 2026-08-27 15:01 D:\All Bots\trading_system\data\analytics
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260610_105900_CE_test_trade.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_100800_CE_1.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_101140_CE_2.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_102100_CE_1.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_105400_PE_6.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_105521_PE_3.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_105525_PE_5.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_105927_PE_6.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_110107_PE_1.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_110605_CE_3.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260611_110605_CE_5.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260612_111400_CE_1.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260612_111526_CE_2.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260612_112900_PE_1.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260612_121718_PE_1.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260612_121906_PE_2.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260615_110300_PE_2.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260615_110354_PE_3.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260615_143300_CE_9.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_105700_CE_1.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_111600_CE_2.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_112401_CE_3.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_130828_PE_4.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_131300_PE_5.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_143002_PE_6.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_143035_PE_7.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260617_143400_PE_9.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260618_101700_CE_4.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260618_104800_CE_6.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260618_105500_CE_8.json
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\analytics\replays\20260618_144040_PE_13.json
+Archive 2026-08-27 15:01 D:\All Bots\trading_system\data\analytics\replays\20260827_150110_PE_1.json
+Archive 2026-08-28 09:46 D:\All Bots\trading_system\data\analytics\replays\20260828_094358_PE_1.json
+Archive 2026-08-28 09:46 D:\All Bots\trading_system\data\analytics\slippage_log.csv
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\data\diagnostics
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\data\diagnostics\journals
+Archive 2026-08-18 10:05 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_18.csv
+Archive 2026-08-19 09:23 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_19.csv
+Archive 2026-08-20 09:19 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_20.csv
+Archive 2026-08-21 10:18 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_21.csv
+Archive 2026-08-24 09:13 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_24.csv
+Archive 2026-08-25 09:15 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_25.csv
+Archive 2026-08-27 15:01 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_27.csv
+Archive 2026-08-28 09:46 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_28.csv
+Archive 2026-08-31 09:12 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_08_31.csv
+Archive 2026-09-01 14:03 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_09_01.csv
+Archive 2026-09-02 09:59 D:\All Bots\trading_system\data\diagnostics\journals\journal_2026_09_02.csv
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\data\diagnostics\session_version.json
+Directory 2026-09-02 09:59 D:\All Bots\trading_system\data\diagnostics\shadow
+Archive 2026-08-18 10:05 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_18.csv
+Archive 2026-08-19 09:23 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_19.csv
+Archive 2026-08-20 09:19 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_20.csv
+Archive 2026-08-21 10:18 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_21.csv
+Archive 2026-08-24 09:13 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_24.csv
+Archive 2026-08-25 09:15 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_25.csv
+Archive 2026-08-27 15:01 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_27.csv
+Archive 2026-08-28 09:46 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_28.csv
+Archive 2026-08-31 09:12 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_08_31.csv
+Archive 2026-09-01 14:03 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_09_01.csv
+Archive 2026-09-02 09:59 D:\All Bots\trading_system\data\diagnostics\shadow\shadow_2026_09_02.csv
+Directory 2026-08-28 09:08 D:\All Bots\trading_system\data\historical
+Archive 2026-09-02 12:34 D:\All Bots\trading_system\data\historical\nifty_1m_full.csv
+Archive 2026-09-02 12:34 D:\All Bots\trading_system\data\runtime_state.json
+Archive 2026-09-02 12:00 D:\All Bots\trading_system\data\runtime_state.json.bak
+Archive 2026-09-02 12:34 D:\All Bots\trading_system\data\system_health.json
+Archive 2026-09-02 12:00 D:\All Bots\trading_system\data\system_health.json.bak
+Directory 2026-08-27 10:05 D:\All Bots\trading_system\data\trades
+Archive 2026-08-27 10:05 D:\All Bots\trading_system\data\trades\trade_log_2026_W34.csv
+Archive 2026-08-28 09:46 D:\All Bots\trading_system\data\trades\trade_log_2026_W35.csv
+Archive 2026-09-02 12:34 D:\All Bots\trading_system\dir_listing.txt
+Archive 2026-09-02 12:33 D:\All Bots\trading_system\dir_raw.txt
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine
+Directory 2026-08-28 11:10 D:\All Bots\trading_system\engine\__pycache__
+Archive 2026-08-28 11:10 D:\All Bots\trading_system\engine\__pycache__\live_engine.cpython-312.pyc
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\analytics
+Archive 2026-06-11 00:24 D:\All Bots\trading_system\engine\analytics\__init__.py
+Directory 2026-08-28 11:25 D:\All Bots\trading_system\engine\analytics\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\analytics\__pycache__\__init__.cpython-312.pyc
+Archive 2026-08-28 11:25 D:\All Bots\trading_system\engine\analytics\__pycache__\performance.cpython-312.pyc
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\analytics\__pycache__\slippage.cpython-312.pyc
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\analytics\__pycache__\trade_replay.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\analytics\performance.py
+Archive 2026-06-11 00:28 D:\All Bots\trading_system\engine\analytics\slippage.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\analytics\trade_logger.py
+Archive 2026-06-17 23:43 D:\All Bots\trading_system\engine\analytics\trade_replay.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\config
+Directory 2026-09-02 10:56 D:\All Bots\trading_system\engine\config\__pycache__
+Archive 2026-09-02 10:56 D:\All Bots\trading_system\engine\config\__pycache__\config.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\config\config.py
+Archive 2026-08-28 11:27 D:\All Bots\trading_system\engine\config\config.py.bak
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\core
+Directory 2026-08-22 17:02 D:\All Bots\trading_system\engine\core\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\core\__pycache__\context.cpython-312.pyc
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\core\__pycache__\health_monitor.cpython-312.pyc
+Archive 2026-08-22 17:02 D:\All Bots\trading_system\engine\core\__pycache__\state_store.cpython-312.pyc
+Archive 2026-08-16 21:04 D:\All Bots\trading_system\engine\core\context.py
+Archive 2026-04-29 20:42 D:\All Bots\trading_system\engine\core\health_monitor.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\core\regime_engine.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\core\state_store.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\data
+Directory 2026-08-27 09:41 D:\All Bots\trading_system\engine\data\__pycache__
+Archive 2026-08-27 09:41 D:\All Bots\trading_system\engine\data\__pycache__\candle_builder.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\data\candle_builder.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\diagnostics
+Archive 2026-06-10 01:24 D:\All Bots\trading_system\engine\diagnostics\__init__.py
+Directory 2026-08-22 17:18 D:\All Bots\trading_system\engine\diagnostics\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\diagnostics\__pycache__\__init__.cpython-312.pyc
+Archive 2026-08-22 17:18 D:\All Bots\trading_system\engine\diagnostics\__pycache__\eod_report.cpython-312.pyc
+Archive 2026-08-22 17:02 D:\All Bots\trading_system\engine\diagnostics\__pycache__\trade_journal.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\diagnostics\eod_report.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\diagnostics\trade_journal.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\execution
+Directory 2026-09-02 11:53 D:\All Bots\trading_system\engine\execution\__pycache__
+Archive 2026-08-27 09:41 D:\All Bots\trading_system\engine\execution\__pycache__\broker.cpython-312.pyc
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\execution\__pycache__\cost_model.cpython-312.pyc
+Archive 2026-08-24 09:13 D:\All Bots\trading_system\engine\execution\__pycache__\execution_engine.cpython-312.pyc
+Archive 2026-08-22 15:25 D:\All Bots\trading_system\engine\execution\__pycache__\filters.cpython-312.pyc
+Archive 2026-09-02 11:53 D:\All Bots\trading_system\engine\execution\__pycache__\profit_manager.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\execution\broker.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\execution\execution_engine.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\execution\filters.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\execution\order_manager.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\execution\profit_manager.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\live_engine.py
+Directory 2026-08-18 02:20 D:\All Bots\trading_system\engine\monitoring
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\portfolio
+Directory 2026-08-24 09:13 D:\All Bots\trading_system\engine\portfolio\__pycache__
+Archive 2026-08-24 09:13 D:\All Bots\trading_system\engine\portfolio\__pycache__\allocator.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\portfolio\allocator.py
+Directory 2026-08-18 02:20 D:\All Bots\trading_system\engine\reports
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\risk
+Directory 2026-08-19 09:22 D:\All Bots\trading_system\engine\risk\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\risk\__pycache__\risk_manager.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\risk\risk_manager.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\scalping
+Archive 2026-06-11 10:14 D:\All Bots\trading_system\engine\scalping\__init__.py
+Directory 2026-08-28 11:25 D:\All Bots\trading_system\engine\scalping\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\scalping\__pycache__\__init__.cpython-312.pyc
+Archive 2026-08-28 11:25 D:\All Bots\trading_system\engine\scalping\__pycache__\scalp_engine.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\scalping\scalp_engine.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\engine\services
+Directory 2026-08-28 11:25 D:\All Bots\trading_system\engine\services\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\engine\services\__pycache__\dashboard.cpython-312.pyc
+Archive 2026-08-28 11:25 D:\All Bots\trading_system\engine\services\__pycache__\trade_logger.cpython-312.pyc
+Archive 2026-08-16 21:04 D:\All Bots\trading_system\engine\services\dashboard.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\services\notifier.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\engine\services\trade_logger.py
+Directory 2026-08-18 02:20 D:\All Bots\trading_system\engine\storage
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\GEMINI.md
+Archive 2026-08-16 20:56 D:\All Bots\trading_system\login.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\login_headless.py
+Directory 2026-08-28 13:42 D:\All Bots\trading_system\logs
+Archive 2026-08-28 13:36 D:\All Bots\trading_system\logs\master_run_nohup.log
+Archive 2026-08-27 16:15 D:\All Bots\trading_system\logs\master_runner.err.log
+Archive 2026-09-02 11:52 D:\All Bots\trading_system\logs\master_runner.log
+Archive 2026-08-27 14:11 D:\All Bots\trading_system\logs\master_runner.out.log
+Archive 2026-08-24 13:37 D:\All Bots\trading_system\logs\master_runner_20260824.log
+Archive 2026-08-28 13:42 D:\All Bots\trading_system\logs\master_runner_new.log
+Archive 2026-08-20 16:59 D:\All Bots\trading_system\logs\master_runner_stdout.log
+Archive 2026-08-19 14:01 D:\All Bots\trading_system\logs\master_stdout.log
+Archive 2026-08-19 15:45 D:\All Bots\trading_system\logs\monitor_session.log
+Archive 2026-08-19 09:23 D:\All Bots\trading_system\logs\monitor_stdout.log
+Archive 2026-08-21 15:36 D:\All Bots\trading_system\logs\session_output.log
+Archive 2026-09-02 12:05 D:\All Bots\trading_system\logs\tg_fallback.log
+Archive 2026-09-01 16:06 D:\All Bots\trading_system\master_runner.log
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\master_runner.py
+Archive 2026-09-01 13:16 D:\All Bots\trading_system\master_runner.py.bak
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\ml
+Archive 2026-02-18 14:52 D:\All Bots\trading_system\ml\__init__.py
+Directory 2026-08-28 13:43 D:\All Bots\trading_system\ml\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\ml\__pycache__\__init__.cpython-312.pyc
+Archive 2026-08-27 12:40 D:\All Bots\trading_system\ml\__pycache__\dataset_builder.cpython-312.pyc
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\ml\__pycache__\day_classifier.cpython-312.pyc
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\ml\__pycache__\feature_config.cpython-312.pyc
+Archive 2026-08-22 15:11 D:\All Bots\trading_system\ml\__pycache__\feedback_trainer.cpython-312.pyc
+Archive 2026-08-24 09:13 D:\All Bots\trading_system\ml\__pycache__\indicators.cpython-312.pyc
+Archive 2026-08-28 13:43 D:\All Bots\trading_system\ml\__pycache__\ml_intraday_learner.cpython-312.pyc
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\ml\__pycache__\predictor_champion.cpython-312.pyc
+Archive 2026-08-27 11:31 D:\All Bots\trading_system\ml\__pycache__\trainer.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\dataset_builder_v2.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\dataset_builder_v3.py
+Archive 2026-08-16 21:04 D:\All Bots\trading_system\ml\day_classifier.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\feature_config.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\feedback_trainer.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\indicators.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\ml_intraday_learner.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\ml\models
+Directory 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_ce_cat.pkl
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_ce_cat_features.txt
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_ce_cat_threshold.txt
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_ce_lgbm.pkl
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_ce_lgbm_features.txt
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_ce_lgbm_threshold.txt
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_pe_cat.pkl
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_pe_cat_features.txt
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_pe_cat_threshold.txt
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_pe_lgbm.pkl
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_pe_lgbm_features.txt
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260817_retrain\champion_pe_lgbm_threshold.txt
+Directory 2026-08-22 14:26 D:\All Bots\trading_system\ml\models\backup_20260822_142645
+Archive 2026-08-18 12:18 D:\All Bots\trading_system\ml\models\backup_20260822_142645\champion_ce_cat.pkl
+Archive 2026-08-18 12:18 D:\All Bots\trading_system\ml\models\backup_20260822_142645\champion_ce_lgbm.pkl
+Archive 2026-08-18 02:15 D:\All Bots\trading_system\ml\models\backup_20260822_142645\champion_ce_lgbm_threshold.txt
+Archive 2026-08-18 12:18 D:\All Bots\trading_system\ml\models\backup_20260822_142645\champion_pe_cat.pkl
+Archive 2026-08-18 12:18 D:\All Bots\trading_system\ml\models\backup_20260822_142645\champion_pe_lgbm.pkl
+Archive 2026-08-18 12:18 D:\All Bots\trading_system\ml\models\backup_20260822_142645\champion_pe_lgbm_threshold.txt
+Directory 2026-08-22 15:08 D:\All Bots\trading_system\ml\models\backup_20260822_150815
+Archive 2026-08-22 14:28 D:\All Bots\trading_system\ml\models\backup_20260822_150815\champion_ce_cat.pkl
+Archive 2026-08-22 14:26 D:\All Bots\trading_system\ml\models\backup_20260822_150815\champion_ce_lgbm.pkl
+Archive 2026-08-22 14:26 D:\All Bots\trading_system\ml\models\backup_20260822_150815\champion_ce_lgbm_threshold.txt
+Archive 2026-08-22 14:28 D:\All Bots\trading_system\ml\models\backup_20260822_150815\champion_pe_cat.pkl
+Archive 2026-08-22 14:26 D:\All Bots\trading_system\ml\models\backup_20260822_150815\champion_pe_lgbm.pkl
+Archive 2026-08-22 14:26 D:\All Bots\trading_system\ml\models\backup_20260822_150815\champion_pe_lgbm_threshold.txt
+Directory 2026-08-27 10:58 D:\All Bots\trading_system\ml\models\backup_20260827_105826
+Archive 2026-08-22 15:10 D:\All Bots\trading_system\ml\models\backup_20260827_105826\champion_ce_cat.pkl
+Archive 2026-08-22 15:08 D:\All Bots\trading_system\ml\models\backup_20260827_105826\champion_ce_lgbm.pkl
+Archive 2026-08-22 15:08 D:\All Bots\trading_system\ml\models\backup_20260827_105826\champion_ce_lgbm_threshold.txt
+Archive 2026-08-22 15:10 D:\All Bots\trading_system\ml\models\backup_20260827_105826\champion_pe_cat.pkl
+Archive 2026-08-22 15:08 D:\All Bots\trading_system\ml\models\backup_20260827_105826\champion_pe_lgbm.pkl
+Archive 2026-08-22 15:08 D:\All Bots\trading_system\ml\models\backup_20260827_105826\champion_pe_lgbm_threshold.txt
+Directory 2026-08-27 11:04 D:\All Bots\trading_system\ml\models\backup_20260827_110403
+Archive 2026-08-27 10:59 D:\All Bots\trading_system\ml\models\backup_20260827_110403\champion_ce_cat.pkl
+Archive 2026-08-27 10:58 D:\All Bots\trading_system\ml\models\backup_20260827_110403\champion_ce_lgbm.pkl
+Archive 2026-08-27 10:58 D:\All Bots\trading_system\ml\models\backup_20260827_110403\champion_ce_lgbm_threshold.txt
+Archive 2026-08-27 10:59 D:\All Bots\trading_system\ml\models\backup_20260827_110403\champion_pe_cat.pkl
+Archive 2026-08-27 10:58 D:\All Bots\trading_system\ml\models\backup_20260827_110403\champion_pe_lgbm.pkl
+Archive 2026-08-27 10:58 D:\All Bots\trading_system\ml\models\backup_20260827_110403\champion_pe_lgbm_threshold.txt
+Directory 2026-08-27 11:11 D:\All Bots\trading_system\ml\models\backup_20260827_111144
+Archive 2026-08-27 11:05 D:\All Bots\trading_system\ml\models\backup_20260827_111144\champion_ce_cat.pkl
+Archive 2026-08-27 11:04 D:\All Bots\trading_system\ml\models\backup_20260827_111144\champion_ce_lgbm.pkl
+Archive 2026-08-27 11:04 D:\All Bots\trading_system\ml\models\backup_20260827_111144\champion_ce_lgbm_threshold.txt
+Archive 2026-08-27 11:05 D:\All Bots\trading_system\ml\models\backup_20260827_111144\champion_pe_cat.pkl
+Archive 2026-08-27 11:04 D:\All Bots\trading_system\ml\models\backup_20260827_111144\champion_pe_lgbm.pkl
+Archive 2026-08-27 11:04 D:\All Bots\trading_system\ml\models\backup_20260827_111144\champion_pe_lgbm_threshold.txt
+Directory 2026-08-27 12:40 D:\All Bots\trading_system\ml\models\backup_20260827_124019
+Archive 2026-08-27 11:12 D:\All Bots\trading_system\ml\models\backup_20260827_124019\champion_ce_cat.pkl
+Archive 2026-08-27 11:11 D:\All Bots\trading_system\ml\models\backup_20260827_124019\champion_ce_lgbm.pkl
+Archive 2026-08-27 11:11 D:\All Bots\trading_system\ml\models\backup_20260827_124019\champion_ce_lgbm_threshold.txt
+Archive 2026-08-27 11:12 D:\All Bots\trading_system\ml\models\backup_20260827_124019\champion_pe_cat.pkl
+Archive 2026-08-27 11:11 D:\All Bots\trading_system\ml\models\backup_20260827_124019\champion_pe_lgbm.pkl
+Archive 2026-08-27 11:11 D:\All Bots\trading_system\ml\models\backup_20260827_124019\champion_pe_lgbm_threshold.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\models\champion_ce_cat.pkl
+Archive 2026-08-27 12:41 D:\All Bots\trading_system\ml\models\champion_ce_cat_features.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\models\champion_ce_cat_threshold.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\models\champion_ce_lgbm.pkl
+Archive 2026-08-27 12:40 D:\All Bots\trading_system\ml\models\champion_ce_lgbm_features.txt
+Archive 2026-08-27 12:40 D:\All Bots\trading_system\ml\models\champion_ce_lgbm_threshold.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\models\champion_pe_cat.pkl
+Archive 2026-08-27 12:41 D:\All Bots\trading_system\ml\models\champion_pe_cat_features.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\models\champion_pe_cat_threshold.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\models\champion_pe_lgbm.pkl
+Archive 2026-08-27 12:40 D:\All Bots\trading_system\ml\models\champion_pe_lgbm_features.txt
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\models\champion_pe_lgbm_threshold.txt
+Archive 2026-05-04 23:00 D:\All Bots\trading_system\ml\models\day_classifier_labels.csv
+Archive 2026-05-04 23:00 D:\All Bots\trading_system\ml\models\day_classifier_lgbm.pkl
+Archive 2026-08-27 12:39 D:\All Bots\trading_system\ml\models\training_dataset.csv
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\predictor_champion.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\ml\trainer_v3.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\PROJECT_STRUCTURE.md
+Archive 2026-06-15 01:54 D:\All Bots\trading_system\requirements.txt
+Directory 2026-08-16 01:03 D:\All Bots\trading_system\research
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\research\backtest
+Directory 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\__pycache__
+Archive 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\__pycache__\wrapper.cpython-312.pyc
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\research\backtest\engine
+Directory 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\engine\__pycache__
+Archive 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\engine\__pycache__\__init__.cpython-312.pyc
+Archive 2026-08-22 17:18 D:\All Bots\trading_system\research\backtest\engine\__pycache__\parity_test.cpython-312.pyc
+Archive 2026-08-22 17:18 D:\All Bots\trading_system\research\backtest\engine\__pycache__\research_engine.cpython-312.pyc
+Archive 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\engine\__pycache__\researchengine.cpython-312.pyc
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\research\backtest\tests
+Directory 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\tests\__pycache__
+Archive 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\tests\__pycache__\golden_trades.cpython-312.pyc
+Archive 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\tests\__pycache__\test_golden_trades.cpython-312-pytest-9.1.1.pyc
+Archive 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\tests\__pycache__\test_parity.cpython-312-pytest-9.1.1.pyc
+Archive 2026-08-22 17:19 D:\All Bots\trading_system\research\backtest\tests\__pycache__\test_qty_lot_invariants.cpython-312-pytest-9.1.1.pyc
+Archive 2026-09-02 12:22 D:\All Bots\trading_system\runtime_state.json
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\scripts
+Directory 2026-08-28 11:23 D:\All Bots\trading_system\scripts\__pycache__
+Archive 2026-08-22 15:11 D:\All Bots\trading_system\scripts\__pycache__\backtest_entry_quality.cpython-312.pyc
+Archive 2026-08-28 11:23 D:\All Bots\trading_system\scripts\__pycache__\backtest_exit_tuning.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\scripts\cleanup_project.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\scripts\refresh_zerodha_data.py
+Archive 2026-09-02 12:22 D:\All Bots\trading_system\system_health.json
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\telegram
+Archive 2026-02-01 11:26 D:\All Bots\trading_system\telegram\__init__.py
+Directory 2026-08-24 09:13 D:\All Bots\trading_system\telegram\__pycache__
+Archive 2026-08-19 09:22 D:\All Bots\trading_system\telegram\__pycache__\__init__.cpython-312.pyc
+Archive 2026-08-24 09:13 D:\All Bots\trading_system\telegram\__pycache__\messages.cpython-312.pyc
+Archive 2026-08-19 14:56 D:\All Bots\trading_system\telegram\__pycache__\notifier.cpython-312.pyc
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\telegram\messages.py
+Archive 2026-09-02 12:18 D:\All Bots\trading_system\telegram\notifier.py
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\tests
+Directory 2026-08-25 15:34 D:\All Bots\trading_system\tests\__pycache__
+Archive 2026-08-22 16:06 D:\All Bots\trading_system\tests\__pycache__\test_entry_confirmation.cpython-312.pyc
+Archive 2026-08-25 15:34 D:\All Bots\trading_system\tests\__pycache__\test_entry_confirmation.cpython-312-pytest-9.1.1.pyc
+Directory 2026-09-02 12:18 D:\All Bots\trading_system\trading_brain
+Directory 2026-08-18 10:04 D:\All Bots\trading_system\trading_brain\daily
+Directory 2026-08-18 10:04 D:\All Bots\trading_system\trading_brain\trades

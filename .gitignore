@@ -37,3 +37,10 @@ access_token.txt
 Thumbs.db
 # Added by code-review-graph
 .code-review-graph/
+.telegram_state.json
+data/runtime_state.json
+data/system_health.json
+master_runner.log
+backtest/results/
+catboost_info/
+ml/models/backup_*

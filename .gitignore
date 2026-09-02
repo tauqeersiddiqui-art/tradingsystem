@@ -1,39 +1,40 @@
-# Python virtual environments
-env/
-venv/
 
+# Added by code-review-graph
+# Archive (old experiments / backups)
+# Large datasets
+# Large training datasets — too big for git
+# Logs
+# logs, backtest results, model backups
+# ML models — large training data stays local, trained model files are committed
+# OS files
 # Python cache
-__pycache__/
+# Python virtual environments
+# runtime / local state
+# Secrets
+# Temporary ML files
 *.pyc
 *.pyo
-
-# Large datasets
-ml/**/*.csv
+.code-review-graph/
+.DS_Store
+.env
+.telegram_state.json
+__pycache__/
+access_token.txt
+archive/
+backtest/results/
+catboost_info/
 data/**/*.csv
-
-# ML models — large training data stays local, trained model files are committed
+data/runtime_state.json
+data/system_health.json
+env/
+logs/
+master_runner.log
+ml/**/*.csv
 ml/models/*.h5
 ml/models/*.pt
-
-# Large training datasets — too big for git
-ml/models/training_dataset*.csv
+ml/models/backup_*
 ml/models/day_classifier_labels.csv
-
-# Temporary ML files
+ml/models/training_dataset*.csv
 ml/tmp/
-
-# Logs
-logs/
-
-# Archive (old experiments / backups)
-archive/
-
-# Secrets
-.env
-access_token.txt
-
-# OS files
-.DS_Store
 Thumbs.db
-# Added by code-review-graph
-.code-review-graph/
+venv/

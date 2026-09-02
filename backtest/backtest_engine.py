@@ -25,7 +25,6 @@ from ml.predictor_champion import ChampionPredictor
 from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
-from engine.execution.cost_model import net_pnl, round_trip_cost
 from engine.risk.risk_manager import compute_entry_stops
 
 logger = logging.getLogger("backtest")
@@ -48,18 +47,22 @@ _MIN_EXPECTED_PNL = 150.0
 # Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
 _MIN_ML_FLOOR = 0.65
 
-NIFTY_LOT_SIZE = 30          # BANK NIFTY lot size (1 lot = 30 qty)
+# CE-specific floor — MUST mirror engine/live_engine.py's _CE_ML_FLOOR.
+# Without this, the backtest lets CE trades in at 0.65 while live actually
+# requires 0.78, so backtest results don't represent live behavior.
+_CE_ML_FLOOR = 0.78
+
+NIFTY_LOT_SIZE = 65          # current lot size (changed from 75 → 65 in Jan 2026)
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
 
 
 def _lot_size_for_date(d) -> int:
-    """BANK NIFTY lot size: 30 qty (unchanged across the period).
-
-    Single source of truth is NIFTY_LOT_SIZE above (kept in sync with
-    Config.LOT_SIZE). The old 65/75-by-year branch contradicted the
-    docstring and inflated all backtest PnL ~2.2x.
-    """
-    return NIFTY_LOT_SIZE
+    """NIFTY lot size: 75 before Jan 2026, 65 from Jan 2026 onwards."""
+    try:
+        year = d.year if hasattr(d, "year") else int(str(d)[:4])
+        return 65 if year >= 2026 else 75
+    except Exception:
+        return 65
 
 
 def _mins_to_close(ts) -> float:
@@ -610,7 +613,7 @@ class BacktestSignalEngine:
         # are both allowed. Days with no ORB upbreak → no CE at all.
         # ═════════════════════════════════════════════════════
         orb_ok   = (self._clf_day_type == "TREND")
-        ce_thr   = threshold - 0.03 if (ce_break and orb_ok) else threshold
+        ce_thr   = max(threshold - 0.03 if (ce_break and orb_ok) else threshold, _CE_ML_FLOOR)
 
         # Hard gate: CE only on the ORB breakout candle itself.
         # Follow-on ML_CE (same day after ORB) has 37% WR and loses.
@@ -767,26 +770,7 @@ class BacktestSignalEngine:
         ml_prob   = position.get("ml_prob",    0.5)
         lot_size  = position.get("lot_size",   NIFTY_LOT_SIZE)
 
-        # ── Phase-10 premium-space trail (mirrors live_engine.check_exit) ──
-        # Breakeven+cost at +ML_TRAIL_BE_PTS, then trail ML_TRAIL_GAP_PTS
-        # below the high-water mark after +ML_TRAIL_T2_PTS. When enabled the
-        # legacy Rs ladder inside manage_position is bypassed via config —
-        # exactly as live does.
-        _pm_cfg = None
-        if self.config.get("ML_TRAIL_ENABLED", False):
-            import types
-            _pm_cfg = types.SimpleNamespace(**self.config)
-            _qty    = max(position.get("qty", 1), 1)
-            _peak   = max(max_pnl, (ltp - position["entry"]) * _qty) / _qty
-            if _peak >= float(self.config.get("ML_TRAIL_T2_PTS", 20.0)):
-                stop_loss = max(
-                    stop_loss,
-                    position["entry"] + _peak - float(self.config.get("ML_TRAIL_GAP_PTS", 8.0)),
-                )
-            elif _peak >= float(self.config.get("ML_TRAIL_BE_PTS", 10.0)):
-                stop_loss = max(stop_loss, position["entry"] + round_trip_cost(_qty) / _qty)
-
-        new_sl, new_max_pnl, pm_reason, scale_out_info = manage_position(
+        new_sl, new_max_pnl, pm_reason = manage_position(
             entry_price=position["entry"],
             ltp=ltp,
             lot_size=lot_size,
@@ -794,13 +778,9 @@ class BacktestSignalEngine:
             max_pnl=max_pnl,
             ml_prob=ml_prob,
             target=position.get("target"),
-            config=_pm_cfg,
-            side=position.get("side", "CE"),
         )
         position["stop_loss"] = new_sl
         position["max_pnl"]   = new_max_pnl
-        if scale_out_info:
-            position["_scale_out"] = scale_out_info
 
         if pm_reason:
             return True, pm_reason
@@ -846,19 +826,13 @@ class BacktestEngine:
         return {
             "INITIAL_CAPITAL":    100_000,
             "DAILY_LOSS_LIMIT":   -2_000,
-            "MAX_TRADES_PER_DAY": 8,    # aligned with live Config default
+            "MAX_TRADES_PER_DAY": 10,
             "MAX_HOLD_SECONDS":   300,
-            "COOLDOWN_SECONDS":   300,  # aligned with live Config default
+            "COOLDOWN_SECONDS":   180,
             "LOT_SIZE":           NIFTY_LOT_SIZE,
             "LOTS_PER_TRADE":     1,
             "CHAMPION_THRESHOLD": float(os.getenv("CHAMPION_THRESHOLD", 0.42)),
             "ENTRY_ON":           "current_close",  # enter on signal candle close (was next_open = late entry)
-            # Phase-10 exit regime — matches live defaults so the backtest
-            # validates the regime that actually runs in production.
-            "ML_TRAIL_ENABLED":   os.getenv("ML_TRAIL_ENABLED", "1") == "1",
-            "ML_TRAIL_BE_PTS":    float(os.getenv("ML_TRAIL_BE_PTS", "10.0")),
-            "ML_TRAIL_T2_PTS":    float(os.getenv("ML_TRAIL_T2_PTS", "20.0")),
-            "ML_TRAIL_GAP_PTS":   float(os.getenv("ML_TRAIL_GAP_PTS", "8.0")),
         }
 
     # ── Data loading (once) ───────────────────────────────────────────
@@ -1034,7 +1008,7 @@ class BacktestEngine:
         daily_limit       = self.config["DAILY_LOSS_LIMIT"]
         max_trades        = self.config["MAX_TRADES_PER_DAY"]
         cooldown          = self.config["COOLDOWN_SECONDS"]
-        lot_size          = _lot_size_for_date(day_df["date"].iloc[0])   # always 30 (NIFTY_LOT_SIZE)
+        lot_size          = _lot_size_for_date(day_df["date"].iloc[0])   # 75 pre-2026, 65 from Jan 2026
         qty               = lot_size * self.config["LOTS_PER_TRADE"]
         entry_on          = self.config["ENTRY_ON"]
 
@@ -1093,18 +1067,6 @@ class BacktestEngine:
                 if ltp <= position.get("stop_loss", position["entry"] * 0.90):
                     exit_flag, exit_reason = True, "STOP"
 
-                # Intra-bar stop check (conservative, adverse-wins): live SL-M
-                # orders trigger intra-bar, so if this candle's ADVERSE extreme
-                # breached the stop premium, exit at that extreme — not the close.
-                _adv_spot = float(row["low"] if position["side"] == "CE" else row["high"])
-                _adv_ltp  = _opt_sim.premium(
-                    position["entry_spot"], _adv_spot,
-                    position["side"], _mins_to_close(ts)
-                )
-                if _adv_ltp <= position.get("stop_loss", position["entry"] * 0.90):
-                    exit_flag, exit_reason = True, "STOP"
-                    cur_spot = _adv_spot   # fill at the adverse extreme
-
                 if exit_flag:
                     # Realistic fill: exit at the close that TRIGGERED the exit
                     # (decided on this candle's close), minus slippage. Filling at
@@ -1136,12 +1098,7 @@ class BacktestEngine:
                         break
 
             # ── Entry logic ───────────────────────────────────────────
-            if (
-                position is None
-                and trades_today < max_trades
-                and day_pnl > daily_limit
-                and now < _NO_ENTRY_AFTER   # no fresh entries at/after 15:15
-            ):
+            if position is None and trades_today < max_trades and day_pnl > daily_limit:
 
                 # Cooldown gate
                 if last_exit_time is not None:
@@ -1203,8 +1160,8 @@ class BacktestEngine:
                     else:
                         entry_spot = float(row["close"]) + 0.5
 
-                    # ATM strike proxy (Bank NIFTY: 100-pt strikes)
-                    atm_strike = round(entry_spot / 100) * 100
+                    # ATM strike proxy
+                    atm_strike = round(entry_spot / 50) * 50
 
                     # mins to close at entry
                     mins_to_close = _mins_to_close(ts)
@@ -1301,10 +1258,7 @@ class BacktestEngine:
         # premium change × qty — exactly what live realises.
         exit_mins_to_close = _mins_to_close(exit_time)
         exit_premium = _opt_sim.premium(entry_spot, exit_spot, side, exit_mins_to_close)
-        gross_pnl = (exit_premium - entry_premium) * qty
-        # NET PnL — round-trip cost via the single authoritative cost_model
-        # (was gross-only, which systematically overstated backtest PnL).
-        pnl = round(net_pnl(gross_pnl, qty), 2)
+        pnl = round((exit_premium - entry_premium) * qty, 2)
 
         held_secs = (exit_time - position["_entry_ts"]).total_seconds()
 

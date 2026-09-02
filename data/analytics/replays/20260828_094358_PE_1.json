@@ -1,0 +1,112 @@
+{
+  "symbol": "BANKNIFTY26SEP57400PE",
+  "side": "PE",
+  "entry": 565,
+  "qty": 30,
+  "summary": {
+    "max_pnl": 330,
+    "mae_rs": -69.0,
+    "mae_pts": -2.3,
+    "ladder_stage": "S2_TRAIL62%",
+    "locked_profit": 204.6,
+    "retained_profit_pct": -0.018,
+    "exit_reason": "STOP",
+    "exit_price": 567,
+    "final_stop_loss": 567.2,
+    "pnl": -6.0
+  },
+  "events": [
+    {
+      "t": "09:43:58",
+      "type": "ENTRY",
+      "price": 565,
+      "spot": 57455.0,
+      "ml_ce": 0.384,
+      "ml_pe": 0.436,
+      "adx": 30.0,
+      "rsi": 50.0,
+      "vwap": "above",
+      "st_dir": 1,
+      "stop": 557.0,
+      "regime": "RANGE"
+    },
+    {
+      "t": "09:44:06",
+      "type": "MFE_PEAK",
+      "mfe_pts": 0.75,
+      "price": 564.55
+    },
+    {
+      "t": "09:44:11",
+      "type": "MFE_PEAK",
+      "mfe_pts": 1.7,
+      "price": 568
+    },
+    {
+      "t": "09:44:12",
+      "type": "MFE_PEAK",
+      "mfe_pts": 3.0,
+      "price": 567.9
+    },
+    {
+      "t": "09:44:22",
+      "type": "MFE_PEAK",
+      "mfe_pts": 4.2,
+      "price": 568.85
+    },
+    {
+      "t": "09:44:27",
+      "type": "MFE_PEAK",
+      "mfe_pts": 5.0,
+      "price": 571.6
+    },
+    {
+      "t": "09:44:29",
+      "type": "MFE_PEAK",
+      "mfe_pts": 6.6,
+      "price": 572.35
+    },
+    {
+      "t": "09:44:30",
+      "type": "MFE_PEAK",
+      "mfe_pts": 7.35,
+      "price": 571.5
+    },
+    {
+      "t": "09:45:27",
+      "type": "MFE_PEAK",
+      "mfe_pts": 8.0,
+      "price": 575
+    },
+    {
+      "t": "09:45:28",
+      "type": "MFE_PEAK",
+      "mfe_pts": 10.0,
+      "price": 573.75
+    },
+    {
+      "t": "09:45:28",
+      "type": "STOP_MOVE",
+      "label": "S2_TRAIL62%",
+      "new_stop": 567.2,
+      "pts_locked": 2.2,
+      "mfe_pts": 10.0,
+      "locked_rs": 186.0
+    },
+    {
+      "t": "09:45:51",
+      "type": "MFE_PEAK",
+      "mfe_pts": 11.0,
+      "price": 576
+    },
+    {
+      "t": "09:46:40",
+      "type": "EXIT",
+      "price": 567,
+      "reason": "STOP",
+      "pnl": -6.0,
+      "mfe_pts": 11.0,
+      "mae_pts": -2.3
+    }
+  ]
+}

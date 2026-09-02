@@ -1,58 +1,50 @@
-# Python virtual environments
-env/
-venv/
 
+# Added by code-review-graph
+# Archive (old experiments / backups)
+# Data analysis outputs (regenerable)
+# Generated backtest results (regenerable)
+# IDE configs
+# Large datasets
+# Large training datasets — too big for git
+# Logs
+# ML models — large training data stays local, trained model files are committed
+# OS files
 # Python cache
-__pycache__/
+# Python virtual environments
+# runtime / local state
+# Secrets
+# Temp/cache files
+# Temporary ML files
+*.bak
 *.pyc
 *.pyo
-
-# Large datasets
-ml/**/*.csv
+*.tmp
+.claude/
+.code-review-graph/
+.cursorrules
+.DS_Store
+.env
+.mcp.json
+.pytest_cache/
+.telegram_state.json
+.windsurfrules
+__pycache__/
+access_token.txt
+archive/
+backtest/results/
+catboost_info/
 data/**/*.csv
-
-# ML models — large training data stays local, trained model files are committed
+data/analysis/
+data/runtime_state.json
+data/system_health.json
+env/
+logs/
+ml/**/*.csv
 ml/models/*.h5
 ml/models/*.pt
-
-# Large training datasets — too big for git
-ml/models/training_dataset*.csv
 ml/models/day_classifier_labels.csv
-
-# Temporary ML files
+ml/models/training_dataset*.csv
 ml/tmp/
-
-# Logs
-logs/
-
-# Archive (old experiments / backups)
-archive/
-
-# Secrets
-.env
-access_token.txt
-
-# OS files
-.DS_Store
-Thumbs.db
-# Added by code-review-graph
-.code-review-graph/
-
-# Temp/cache files
-.pytest_cache/
-catboost_info/
 test_artifacts/
-*.tmp
-*.bak
-
-# Generated backtest results (regenerable)
-backtest/results/
-
-# Data analysis outputs (regenerable)
-data/analysis/
-
-# IDE configs
-.cursorrules
-.windsurfrules
-.mcp.json
-.claude/
+Thumbs.db
+venv/

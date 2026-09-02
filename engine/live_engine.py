@@ -45,7 +45,7 @@ _MIN_EXPECTED_PNL = 150.0
 # CE: 0.78 — raised from 0.70. Model is CE-biased (outputs 0.80-0.96 all day
 #     even on bear days). Higher floor forces only truly exceptional signals.
 #     On RANGE regime days, CE_ML_FLOOR rises further to 0.85 (see STEP 5).
-_MIN_ML_FLOOR    = 0.65   # PE floor
+_MIN_ML_FLOOR    = 0.40   # PE floor — lowered from 0.65 to match new model output range
 _CE_ML_FLOOR     = 0.78   # CE needs high confidence — model is CE-biased
 # Re-entry cooldown is config-driven (Config.REENTRY_COOLDOWN, default 300s);
 # see LiveEngine.__init__ self._reentry_cooldown.

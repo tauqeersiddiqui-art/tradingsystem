@@ -45,7 +45,7 @@ _MIN_EXPECTED_PNL = 150.0
 
 # ML floor: never trade below 0.65 (backtest: PE@0.65 = 58% WR, avg +Rs174).
 # Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
-_MIN_ML_FLOOR = 0.65
+_MIN_ML_FLOOR = 0.40   # lowered from 0.65 — new models peak at ~0.65, floor must be below that
 
 NIFTY_LOT_SIZE = 65          # current lot size (changed from 75 → 65 in Jan 2026)
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot

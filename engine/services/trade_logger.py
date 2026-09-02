@@ -119,7 +119,9 @@ def log_trade(
 
     pnl          = net_pnl((exit_price - entry_price) * qty, qty)   # R6: NET PnL
     holding_s    = (exit_time - entry_time).total_seconds() if entry_time else 0
-    stop_pts     = entry_price - stop_loss
+    # Use initial_stop_loss if stored (set at entry), else fall back to current stop_loss
+    initial_stop = position.get("initial_stop_loss", stop_loss)
+    stop_pts     = entry_price - initial_stop
     risk_rs      = stop_pts * qty
     R_multiple   = (pnl / risk_rs) if risk_rs != 0 else 0.0
 

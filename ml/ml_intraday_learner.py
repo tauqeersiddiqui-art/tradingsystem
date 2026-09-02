@@ -64,7 +64,8 @@ class IntradayMLLearner:
         self.pe_losses = 0
 
         # Adaptive ML threshold — starts high, tightens with consecutive wins
-        self.base_threshold   = float(os.getenv("CHAMPION_THRESHOLD", 0.51))
+        # CHAMPION_THRESHOLD=0.45 in .env matches forward-direction model output scale (~0.15-0.45)
+        self.base_threshold   = float(os.getenv("CHAMPION_THRESHOLD", "0.45"))
         self.current_threshold = self.base_threshold
 
         # Adaptive probability multipliers (start neutral)

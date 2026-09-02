@@ -1526,6 +1526,8 @@ class LiveEngine:
         # Backtest-matched trail (scripts/backtest_exit_tuning.py):
         #   profit >= ML_TRAIL_BE_PTS (+10 pts) -> stop to breakeven
         #       (entry + round-trip cost, in premium pts)
+        #   profit >= ML_TRAIL_T1_PTS (+15 pts) -> trail 5 pts below HWM
+        #       (intermediate tier: prevents giving back 9+ pts on +11-19 pt moves)
         #   profit >= ML_TRAIL_T2_PTS (+20 pts) -> stop trails
         #       ML_TRAIL_GAP_PTS (8 pts) below the high-water mark.
         # Same price source as the SL (option premium LTP). Peak is derived
@@ -1540,6 +1542,9 @@ class LiveEngine:
             if _peak_pts19 >= float(getattr(_cfg19, "ML_TRAIL_T2_PTS", 20.0)):
                 _hwm_price19 = entry + _peak_pts19
                 stop_loss = max(stop_loss, _hwm_price19 - float(getattr(_cfg19, "ML_TRAIL_GAP_PTS", 8.0)))
+            elif _peak_pts19 >= float(getattr(_cfg19, "ML_TRAIL_T1_PTS", 15.0)):
+                _hwm_price19 = entry + _peak_pts19
+                stop_loss = max(stop_loss, _hwm_price19 - float(getattr(_cfg19, "ML_TRAIL_GAP1_PTS", 5.0)))
             elif _peak_pts19 >= float(getattr(_cfg19, "ML_TRAIL_BE_PTS", 10.0)):
                 try:
                     _cost_pts19 = round_trip_cost(_qty19, _cfg19) / _qty19

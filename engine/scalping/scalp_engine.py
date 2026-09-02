@@ -50,7 +50,9 @@ class ScalpEngine:
         # Task #14: round-trip cost for the EQ NOT_PROFITABLE rule — same
         # source as live_engine (round_trip_cost(LOT_SIZE, config)), computed
         # once since config is not stored on the instance.
-        self._eq_cost_rs = round_trip_cost(getattr(config, "LOT_SIZE", 30), config)
+        # SCALP uses SCALP_LOTS (default 2) * LOT_SIZE (30) = 60 qty
+        _scalp_qty = getattr(config, "SCALP_LOTS", 2) * getattr(config, "LOT_SIZE", 30)
+        self._eq_cost_rs = round_trip_cost(_scalp_qty, config)
 
         logger.info(
             f"[SCALP ENGINE] initialized | threshold={self._mom_thresh}pt "
@@ -145,16 +147,18 @@ class ScalpEngine:
         if side == "PE" and l2 >= l1:
             return None
 
-        # 2. PULLBACK - 10-50% off the extreme (15-40% in safe mode)
-        pullback = (h2 - ltp_now) if side == "CE" else (ltp_now - l2)
-        _pb_lo, _pb_hi = (0.15, 0.40) if safe_mode else (0.10, 0.50)
-        if not (_pb_lo * rng <= pullback <= _pb_hi * rng):
-            return None
-        # structure must not have broken
-        if side == "CE" and ltp_now < l2:
-            return None
-        if side == "PE" and ltp_now > h2:
-            return None
+        # NEW: ENTER ON BREAKOUT/CONTINUATION - price breaks recent high/low with momentum
+        # We require the current price to be beyond the recent range (h2 for CE, l2 for PE)
+        # and the move to be significant (at least _mom_thresh)
+        if side == "CE":
+            # For CE, we need price to break above h2 (recent high) with enough momentum
+            if ltp_now <= h2:
+                return None
+            # Ensure momentum is sufficient - we already checked this above with _bar
+        else:  # PE
+            # For PE, we need price to break below l2 (recent low) with enough momentum
+            if ltp_now >= l2:
+                return None
 
         # 3. EXHAUSTION - don't buy the tail of a fresh vertical spike.: don't buy the tail of a vertical spike.
         if len(prices) >= 4:

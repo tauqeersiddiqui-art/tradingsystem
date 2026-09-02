@@ -77,6 +77,7 @@ from engine.analytics.performance import (
 )
 
 from ml.ml_intraday_learner import IntradayMLLearner
+from ml.feedback_trainer import log_trade_outcome
 
 from engine.services.dashboard import render_engine, render_market
 
@@ -116,17 +117,10 @@ from engine.data.candle_builder import CandleBuilder
 _engine_thread = None
 
 # Global variables for entry confirmation logic
-_signal_price = 0.0
-_signal_side = ""
-_signal_timestamp = None
-_confirmation_active = False
 _consecutive_losses = 0
-_signal_ml_prob = 0.0
-_breakout_level = 0.0
-_adverse_move = 0.0   # track worst adverse move since signal
 _last_ml_signal_epoch = 0.0   # epoch of last ML decision (SAFE_SCALP tracker)
 _scalp_consecutive_losses = 0  # scalp-specific consecutive loss counter (circuit breaker)
-_scalp_trades_today = 0        # scalp trades executed today (daily cap)
+_scalp_trades_today = 0  # scalp-specific daily trade counter (daily cap)
 
 
 # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
@@ -894,6 +888,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     logger.info("Engine loop started")
     tg_force("Engine Loop Started - Monitoring Market...")
 
+    global _scalp_consecutive_losses, _scalp_trades_today
+
     position          = None    # current open position dict
     entry_time        = None    # FIX-2: defined at entry, used for held_seconds
     entry_order_rec   = None    # saved order dict for trade_logger
@@ -1046,6 +1042,9 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     logger.info("[DAILY RESET]")
 
                     ctx.ml_learner.reset_day()
+                    _scalp_trades_today = 0
+                    _scalp_consecutive_losses = 0
+                    logger.info("[SCALP GATE] Daily counters reset: trades_today=0, consecutive_losses=0")
 
                     ctx._last_daily_reset = today
             # ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Poll Telegram: buttons + text commands (every cycle) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ
@@ -1596,6 +1595,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             logger.debug(f"[SLIP] Log failed: {_slip_e}")
 
                     _exited_symbol  = position["symbol"]
+
+                    # PHASE 3 FIX: Feed trade outcome to ML learner for online adaptation
+                    try:
+                        log_trade_outcome(
+                            features=position.get("features", {}),
+                            direction=position["side"],
+                            pnl=pnl,
+                            reason=exit_reason,
+                            entry_time=entry_time,
+                        )
+                    except Exception as _fb_e:
+                        logger.warning(f"[FEEDBACK] log_trade_outcome failed: {_fb_e}")
+
                     position        = None
                     entry_time      = None
                     entry_order_rec = None
@@ -1854,6 +1866,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         "lot_size": lot_size,
                         "entry":    order["price"],
                         "stop_loss": stop_loss,
+                        "initial_stop_loss": stop_loss,  # FIX: store initial stop for correct R_multiple
                         "target":   target,
                         "max_pnl":  0.0,
                         "min_pnl":  0.0,   # tracks MAE (maximum adverse excursion)
@@ -1993,15 +2006,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     elif _s_move >= ctx.config.SCALP_BE_PTS:
                         if not scalp_position.get("be_triggered"):
                             scalp_position["be_triggered"] = True
-                            # Profit lock: SL = entry + 2.0pt (locks ~120 pnl, gives 3pt room from BE trigger)
-                            _min_profit_sl = scalp_position["entry"] + 2.0
+                            # Profit lock: SL = entry + cost/qty (never lock in a loss).
+                            # cost = COST_PER_LOT * SCALP_LOTS (e.g., 66 * 2 = 132 for qty=60)
+                            _cost_per_lot = getattr(ctx.config, "COST_PER_LOT", 66.0)
+                            _scalp_lots   = getattr(ctx.config, "SCALP_LOTS", 2)
+                            _min_profit_pts = (_cost_per_lot * _scalp_lots) / scalp_position["qty"]
+                            _min_profit_sl = scalp_position["entry"] + _min_profit_pts
                             scalp_position["stop_loss"] = max(
                                 scalp_position["stop_loss"],
                                 _min_profit_sl,
                             )
                             logger.info(
                                 f"[SCALP BE] +{_s_move:.1f}pt -> "
-                                f"SL locked at +150 profit ({_min_profit_sl:.2f})"
+                                f"SL locked at +{_min_profit_pts:.1f}pt profit ({_min_profit_sl:.2f})"
                             )
                     _s_exit, _s_reason = ctx.scalp_engine.check_exit(scalp_position, _s_ltp, ts)
                     # Honor the ladder-raised stop (virtual trigger) in addition
@@ -2085,6 +2102,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 f"[LOSS_CLASS] {scalp_position['symbol']} "
                                 f"{_s_loss_class} pnl={_s_pnl:.0f}"
                             )
+
+                        # PHASE 3 FIX: Feed scalp trade outcome to ML learner
+                        try:
+                            log_trade_outcome(
+                                features=scalp_position.get("features", {}),
+                                direction=scalp_position["side"],
+                                pnl=_s_pnl,
+                                reason=f"SCALP_{_s_reason}",
+                                entry_time=scalp_position["entry_ts"],
+                            )
+                        except Exception as _fb_e:
+                            logger.warning(f"[FEEDBACK] Scalp log_trade_outcome failed: {_fb_e}")
+
                         logger.info(
                             f"[SCALP EXIT] {_s_reason} | {scalp_position['symbol']} "
                             f"| pnl={_s_pnl:+.0f} | day={ctx.pnl:+.0f}"
@@ -2105,7 +2135,6 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         scalp_position = None
                         ctx.scalp_engine.on_exit()
                         # Track scalp-specific consecutive losses (circuit breaker)
-                        global _scalp_consecutive_losses, _scalp_trades_today
                         if not _s_already_logged:
                             _scalp_trades_today += 1
                             if _s_pnl < 0:
@@ -2217,6 +2246,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                         "lot_size":       ctx.config.LOT_SIZE,
                                         "entry":          _s_order["price"],
                                         "stop_loss":      _s_order["price"] - _sl_pts,
+                                        "initial_stop_loss": _s_order["price"] - _sl_pts,  # FIX: store initial stop for correct R_multiple
                                         "target":         _s_order["price"] + ctx.config.SCALP_TARGET_PTS,
                                         "max_pnl":        0.0,
                                         "min_pnl":        0.0,

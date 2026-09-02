@@ -62,7 +62,7 @@ class Config:
         # ~577 premium is 0.5% noise and stops out on the first counter-wick
         # (MFE +5.25 then stopped in 31s). 8pt sits in the ATR-derived 4-10
         # range and still gives 10R at the 80pt target.
-        self.ML_SL_PTS        = float(os.getenv("ML_SL_PTS", "8.0"))       # was ATR-derived 4-10 pts
+        self.ML_SL_PTS        = float(os.getenv("ML_SL_PTS", "3.0"))       # Phase-10 backtest: SL=3 + trailing beats SL=8
         self.ML_TARGET_PTS    = float(os.getenv("ML_TARGET_PTS", "80.0"))  # was 3.5x SL distance
         # NO_LIFE exit (premium profit < floor at N seconds) — DISABLED by
         # Phase-10: grid shows it only hurts once trailing is active. The
@@ -70,9 +70,11 @@ class Config:
         # the scalp NO_LIFE below is a separate 35s rule, untouched).
         # Task #20 FIX 10: reserved — no live consumer; ML NO_LIFE is
         # disabled by absence, so setting this has no effect yet.
-        self.ML_NO_LIFE_ENABLED = os.getenv("ML_NO_LIFE_ENABLED", "0") == "1"
+        self.ML_NO_LIFE_ENABLED = os.getenv("ML_NO_LIFE_ENABLED", "0") == "1"  # Phase-10: DISABLED - backtest shows it hurts
         self.ML_TRAIL_ENABLED   = os.getenv("ML_TRAIL_ENABLED", "1") == "1"
-        self.ML_TRAIL_BE_PTS    = float(os.getenv("ML_TRAIL_BE_PTS", "10.0"))  # profit pts -> stop to breakeven
+        self.ML_TRAIL_BE_PTS    = float(os.getenv("ML_TRAIL_BE_PTS", "10.0"))  # Phase-10 backtest: BE+cost at +10 pts
+        self.ML_TRAIL_T1_PTS    = float(os.getenv("ML_TRAIL_T1_PTS", "8.0"))   # profit pts -> trail 3 pts below HWM
+        self.ML_TRAIL_GAP1_PTS  = float(os.getenv("ML_TRAIL_GAP1_PTS", "3.0"))   # tier 1 trail gap
         self.ML_TRAIL_T2_PTS    = float(os.getenv("ML_TRAIL_T2_PTS", "20.0"))  # profit pts -> trailing mode
         self.ML_TRAIL_GAP_PTS   = float(os.getenv("ML_TRAIL_GAP_PTS", "8.0"))  # stop = HWM - gap
 

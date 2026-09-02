@@ -54,6 +54,8 @@ TARGET_GRID = [30.0, 50.0, 80.0]
 NL_TIME_GRID = [60, 90, 120, 180]     # seconds
 NL_PTS_GRID = [1.0, 2.0, 3.0]         # premium pts profit floor
 TRAIL_BE_PTS = 10.0                   # after +10 pts -> stop at breakeven
+TRAIL_T1_PTS = 8.0                    # after +8 pts -> trail 3 pts below HWM
+TRAIL_GAP1_PTS = 3.0                  # tier 1 trail gap
 TRAIL_T2_PTS = 20.0                   # after +20 pts -> trailing mode
 TRAIL_GAP_PTS = 8.0                   # stop = HWM - 8
 
@@ -96,7 +98,7 @@ def simulate_exit_variant(day: pd.DataFrame, entry_i: int, side: str,
     entry_ts = day["ts"].iloc[entry_i]
     sign = 1.0 if side == "CE" else -1.0
     be_stop = -(COST_PTS)             # breakeven stop: exit px = entry + cost
-    hwm, be_armed, trail_armed = 0.0, False, False
+    hwm, be_armed, t1_armed, trail_armed = 0.0, False, False, False
     last_prem = 0.0
     for j in range(entry_i + 1, len(day)):
         px = float(day["close"].iloc[j])
@@ -108,6 +110,8 @@ def simulate_exit_variant(day: pd.DataFrame, entry_i: int, side: str,
         # arm trailing tiers on first touch (peak-based)
         if trail and not be_armed and hwm >= TRAIL_BE_PTS:
             be_armed = True
+        if trail and not t1_armed and hwm >= TRAIL_T1_PTS:
+            t1_armed = True
         if trail and not trail_armed and hwm >= TRAIL_T2_PTS:
             trail_armed = True
         # -- hard stop: fixed SL, then (once armed) trail/breakeven stop --
@@ -115,6 +119,8 @@ def simulate_exit_variant(day: pd.DataFrame, entry_i: int, side: str,
             return -sl, "SL"
         if trail_armed and prem <= hwm - TRAIL_GAP_PTS:
             return prem, "TRAIL"
+        if t1_armed and prem <= hwm - TRAIL_GAP1_PTS:
+            return prem, "TRAIL_T1"
         if be_armed and prem <= be_stop:
             return prem, "BREAKEVEN"
         # -- profit target ------------------------------------------------
@@ -192,6 +198,7 @@ def main():
           f"cost=Rs{COST_RS:.0f}/trade (={COST_PTS:.1f} prem pts) "
           f"MAX_HOLD={MAX_HOLD_S}s (constant)")
     print(f"Trailing: +{TRAIL_BE_PTS:g}pts -> breakeven(entry+cost); "
+          f"+{TRAIL_T1_PTS:g}pts -> trail {TRAIL_GAP1_PTS:g} pts below HWM; "
           f"+{TRAIL_T2_PTS:g}pts -> trail {TRAIL_GAP_PTS:g} pts below HWM")
     print("=" * 100)
 
@@ -270,7 +277,8 @@ def main():
         print("  NO_LIFE       = disabled")
     else:
         print(f"  NO_LIFE_PTS   = {nl_pts:g}   NO_LIFE_S = {nl_s}")
-    print(f"  TRAILING      = ON (BE@+{TRAIL_BE_PTS:g}, trail {TRAIL_GAP_PTS:g} "
+    print(f"  TRAILING      = ON (BE@+{TRAIL_BE_PTS:g}, trail {TRAIL_GAP1_PTS:g} "
+          f"below HWM after +{TRAIL_T1_PTS:g}, trail {TRAIL_GAP_PTS:g} "
           f"below HWM after +{TRAIL_T2_PTS:g})   MAX_HOLD = {MAX_HOLD_S}s")
     d = best["net_pnl"] - base_res["net_pnl"]
     print(f"  vs baseline   : Rs{d:+.0f} net PnL, "

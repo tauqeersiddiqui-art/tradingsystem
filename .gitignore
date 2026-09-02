@@ -2,10 +2,10 @@
 # Added by code-review-graph
 # Archive (old experiments / backups)
 # Large datasets
-# Large training datasets â€” too big for git
+# Large training datasets GÇö too big for git
 # Logs
 # logs, backtest results, model backups
-# ML models â€” large training data stays local, trained model files are committed
+# ML models GÇö large training data stays local, trained model files are committed
 # OS files
 # Python cache
 # Python virtual environments

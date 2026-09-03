@@ -69,8 +69,15 @@ class ChampionPredictor:
         self.ce_model = joblib.load(ce_path)
         self.pe_model = joblib.load(pe_path)
 
-        self.ce_threshold = self._load_threshold("champion_ce_lgbm", ce_path, 0.35)
-        self.pe_threshold = self._load_threshold("champion_pe_lgbm", pe_path, 0.35)
+        from engine.config.config import Config
+        try:
+            self.ce_threshold = float(getattr(Config, "CHAMPION_THRESHOLD", 0.40))
+        except Exception:
+            self.ce_threshold = float(os.getenv("CHAMPION_THRESHOLD", "0.40"))
+        try:
+            self.pe_threshold = float(getattr(Config, "CHAMPION_THRESHOLD", 0.40))
+        except Exception:
+            self.pe_threshold = float(os.getenv("CHAMPION_THRESHOLD", "0.40"))
 
         self.ce_features = self._model_features(self.ce_model, "CE")
         self.pe_features = self._model_features(self.pe_model, "PE")
@@ -176,6 +183,11 @@ class ChampionPredictor:
 
                 row.append(val)
             X = pd.DataFrame([row], columns=req_cols)
+
+            # Get raw probability from base model (before calibration)
+            raw_prob = float(model.base_model.predict_proba(X)[0][1])
+            raw_prob = max(0.0, min(1.0, raw_prob))
+            logger.debug("PREDICT-RAW %s_prob=%.4f", direction, raw_prob)
 
             lgbm_prob = float(model.predict_proba(X)[0][1])
             lgbm_prob = max(0.0, min(1.0, lgbm_prob))

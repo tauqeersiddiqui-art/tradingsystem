@@ -218,7 +218,8 @@ class CandleBuilder:
 
             df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
             df = df.dropna(subset=[date_col])
-            df = df.sort_values(date_col)
+            df = df.drop_duplicates(subset=[date_col], keep="last")
+            df = df.sort_values(date_col, ascending=True).reset_index(drop=True)
 
             # Seed all candles up to 2 minutes ago (avoids incomplete current candle).
             # Includes today's data because update_historical_data() runs before this.

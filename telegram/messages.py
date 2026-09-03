@@ -1,7 +1,7 @@
 # telegram/messages.py
 # Human-readable trade messages with live in-place updates.
 
-import re
+import os, re
 from datetime import datetime
 
 
@@ -161,7 +161,8 @@ def format_trade_entry(data: dict) -> str:
     target   = data.get("target", 0.0)
     ml_prob  = data.get("ml_prob", 0.0)
     regime   = data.get("regime", "TREND")
-    lots     = qty // 65
+    lot_unit = int(os.getenv("LOT_SIZE", "30"))
+    lots     = max(1, round(qty / lot_unit))
     side_e   = _side_emoji(side)
     reg_e    = _regime_emoji(regime)
     sl_pts   = round(price - stop, 2)
@@ -203,7 +204,8 @@ def format_trade_live(position: dict, ltp: float, entry_time: datetime) -> str:
     ml_prob   = position.get("ml_prob", 0.0)
     regime    = position.get("regime", "TREND")
     max_pnl   = position.get("max_pnl", 0.0)
-    lots      = qty // 65
+    lot_unit = int(os.getenv("LOT_SIZE", "30"))
+    lots      = max(1, round(qty / lot_unit))
 
     pnl       = (ltp - entry) * qty
     move_pts  = ltp - entry
@@ -278,7 +280,8 @@ def format_trade_exit(data: dict) -> str:
     mae_pts     = data.get("mae_pts", 0.0)
     held_s      = data.get("held_seconds", 0.0)
     raw_reason  = data.get("reason", "")
-    lots        = qty // 65
+    lot_unit = int(os.getenv("LOT_SIZE", "30"))
+    lots        = max(1, round(qty / lot_unit))
 
     reason_label, reason_emoji = _map_exit_reason(raw_reason, entry, stop)
     pnl_e    = _pnl_emoji(pnl)

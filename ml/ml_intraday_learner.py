@@ -191,14 +191,14 @@ class IntradayMLLearner:
     def get_ml_threshold(self) -> float:
         """
         Returns today's adaptive ML threshold.
-        Starts at base (0.25). Rises with losses. Falls with wins.
-        Day type also adjusts:
+        Base threshold comes from CHAMPION_THRESHOLD (default 0.40).
+        Day type adjusts:
           VOLATILE_DAY: +0.04 (market unpredictable — be very selective)
           GAP_DAY:      +0.02 (wait for gap fill first)
           RANGE_DAY:    +0.03 (reversals are tricky)
-          TREND_DAY:    +0.00 (follow the trend — base threshold is fine)
+          TREND_DAY:   -0.01 (follow the trend — slightly more aggressive)
         """
-        base = self.current_threshold
+        base = float(os.getenv("CHAMPION_THRESHOLD", "0.40"))
         day_adj = {
             DAY_VOLATILE: 0.04,
             DAY_GAP:      0.02,
@@ -210,7 +210,7 @@ class IntradayMLLearner:
         adaptive_threshold = base + day_adj
 
         # Keep thresholds realistic for intraday ML
-        adaptive_threshold = max(0.45, min(adaptive_threshold, 0.56))
+        adaptive_threshold = max(0.35, min(adaptive_threshold, 0.55))
 
         return round(adaptive_threshold, 3)
 

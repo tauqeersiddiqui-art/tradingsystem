@@ -611,12 +611,6 @@ class LiveEngine:
         ce_adj = self._last_ce_adj
         pe_adj = self._last_pe_adj
 
-        # Hard direction gate — zero out opposite side
-        if direction_bias != 1:
-            ce_adj = 0.0
-        if direction_bias != -1:
-            pe_adj = 0.0
-
         logger.debug(
             f"[ML] CE={ce_adj:.3f}({self._last_ce_prob:.3f}) "
             f"PE={pe_adj:.3f}({self._last_pe_prob:.3f}) "
@@ -802,11 +796,20 @@ class LiveEngine:
         htf5   = self._htf5_dir
         pvwap  = features.get("price_vs_vwap", 0.0)
 
-        # Per-side thresholds: max of the model's calibrated threshold and the
-        # learner's adaptive threshold (rises after losses).
-        learn_thr = self.learner.get_ml_threshold()
-        ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr)
-        pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr)
+        from engine.config.config import Config
+        base_thr = float(getattr(Config, "CHAMPION_THRESHOLD", 0.40))
+        regime_adj = 0.0
+        if hasattr(self.learner, "get_regime_adjustment"):
+            regime_adj = float(self.learner.get_regime_adjustment() or 0.0)
+        final_ce_thr = round(base_thr + regime_adj, 4)
+        final_pe_thr = round(base_thr + regime_adj, 4)
+        if final_ce_thr > 0.65 or final_pe_thr > 0.65:
+            logger.warning("[CONFIG_BUG] Threshold > 0.65 detected: CE=%s PE=%s; clamping to 0.55", final_ce_thr, final_pe_thr)
+            final_ce_thr = min(final_ce_thr, 0.55)
+            final_pe_thr = min(final_pe_thr, 0.55)
+        logger.info("THRESHOLD TRACE → base=%.3f, regime_adj=%+.3f, final_ce=%.3f, final_pe=%.3f", base_thr, regime_adj, final_ce_thr, final_pe_thr)
+        ce_thr = final_ce_thr
+        pe_thr = final_pe_thr
 
         # 1. PREDICT direction
         side   = "CE" if ce_adj >= pe_adj else "PE"
@@ -828,47 +831,37 @@ class LiveEngine:
             self._pf_log_key = _pf_key
             self._pf_log_ts  = time.time()
 
+        # Collect blockers for unified trace
+        active_blockers = []
+
         # 2. EDGE — need clear directional conviction
         if abs(ce_adj - pe_adj) < self._ml_edge_margin:
-            self._count_block("NO_EDGE")
-            self._last_block_reason = (
-                f"NO_EDGE (|CE-PE|={abs(ce_adj-pe_adj):.2f} < {self._ml_edge_margin})"
-            )
-            return None
-
+            active_blockers.append(f"NO_EDGE(diff={abs(ce_adj - pe_adj):.3f}<{self._ml_edge_margin})")
         # 3. THRESHOLD
         if prob < thr:
-            self._count_block("ML_BELOW_THR")
-            self._last_block_reason = f"ML_BELOW_THR ({side} {prob:.2f} < {thr:.2f})"
-            return None
-
-        # 4. CONFIRM — 5m trend must AGREE (htf5==0 = insufficient data → allow)
+            active_blockers.append(f"ML_BELOW_THR({side} {prob:.3f} < {thr:.3f})")
+        # 4. CONFIRM — 5m trend must AGREE
         if side == "CE" and htf5 == -1:
-            self._count_block("HTF5_OPPOSES")
-            self._last_block_reason = f"CE_HTF5_OPPOSES (5m=DOWN, prob={prob:.2f})"
-            return None
+            active_blockers.append(f"CE_HTF5_OPPOSES (5m=DOWN, prob={prob:.3f})")
         if side == "PE" and htf5 == 1:
-            self._count_block("HTF5_OPPOSES")
-            self._last_block_reason = f"PE_HTF5_OPPOSES (5m=UP, prob={prob:.2f})"
-            return None
-
+            active_blockers.append(f"PE_HTF5_OPPOSES (5m=UP, prob={prob:.3f})")
         # 4b. CONFIRM — VWAP side must agree (within tolerance). CE above VWAP,
         # PE below. Tolerance ≈ 0.15% so a marginal cross isn't over-blocked.
         _VWAP_TOL = 0.0015
         if side == "CE" and pvwap < -_VWAP_TOL:
-            self._count_block("VWAP_FAIL")
-            self._last_block_reason = f"CE_VWAP_FAIL (pvwap={pvwap:.4f} below VWAP)"
-            return None
+            active_blockers.append(f"CE_VWAP_FAIL (pvwap={pvwap:.4f} below VWAP)")
         if side == "PE" and pvwap > _VWAP_TOL:
-            self._count_block("VWAP_FAIL")
-            self._last_block_reason = f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)"
-            return None
-
+            active_blockers.append(f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)")
         # 5. learner side-block (consecutive-loss / losing-side lock)
         blocked, reason_block = self.learner.is_side_blocked(side)
         if blocked:
-            self._count_block("ML_BLOCKED")
-            self._last_block_reason = f"{side}_BLOCKED ({reason_block})"
+            active_blockers.append(f"{side}_BLOCKED ({reason_block})")
+        # TIME_FILTER
+        if not self._in_trading_hours(current_time):
+            active_blockers.append("TIME_FILTER")
+
+        if active_blockers:
+            logger.info("BLOCKER TRACE → [%s]", ", ".join(active_blockers))
             return None
 
         self._last_block_reason = f"SIGNAL_FIRE (ML_{side})"

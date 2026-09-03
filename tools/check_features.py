@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 import numpy as np
-from ml.feature_config import FEATURE_COLUMNS, build_live_features
+from ml.feature_config import FEATURE_COLUMNS
 from engine.config.config import Config, INDEX_TOKEN, HIST_CSV
 from engine.data.candle_builder import CandleBuilder
 
@@ -40,6 +40,7 @@ def get_recent_live_features(n=50):
         "volume_ratio": 1.0,
         "vwap": closes[-1] if closes else 0.0
     }
+    from ml.feature_config import build_live_features
     features = build_live_features(closes, opens, highs, lows, volumes, signal)
     # Return as a DataFrame with one row (the last candle)
     return pd.DataFrame([{f: features[f] for f in FEATURE_COLUMNS}])

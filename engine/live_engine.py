@@ -617,7 +617,7 @@ class LiveEngine:
             f"thr={threshold:.3f} ORB_CE={ce_breakout} ORB_PE={pe_breakout}"
         )
 
-        # ══ STEP 5: Side selection ═══════════════════════════════════════
+        # ══ STEP 5: Side selection ════════════════════════════════════════
         signal  = None
         dir_str = "BULL" if direction_bias == 1 else "BEAR"
         self._last_block_reason = (
@@ -627,6 +627,7 @@ class LiveEngine:
         # CE entry — requires BULL direction + VWAP confirmation.
         # VWAP✗ on a BULL ST signal = false bounce, not a real uptrend.
         # On RANGE days, pure ML_CE floor rises to 0.85 (model fires too freely on chop).
+        # NOTE: Removed artificial zeroing of opposite-side probabilities.
         if not _CE_ORB_ENABLED:
             ce_adj = 0.0
         else:
@@ -797,7 +798,7 @@ class LiveEngine:
         pvwap  = features.get("price_vs_vwap", 0.0)
 
         from engine.config.config import Config
-        base_thr = float(getattr(Config, "CHAMPION_THRESHOLD", 0.40))
+        base_thr = float(getattr(Config, "CHAMPION_THRESHOLD", os.getenv("CHAMPION_THRESHOLD", "0.40")))
         regime_adj = 0.0
         if hasattr(self.learner, "get_regime_adjustment"):
             regime_adj = float(self.learner.get_regime_adjustment() or 0.0)

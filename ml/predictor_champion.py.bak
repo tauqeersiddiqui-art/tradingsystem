@@ -1,0 +1,225 @@
+# ml/predictor_champion.py
+
+import os
+import warnings
+import logging
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+
+warnings.filterwarnings("ignore")
+logger = logging.getLogger("predictor_champion")
+from ml.feature_config import FEATURE_COLUMNS
+
+
+# ── Calibration wrapper ───────────────────────────────────────────────
+
+class CalibratedLGBM:
+    """
+    Manual Platt scaling wrapper.
+    """
+
+    def __init__(self, base_model):
+        self.base_model = base_model
+        self.calibrator = LogisticRegression(C=1.0, max_iter=1000)
+        self.feature_names_ = None
+
+    def fit_calibration(self, X_holdout, y_holdout):
+        raw = self.base_model.predict_proba(X_holdout)[:, 1]
+        raw = np.clip(raw, 1e-6, 1 - 1e-6)
+
+        logit = np.log(raw / (1 - raw)).reshape(-1, 1)
+        self.calibrator.fit(logit, y_holdout)
+
+        if hasattr(self.base_model, 'feature_name_'):
+            fn = self.base_model.feature_name_
+            self.feature_names_ = list(fn() if callable(fn) else fn)
+
+        elif hasattr(self.base_model, 'feature_names_in_'):
+            self.feature_names_ = list(self.base_model.feature_names_in_)
+
+        return self
+
+    def predict_proba(self, X):
+        raw = self.base_model.predict_proba(X)[:, 1]
+        raw = np.clip(raw, 1e-6, 1 - 1e-6)
+
+        logit = np.log(raw / (1 - raw)).reshape(-1, 1)
+        return self.calibrator.predict_proba(logit)
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+
+
+# ── Predictor ─────────────────────────────────────────────────────────
+
+class ChampionPredictor:
+
+    def __init__(self):
+
+        # ── LightGBM (required) ───────────────────────────────────────
+        ce_path = "ml/models/champion_ce_lgbm.pkl"
+        pe_path = "ml/models/champion_pe_lgbm.pkl"
+
+        for p in (ce_path, pe_path):
+            if not os.path.exists(p):
+                raise FileNotFoundError(f"Model not found: {p}")
+
+        self.ce_model = joblib.load(ce_path)
+        self.pe_model = joblib.load(pe_path)
+
+        from engine.config.config import Config
+        try:
+            self.ce_threshold = float(getattr(Config, "CHAMPION_THRESHOLD", 0.40))
+        except Exception:
+            self.ce_threshold = float(os.getenv("CHAMPION_THRESHOLD", "0.40"))
+        try:
+            self.pe_threshold = float(getattr(Config, "CHAMPION_THRESHOLD", 0.40))
+        except Exception:
+            self.pe_threshold = float(os.getenv("CHAMPION_THRESHOLD", "0.40"))
+
+        self.ce_features = self._model_features(self.ce_model, "CE")
+        self.pe_features = self._model_features(self.pe_model, "PE")
+
+        # ── CatBoost (optional — enables ensemble if both files exist) ─
+        ce_cat_path = "ml/models/champion_ce_cat.pkl"
+        pe_cat_path = "ml/models/champion_pe_cat.pkl"
+        cat_both = os.path.exists(ce_cat_path) and os.path.exists(pe_cat_path)
+
+        if cat_both:
+            self.ce_cat_model = joblib.load(ce_cat_path)
+            self.pe_cat_model = joblib.load(pe_cat_path)
+            self._ensemble = True
+            logger.info(
+                f"[ChampionPredictor] Mode: LGBM+CAT_ENSEMBLE | "
+                f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
+                f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}"
+            )
+        else:
+            self.ce_cat_model = None
+            self.pe_cat_model = None
+            self._ensemble = False
+            logger.info(
+                f"[ChampionPredictor] Mode: LGBM_ONLY | "
+                f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
+                f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}"
+            )
+
+
+    # ───────────────────────────────────────── #
+
+    def _load_threshold(self, name, model_path, default):
+        t_path = os.path.join(os.path.dirname(model_path), f"{name}_threshold.txt")
+        try:
+            val = float(open(t_path).read().strip())
+            logger.info(f"[Predictor] {name} threshold={val}")
+            return val
+        except Exception:
+            return default
+
+    # ───────────────────────────────────────── #
+
+    @staticmethod
+    def _model_features(model, label):
+
+        if hasattr(model, 'feature_names_') and isinstance(model.feature_names_, list):
+            return model.feature_names_
+
+        if hasattr(model, 'estimator'):
+            inner = model.estimator
+
+            if hasattr(inner, 'feature_name_'):
+                fn = inner.feature_name_
+                return list(fn() if callable(fn) else fn)
+
+            if hasattr(inner, 'feature_names_in_'):
+                return list(inner.feature_names_in_)
+
+        if hasattr(model, 'feature_name_'):
+            fn = model.feature_name_
+            return list(fn() if callable(fn) else fn)
+
+        if hasattr(model, 'feature_names_in_'):
+            return list(model.feature_names_in_)
+
+        if hasattr(model, 'calibrated_classifiers_'):
+            for clf in model.calibrated_classifiers_:
+                base = getattr(clf, 'estimator', getattr(clf, 'base_estimator', None))
+                if base and hasattr(base, 'feature_name_'):
+                    fn = base.feature_name_
+                    return list(fn() if callable(fn) else fn)
+
+        logger.warning(f"[PREDICTOR WARNING] {label}: fallback to FEATURE_COLUMNS")
+        return list(FEATURE_COLUMNS)
+
+    # ───────────────────────────────────────── #
+
+    def predict(self, features_dict: dict, direction: str) -> float:
+
+        model    = self.ce_model    if direction == "CE" else self.pe_model
+        req_cols = self.ce_features if direction == "CE" else self.pe_features
+
+        # ================= FEATURE VALIDATION ================= #
+
+        missing = [f for f in req_cols if f not in features_dict]
+
+        if missing:
+            logger.warning(f"[PREDICTOR WARNING] Missing features ({len(missing)}): {missing[:5]}...")
+            return None  # DO NOT RETURN 0
+
+        # ================= BUILD INPUT ================= #
+
+        try:
+            row = []
+
+            for f in req_cols:
+
+                val = float(features_dict[f])
+
+                if np.isnan(val) or np.isinf(val):
+                    logger.warning(f"[PREDICTOR WARNING] Invalid feature {f}={val}")
+                    return None
+
+                row.append(val)
+            X = pd.DataFrame([row], columns=req_cols)
+
+            # Get raw probability from base model (before calibration)
+            raw_prob = float(model.base_model.predict_proba(X)[0][1])
+            raw_prob = max(0.0, min(1.0, raw_prob))
+            logger.debug("PREDICT-RAW %s_prob=%.4f", direction, raw_prob)
+
+            lgbm_prob = float(model.predict_proba(X)[0][1])
+            lgbm_prob = max(0.0, min(1.0, lgbm_prob))
+
+            # ── Ensemble: average LGBM + CatBoost when both loaded ────
+            if self._ensemble:
+                cat_model = self.ce_cat_model if direction == "CE" else self.pe_cat_model
+                try:
+                    cat_prob = float(cat_model.predict_proba(X)[0][1])
+                    cat_prob = max(0.0, min(1.0, cat_prob))
+                    prob = (lgbm_prob + cat_prob) / 2.0
+                except Exception as e:
+                    logger.warning(f"[PREDICTOR] CatBoost predict failed ({e}), using LGBM only")
+                    prob = lgbm_prob
+            else:
+                prob = lgbm_prob
+
+            if prob < 0.01:
+                return 0.0
+
+            return round(prob, 4)
+
+        except Exception as e:
+            logger.error(f"[PREDICTOR ERROR] {direction}: {e}")
+            return None
+
+    def passes_threshold(self, prob: float, direction: str) -> bool:
+
+        threshold = (
+            self.ce_threshold
+            if direction == "CE"
+            else self.pe_threshold
+        )
+
+        return prob >= threshold

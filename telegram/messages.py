@@ -329,11 +329,14 @@ def format_scalp_entry(pos: dict, move_pts: float) -> str:
     price     = pos.get("entry", 0.0)
     stop      = pos.get("stop_loss", 0.0)
     target    = pos.get("target", 0.0)
+    qty       = pos.get("qty", 65)
     side_e    = _side_emoji(side)
     tgt_pts   = round(target - price, 1)
     sl_pts    = round(price - stop, 1)
     now_str   = datetime.now().strftime("%H:%M:%S")
     move_sign = "+" if move_pts >= 0 else ""
+    lot_unit = int(os.getenv("LOT_SIZE", "30"))
+    lots      = max(1, round(qty / lot_unit))
 
     return (
         f"⚡ {side_e} <b>SCALP OPEN — {side}</b>\n"
@@ -341,7 +344,7 @@ def format_scalp_entry(pos: dict, move_pts: float) -> str:
         f"📌 <b>{symbol}</b>\n"
         f"\n"
         f"💵 Entry Price   : <b>{price:.1f}</b>\n"
-        f"📦 Quantity      : 65  (1 lot)\n"
+        f"📦 Quantity      : {qty}  ({lots} lot{'s' if lots != 1 else ''})\n"
         f"\n"
         f"🛑 Stop Loss     : {stop:.1f}  <i>(-{abs(sl_pts):.1f} pts)</i>\n"
         f"🎯 Target        : {target:.1f}  <i>(+{abs(tgt_pts):.1f} pts)</i>\n"

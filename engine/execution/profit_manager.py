@@ -31,13 +31,15 @@
 #   * max_pnl is the only profit reference used.
 
 import logging
+import os
 
 logger = logging.getLogger("profit_manager")
 
 # Retained for backward-compat (telegram.messages imports LOCK_PTS).
-_LOT_QTY  = 65
+# Lot units now come from LOT_SIZE (env) — BANKNIFTY = 30.
+_LOT_QTY  = int(os.getenv("LOT_SIZE", "30"))
 _RS_FLOOR = 200.0
-LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
+LOCK_PTS  = _RS_FLOOR / max(_LOT_QTY, 1)
 
 # ─────────────────────────────────────────────────────────────────────────
 # COST-AWARE PROFIT LADDER  (replaces the old fixed Rs rungs)
@@ -59,27 +61,32 @@ LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
 # the initial risk_manager stop. The ladder only ever TIGHTENS the stop.
 # ─────────────────────────────────────────────────────────────────────────
 
-_COST_PER_LOT = 66.0     # round-trip cost per 65-qty lot (overridable via env)
-_LOT_UNITS    = 65
+_COST_PER_LOT = 66.0     # round-trip cost per lot (overridable via env)
+_LOT_UNITS    = int(os.getenv("LOT_SIZE", "30"))   # lot size of the traded index
 _TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
 
 
-def _cost_rs(qty: int) -> float:
-    """Round-trip cost in Rs for a given position qty (scales by lots)."""
-    import os
+def _cost_rs(qty: int, lot_units: int | None = None) -> float:
+    """Round-trip cost in Rs for a given position qty (scales by lots).
+
+    lot_units defaults to LOT_SIZE from the environment (BANKNIFTY = 30).
+    Research tools that replay the NIFTY dataset pass their own unit size
+    explicitly so live config changes never distort historical sims.
+    """
+    lot_units = int(lot_units) if lot_units else int(os.getenv("LOT_SIZE", "30"))
     cost_per_lot = float(os.getenv("COST_PER_LOT", _COST_PER_LOT))
-    lots = max(1, round(qty / _LOT_UNITS))
+    lots = max(1, round(qty / max(lot_units, 1)))
     return lots * cost_per_lot
 
 
-def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):
+def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS, lot_units: int | None = None):
     """
     Return (locked_profit_rs, stage_label) for the current peak PnL in Rs.
 
     Cost-aware: never returns a lock below the trade's round-trip cost, and
     returns 0 (no lock) until MFE clears 1.5x cost so noise can't trip it.
     """
-    cost = _cost_rs(qty)
+    cost = _cost_rs(qty, lot_units)
 
     # Not enough cushion yet — rely on the initial stop (no early lock).
     if max_pnl < cost * 1.5:
@@ -105,14 +112,14 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):
     return locked, stage
 
 
-def ladder_stop(entry_price, qty, max_pnl, current_stop):
+def ladder_stop(entry_price, qty, max_pnl, current_stop, lot_units: int | None = None):
     """
     Convert the rupee profit-lock to a premium stop level and ratchet UP only.
 
     Returns (new_stop, stage_label, locked_rs).
     Used by BOTH manage_position (normal trades) and the scalp loop.
     """
-    locked_rs, stage = ladder_locked_rs(max_pnl, qty)
+    locked_rs, stage = ladder_locked_rs(max_pnl, qty, lot_units)
     if locked_rs <= 0:
         return current_stop, stage, 0.0
     stop_floor = entry_price + locked_rs / max(qty, 1)
@@ -120,7 +127,8 @@ def ladder_stop(entry_price, qty, max_pnl, current_stop):
     return new_stop, stage, locked_rs
 
 
-def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, target=None):
+def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, target=None,
+                    lot_units: int | None = None):
     """
     Args:
         entry_price : option premium at entry
@@ -147,7 +155,8 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
         return stop_loss, max_pnl, "TARGET_HIT"
 
     # ── 1  Centralized profit-lock ladder (single source of truth) ────
-    new_stop, stage, locked_rs = ladder_stop(entry_price, qty, max_pnl, stop_loss)
+    new_stop, stage, locked_rs = ladder_stop(entry_price, qty, max_pnl, stop_loss,
+                                             lot_units=lot_units)
     if new_stop > stop_loss + 1e-6:
         logger.info(
             f"[LADDER]\nMFE={max_pnl:.0f}\nLOCK={locked_rs:.0f}\n"

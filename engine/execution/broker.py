@@ -7,6 +7,10 @@ from kiteconnect import KiteConnect, KiteTicker
 
 load_dotenv(os.path.join(os.getcwd(), ".env"), override=True)
 
+# Traded instrument — single source of truth (env-driven). No index name,
+# token, spot key or strike step may be hardcoded in this module.
+from engine.config.config import INDEX_NAME, INDEX_SPOT_KEY, INDEX_TOKEN, STRIKE_STEP
+
 
 class ZerodhaBroker:
 
@@ -29,7 +33,7 @@ class ZerodhaBroker:
 
         self.option_index = {}
         for inst in self.instruments:
-            if inst["segment"] != "NFO-OPT" or inst["name"] != "NIFTY":
+            if inst["segment"] != "NFO-OPT" or inst["name"] != INDEX_NAME:
                 continue
             key = (inst["strike"], inst["instrument_type"])
             self.option_index.setdefault(key, []).append(inst)
@@ -86,7 +90,7 @@ class ZerodhaBroker:
 
         def on_connect(ws, _):
             ws.subscribe(tokens)
-            # NIFTY 50 index (token 256265) does not carry bid/ask depth.
+            # Index tokens do not carry bid/ask depth.
             # MODE_FULL on an index token either returns 0 for last_price or
             # silently drops the tick on some Zerodha gateway versions.
             # Use MODE_QUOTE which reliably includes last_price for indices.
@@ -133,12 +137,12 @@ class ZerodhaBroker:
         Safe to call at any time after start_feed(); idempotent — re-calling
         refreshes the ATM and re-subscribes to the updated strike set.
         """
-        spot = self.ltp("NSE:NIFTY 50")
+        spot = self.ltp(INDEX_SPOT_KEY)
         if not spot:
-            print("[OPTIONS FEED] Cannot compute ATM — no NIFTY spot price yet")
+            print(f"[OPTIONS FEED] Cannot compute ATM — no {INDEX_SPOT_KEY} spot price yet")
             return
 
-        atm = round(spot / 50) * 50
+        atm = round(spot / STRIKE_STEP) * STRIKE_STEP
         self._subscribed_atm = atm
 
         tokens_to_sub:  list = []
@@ -149,7 +153,7 @@ class ZerodhaBroker:
         atm_pe_sym:     str = "n/a"
 
         for i in range(-strikes_range, strikes_range + 1):
-            strike = atm + i * 50
+            strike = atm + i * STRIKE_STEP
             for opt_type in ("CE", "PE"):
                 opts = self.option_index.get((strike, opt_type))
                 if not opts:
@@ -187,14 +191,14 @@ class ZerodhaBroker:
                 print(f"[OPTIONS FEED] subscribe() call failed: {exc}")
                 return
 
-        nifty_token  = 256265
+        index_token = INDEX_TOKEN
         chain_count  = len(tokens_to_sub) - (
             (1 if atm_ce_token else 0) + (1 if atm_pe_token else 0)
         )
-        total_tokens = len(tokens_to_sub) + 1   # +1 for NIFTY 50
+        total_tokens = len(tokens_to_sub) + 1   # +1 for the spot index
 
         print(f"[WS SUBSCRIBED]")
-        print(f"  NIFTY      token={nifty_token}")
+        print(f"  INDEX      token={index_token}")
         print(f"  ATM CE     token={atm_ce_token}  ({atm_ce_sym})")
         print(f"  ATM PE     token={atm_pe_token}  ({atm_pe_sym})")
         print(f"  CHAIN TOKENS={chain_count}  (±{strikes_range} strikes excluding ATM)")
@@ -208,7 +212,7 @@ class ZerodhaBroker:
         """
         if not self._subscribed_atm:
             return False
-        spot = self.ltp("NSE:NIFTY 50")
+        spot = self.ltp(INDEX_SPOT_KEY)
         if not spot:
             return False
         current_atm = round(spot / 50) * 50
@@ -300,11 +304,11 @@ class ZerodhaBroker:
     # ── options ──────────────────────────────────────────────────────────────
 
     def get_atm_option(self, option_type="CE", strike_shift=0):
-        spot = self.ltp("NSE:NIFTY 50")
+        spot = self.ltp(INDEX_SPOT_KEY)
         if not spot:
             return None, None
-        atm    = round(spot / 50) * 50
-        strike = atm - strike_shift * 50 if option_type == "CE" else atm + strike_shift * 50
+        atm    = round(spot / STRIKE_STEP) * STRIKE_STEP
+        strike = atm - strike_shift * STRIKE_STEP if option_type == "CE" else atm + strike_shift * STRIKE_STEP
         opts   = self.option_index.get((strike, option_type))
         if not opts:
             return None, None
@@ -313,13 +317,13 @@ class ZerodhaBroker:
 
     def get_option_chain_near_atm(self, strikes_range=5):
         try:
-            spot = self.ltp("NSE:NIFTY 50")
+            spot = self.ltp(INDEX_SPOT_KEY)
             if not spot:
                 return []
-            atm   = round(spot / 50) * 50
+            atm   = round(spot / STRIKE_STEP) * STRIKE_STEP
             chain = []
             for i in range(-strikes_range, strikes_range + 1):
-                s = atm + i * 50
+                s = atm + i * STRIKE_STEP
                 ce_list = self.option_index.get((s, "CE"))
                 pe_list = self.option_index.get((s, "PE"))
                 if not ce_list or not pe_list:

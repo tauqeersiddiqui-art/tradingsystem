@@ -181,7 +181,7 @@ def _simulate_forensic(test_df, warmup_rows, ce_model, pe_model, thr):
             if exit_flag:
                 exit_ltp = ltp - SPREAD_PTS / 2.0
                 gross_rs = (exit_ltp - position["entry"]) * position["qty"]
-                cost_rs = _cost_rs(position["qty"])
+                cost_rs = _cost_rs(position["qty"], 65)  # NIFTY research dataset units
                 net_rs = gross_rs - cost_rs
                 trades.append({
                     "entry_ts":    position["entry_ts"],

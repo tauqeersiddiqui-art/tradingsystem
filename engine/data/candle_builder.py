@@ -67,7 +67,8 @@ class CandleBuilder:
             return self._ltp
         # Fallback: REST call (slow, only on cold start)
         try:
-            sym = f"NSE:NIFTY 50"
+            from engine.config.config import INDEX_SPOT_KEY
+            sym = INDEX_SPOT_KEY
             data = self.broker.kite.ltp(sym)
             price = data[sym]["last_price"]
             self._ltp = float(price)
@@ -304,6 +305,10 @@ class CandleBuilder:
     # ══════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def nifty_token() -> int:
-        """Zerodha instrument token for NIFTY 50 index."""
-        return 256265
+    def index_token() -> int:
+        """Zerodha instrument token of the traded index (config-driven)."""
+        from engine.config.config import INDEX_TOKEN
+        return INDEX_TOKEN
+
+    # Backward-compatible alias
+    nifty_token = index_token

@@ -769,6 +769,7 @@ class BacktestSignalEngine:
             entry_price=position["entry"],
             ltp=ltp,
             lot_size=lot_size,
+            lot_units=lot_size,
             stop_loss=stop_loss,
             max_pnl=max_pnl,
             ml_prob=ml_prob,

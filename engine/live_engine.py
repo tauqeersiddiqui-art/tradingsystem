@@ -28,8 +28,8 @@ logger = logging.getLogger("live_engine")
 _MARKET_OPEN  = dtime(9, 15)
 _ORB_END      = dtime(9, 30)   # ORB window: 9:15 – 9:29 (15 candles)
 
-# Zerodha instrument token for NIFTY 50 index (used in ORB reconstruction)
-_NIFTY_INDEX_TOKEN = 256265
+# Zerodha instrument token for the traded index (config-driven; ORB reconstruction)
+from engine.config.config import INDEX_TOKEN as _NIFTY_INDEX_TOKEN
 _DAY_CLASS_AT = dtime(9, 45)   # Day classifier locks after 9:44
 _MARKET_CLOSE = dtime(15, 30)
 
@@ -117,6 +117,13 @@ class LiveEngine:
         # Minimum gap between the two sides' probs to claim a directional
         # edge. If |ce - pe| < margin, conviction is too low → no trade.
         self._ml_edge_margin: float = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
+
+        # [PREDICT-FIRST] log throttle — the engine loop runs ~1x/sec, so the
+        # per-cycle INFO line would spam identical text 60x/min. We log only
+        # when the decision inputs change, plus a 60 s heartbeat so a silent
+        # freeze is still visible in the log (see _check_entry_predict_first).
+        self._pf_log_key: tuple | None = None
+        self._pf_log_ts: float = 0.0
 
         # ── Per-minute dedup guards (learner + VWAP update once per minute) ──
         self._last_classify_minute: datetime | None = None
@@ -807,10 +814,19 @@ class LiveEngine:
         thr    = ce_thr if side == "CE" else pe_thr
         other  = pe_adj if side == "CE" else ce_adj
 
-        logger.info(
-            f"[PREDICT-FIRST] CE={ce_adj:.3f} PE={pe_adj:.3f} -> {side} "
-            f"thr={thr:.2f} 5m={htf5} pvwap={pvwap:.4f}"
-        )
+        # Log throttle: the engine loop evaluates ~1x/sec, so logging this
+        # every cycle spams identical lines (60/min). Log only when the
+        # decision inputs (CE/PE probs, 5m trend) change, plus a 60 s heartbeat
+        # so a stalled engine stays visible in the log. pvwap is deliberately
+        # excluded from the change-key — it drifts with every tick.
+        _pf_key = (round(ce_adj, 3), round(pe_adj, 3), htf5)
+        if _pf_key != self._pf_log_key or (time.time() - self._pf_log_ts) >= 60:
+            logger.info(
+                f"[PREDICT-FIRST] CE={ce_adj:.3f} PE={pe_adj:.3f} -> {side} "
+                f"thr={thr:.2f} 5m={htf5} pvwap={pvwap:.4f}"
+            )
+            self._pf_log_key = _pf_key
+            self._pf_log_ts  = time.time()
 
         # 2. EDGE — need clear directional conviction
         if abs(ce_adj - pe_adj) < self._ml_edge_margin:

@@ -66,6 +66,7 @@ from engine.execution.profit_manager import ladder_stop
 from engine.core.state_store import save_state, load_state, deserialize_position
 from engine.services.trade_logger import log_trade, today_summary
 from engine.diagnostics import TradeJournal, generate_eod_report
+from engine.diagnostics import session_activity as activity
 from engine.scalping.scalp_engine import ScalpEngine
 
 # Analytics suite (Features 1–8) — observational only, no trading logic
@@ -640,7 +641,10 @@ def _append_candle_to_csv(candle: dict, csv_path: str):
 
     try:
         row = pd.DataFrame([{
-            "date":   ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            # Use the SAME format as the historical CSV ("YYYY-MM-DD HH:MM:SS").
+            # ts.isoformat() wrote "2026-09-04T09:56:00" which created a mixed
+            # date format in the CSV and confused downstream parsers.
+            "date":   ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else str(ts),
             "open":   candle["open"],
             "high":   candle["high"],
             "low":    candle["low"],
@@ -789,6 +793,7 @@ def init_candle_builder(broker) -> CandleBuilder:
 def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     logger.info("Engine loop started")
     tg_force("Engine Loop Started — Monitoring Market...")
+    activity.log_lifecycle("ENGINE_START", paper=PAPER_MODE, test=TEST_MODE)
 
     position          = None    # current open position dict
     entry_time        = None    # FIX-2: defined at entry, used for held_seconds
@@ -961,6 +966,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     if _stale_s > 60 and time.time() - _last_feed_warn > 120:
                         _last_feed_warn = time.time()
                         logger.warning(f"[WATCHDOG] Feed stale {_stale_s:.0f}s — reconnecting")
+                        activity.log_lifecycle("FEED_STALE", stale_seconds=round(_stale_s, 1))
                         tg_bot(
                             f"⚠️ Feed stale ({_stale_s:.0f}s) — reconnecting...",
                             key="watchdog", interval=120.0
@@ -982,6 +988,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         logger.info(
                             f"[ATM DRIFT] Re-subscribed options; "
                             f"new ATM={ctx.broker._subscribed_atm}"
+                        )
+                        activity.log_lifecycle(
+                            "ATM_DRIFT",
+                            new_atm=getattr(ctx.broker, "_subscribed_atm", None),
                         )
                 except Exception as _atm_e:
                     logger.warning(f"[ATM DRIFT] Check failed (non-fatal): {_atm_e}")
@@ -1087,6 +1097,26 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             elif decision is None:
                 _signal_first_ts = None
 
+            # ── [ACTIVITY] refresh live context for the event stream ────
+            # Every subsequent event (gates, entries, exits, lifecycle)
+            # carries this market snapshot with it.
+            try:
+                _ms_act = ctx.live_engine.get_market_state(ts)
+                activity.set_context(
+                    nifty=ltp_current,
+                    ce=_ms_act.get("ce_adj", 0.0),
+                    pe=_ms_act.get("pe_adj", 0.0),
+                    day_type=str(getattr(ctx.ml_learner, "get_day_type", lambda: "")() or ""),
+                    in_trade=position is not None,
+                    in_scalp=scalp_position is not None,
+                    day_pnl=ctx.pnl,
+                    trades_today=ctx.trades_today,
+                    paused=bool(getattr(_tn_mod, "ENGINE_PAUSED", False))
+                    if (_tn_mod := sys.modules.get("telegram.notifier")) else False,
+                )
+            except Exception:
+                pass
+
             # ══════════════════════════════════════════════════════════
             # POSITION MANAGEMENT — runs every cycle, NOT in except block
             # FIX-1: was inside except block — completely broken before
@@ -1146,6 +1176,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             f"[GATE] MIN_PROFIT blocked {exit_reason}: "
                             f"pnl={_cur_pnl:.0f} < 250 (holding)"
                         )
+                        activity.log_exit_hold(
+                            exit_reason=exit_reason, cur_pnl=_cur_pnl,
+                            threshold=250.0, pos_ltp=pos_ltp,
+                            symbol=position.get("symbol"),
+                        )
                         exit_flag  = False
                         exit_reason = ""
 
@@ -1166,6 +1201,13 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # Only when we are NOT exiting this cycle (atomic modify).
                 if not exit_flag and position.get("stop_loss", 0.0) > _sl_before + 1e-6:
                     _sl_modify(ctx, position, position["stop_loss"])
+                    activity.log_sl_update(
+                        symbol=position.get("symbol"),
+                        new_sl=position.get("stop_loss", 0.0),
+                        old_sl=_sl_before,
+                        ltp=pos_ltp,
+                        reason="LADDER",
+                    )
 
                 # ── Execute exit ───────────────────────────────────────
                 if exit_flag:
@@ -1262,6 +1304,29 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         features=position.get("features", {}),
                         reason=exit_reason,
                     )
+
+                    # ── [ACTIVITY] full exit snapshot (loss forensics) ────
+                    try:
+                        activity.log_exit(
+                            position      = position,
+                            exit_price    = exit_price,
+                            exit_reason   = exit_reason,
+                            pnl           = pnl,
+                            exit_ts       = ts,
+                            exit_type     = _classify_exit_type(
+                                exit_reason,
+                                position.get("stop_loss", 0.0),
+                                position.get("entry", 0.0),
+                            ),
+                            entry_time    = entry_time,
+                            held_seconds  = held_seconds,
+                            nifty         = ltp_current,
+                            slippage_fill_vs_trigger = round(
+                                (_exit_signal_ltp - exit_price), 4
+                            ) if _exit_signal_ltp else 0.0,
+                        )
+                    except Exception:
+                        pass
 
                     # ── AI BRAIN review (advisory) after 2+ consecutive losses ──
                     # OpenAI-compatible LLM analyses recent trades and trims the
@@ -1427,6 +1492,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                 "[AUTO-PAUSE] 2 consecutive losing stops — entries blocked."
                                 " Restart or /resume to re-enable."
                             )
+                            activity.log_lifecycle(
+                                "AUTO_PAUSE",
+                                consecutive_stops=consecutive_stops,
+                                day_pnl=ctx.pnl,
+                            )
                             tg_force(
                                 "AUTO-PAUSE: 2 consecutive losing stops hit.\n"
                                 "Send /resume to re-enable entries."
@@ -1447,6 +1517,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 logger.critical(
                     f"[KILL SWITCH] Daily loss limit breached: {ctx.pnl:.2f}"
                 )
+                activity.log_lifecycle(
+                    "KILL_SWITCH",
+                    day_pnl=ctx.pnl,
+                    limit=daily_loss_limit,
+                    trades_today=ctx.trades_today,
+                )
                 break
 
             # ══════════════════════════════════════════════════════════
@@ -1460,6 +1536,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if _tn.ENGINE_PAUSED:
                     logger.debug("[GATE] Engine paused — skipping entry")
                     ctx.live_engine.record_block("PAUSED")
+                    activity.log_gate("PAUSED", side=decision.get("side"),
+                                      detail="manual or auto-pause active")
                     decision = None
 
             if decision is not None and position is None:
@@ -1476,6 +1554,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f" < override={_thr_ov:.2f}"
                     )
                     ctx.live_engine.record_block("TG_THRESHOLD")
+                    activity.log_gate("TG_THRESHOLD", side=_side,
+                                      detail=f"prob={_ml_prob:.2f} < override={_thr_ov:.2f}")
                     decision = None
 
             if decision is not None and position is None:
@@ -1497,6 +1577,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f"({_remaining}s remaining)"
                     )
                     ctx.live_engine.record_block("SAME_SYMBOL_COOLDOWN")
+                    activity.log_gate("SAME_SYMBOL_COOLDOWN",
+                                      side=decision.get("side"),
+                                      symbol=_cand_sym,
+                                      detail=f"{_remaining}s remaining")
                     decision = None
 
             if decision is not None and position is None:
@@ -1505,6 +1589,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if ctx.trades_today >= max_trades:
                     logger.debug(f"[GATE] Max trades reached: {ctx.trades_today}")
                     ctx.live_engine.record_block("MAX_TRADES")
+                    activity.log_gate("MAX_TRADES",
+                                      detail=f"{ctx.trades_today}/{max_trades}")
                     decision = None
 
             if decision is not None and position is None:
@@ -1514,6 +1600,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 if symbol is None:
                     logger.warning("[ENTRY] get_atm_option returned None symbol")
+                    activity.log_gate("NO_ATM_SYMBOL", side=side,
+                                      detail="get_atm_option returned None")
                     decision = None
 
             if decision is not None and position is None:
@@ -1536,6 +1624,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         logger.info(
                             f"[GATE] OI wall blocked {side} entry | ATM={atm_strike}"
                         )
+                        activity.log_gate("OI_WALL", side=side,
+                                          detail=f"ATM={atm_strike}")
                         decision = None
                 except Exception as _oi_e:
                     logger.warning(f"[OI FILTER] Error (non-fatal): {_oi_e}")
@@ -1564,6 +1654,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if not qty or qty <= 0:
                     logger.info("[GATE] Allocator returned 0 — skipping trade (ALLOC_ZERO)")
                     ctx.live_engine.record_block("ALLOC_ZERO")
+                    activity.log_gate("ALLOC_ZERO", side=decision.get("side"),
+                                      detail="allocator rejected (qty=0)")
                     decision = None
 
             if decision is not None and position is None:
@@ -1585,6 +1677,8 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 if not _confirmed:
                     logger.info(f"[GATE] Trade SKIPPED by user (Telegram SKIP)")
                     ctx.live_engine.record_block("TG_SKIP")
+                    activity.log_gate("TG_SKIP", side=side,
+                                      detail="user skipped Telegram confirmation")
                     decision = None  # fall through cleanly
 
                 if decision is not None:
@@ -1675,6 +1769,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         _journal_id = _jid
                     except Exception as _je:
                         logger.debug(f"[JOURNAL] on_entry failed: {_je}")
+
+                    # ── [ACTIVITY] full entry snapshot ────────────────────
+                    try:
+                        _act_delay = int(
+                            ((_signal_first_ts and (ts - _signal_first_ts).total_seconds() * 1000)) or 0
+                        )
+                        activity.log_entry(
+                            position,
+                            nifty=ltp_current,
+                            signal_delay_ms=_act_delay,
+                        )
+                    except Exception:
+                        pass
 
                     entry_msg = format_trade_entry({
                         "symbol":  symbol,
@@ -1816,6 +1923,10 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                             f"[SCALP EXIT] {_s_reason} | {scalp_position['symbol']} "
                             f"| pnl={_s_pnl:+.0f} | day={ctx.pnl:+.0f}"
                         )
+                        activity.log_scalp_exit(
+                            scalp_position, _s_fill, _s_reason, _s_pnl,
+                            nifty=ltp_current, day_pnl=ctx.pnl,
+                        )
                         _scalp_exit_msg = format_scalp_exit(scalp_position, _s_fill,
                                                            f"SCALP_{_s_reason}", _s_pnl)
                         # Freeze scalp card to final exit summary (stays in chat),
@@ -1910,6 +2021,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                                             f"| move={_s_sig['move_pts']:+.1f}pt "
                                             f"| SL={_s_sl_pts:.1f}pt | ml={_s_ml_prob:.2f}"
                                         )
+                                        activity.log_scalp_entry(
+                                            scalp_position, nifty=ltp_current,
+                                            move_pts=_s_sig.get("move_pts"),
+                                            ml_prob=_s_ml_prob,
+                                        )
                                         _scalp_entry_msg = format_scalp_entry(scalp_position, _s_sig["move_pts"])
                                         send_scalp_entry(_scalp_entry_msg)
                                         send_trade_channel(_scalp_entry_msg)
@@ -1957,6 +2073,19 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     f"[EOD] Trades={summary['trades']} PnL=₹{summary['pnl']:.0f} "
                     f"WR={summary.get('win_rate',0):.0f}%"
                 )
+                # ── [ACTIVITY] persist session-end summary ───────────────
+                try:
+                    _act_sum = activity.session_summary()
+                    activity.log_lifecycle(
+                        "EOD_SUMMARY",
+                        summary_pnl=summary.get("pnl", 0),
+                        events_logged=_act_sum.get("events", {}),
+                        gate_census=_act_sum.get("gates", {}),
+                        blocker_census=_act_sum.get("blockers", {}),
+                    )
+                    logger.info(f"[ACTIVITY] session census: {_act_sum.get('events')}")
+                except Exception as _act_e:
+                    logger.debug(f"[ACTIVITY] EOD log failed: {_act_e}")
 
                 # ── F2: comprehensive daily review ─────────────────────
                 try:

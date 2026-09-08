@@ -22,6 +22,12 @@ INTERESTING = [
     ("WATCHDOG",     "WATCH"),
     ("FEED HEALTH",  "FEED"),
     ("OPTION FEED",  "FEED"),
+    # ── [ACTIVITY] session forensics additions ──
+    ("[GATE]",       "GATE"),     # entry gates / exit holds
+    ("[ACT]",        "ACT"),      # activity lifecycle events
+    ("[KILL SWITCH]","ALERT"),
+    ("AUTO-PAUSE",   "ALERT"),
+    ("[BLOCKER TRACE]", "BLOCK"),
 ]
 LOUD = {"TRADE", "ALERT", "ERR"}          # always written
 QUIET_PERIOD = 300.0                      # heartbeat cadence (s)

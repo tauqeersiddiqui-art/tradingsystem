@@ -536,17 +536,21 @@ class LiveEngine:
         # ══ STEP 2: Session gates ════════════════════════════════════════
         if now < _ORB_END:
             self._last_block_reason = "ORB_BUILD (9:15-9:30)"
+            self._activity_block("ORB_BUILD")
             return None
         if now >= dtime(15, 15):
             self._last_block_reason = "MARKET_CLOSING (after 15:15)"
+            self._activity_block("MARKET_CLOSING")
             return None
         # LUNCH_FILTER — OFF in dry-run testing. Set LUNCH_FILTER_ENABLED=1
         # (config) when switching to live capital.
         if self._lunch_enabled and _LUNCH_START <= now < _LUNCH_END:
             self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
+            self._activity_block("LUNCH_FILTER")
             return None
         if not features:
             self._last_block_reason = "INSUFFICIENT_DATA (<26 candles)"
+            self._activity_block("INSUFFICIENT_DATA")
             return None
 
         # ── Re-entry cooldown ────────────────────────────────────────────
@@ -555,6 +559,7 @@ class LiveEngine:
             _wait = int(self._reentry_cooldown - _secs_since_exit)
             self._count_block("COOLDOWN")
             self._last_block_reason = f"COOLDOWN ({_wait}s remaining)"
+            self._activity_block(f"COOLDOWN({_wait}s)")
             return None
 
         # ══ PREDICT-FIRST PATH ═══════════════════════════════════════════
@@ -574,6 +579,7 @@ class LiveEngine:
         if direction_bias == 0:
             self._count_block("NO_DIRECTION")
             self._last_block_reason = "NO_DIRECTION (ST=0)"
+            self._activity_block("NO_DIRECTION")
             return None
 
         # ── Higher-timeframe (5m) confirmation — anti-noise entry gate ───
@@ -584,6 +590,7 @@ class LiveEngine:
         if (direction_bias == 1 and htf5 == -1) or (direction_bias == -1 and htf5 == 1):
             self._count_block("HTF5_OPPOSES")
             self._last_block_reason = f"HTF5_OPPOSES (1m={direction_bias} 5m={htf5})"
+            self._activity_block(f"HTF5_OPPOSES(1m={direction_bias} 5m={htf5})")
             return None
 
         # ══ STEP 4: Signal thresholds + ORB breakout ════════════════════
@@ -735,6 +742,7 @@ class LiveEngine:
             elif "ML_BELOW" in _br: _bk = "ML_BELOW_THR"
             else:                  _bk = "ML_BELOW_THR"
             self._count_block(_bk)
+            self._activity_block(f"{_bk}({_br})")
             return None
 
         # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
@@ -767,6 +775,7 @@ class LiveEngine:
             )
             self._count_block("PNL_GUARD")
             self._last_block_reason = f"PNL_GUARD (exp=Rs{expected_pnl:.0f})"
+            self._activity_block(f"PNL_GUARD(exp=Rs{expected_pnl:.0f})", price)
             return None
 
         logger.info(
@@ -857,9 +866,28 @@ class LiveEngine:
         blocked, reason_block = self.learner.is_side_blocked(side)
         if blocked:
             active_blockers.append(f"{side}_BLOCKED ({reason_block})")
-        # TIME_FILTER
-        if not self._in_trading_hours(current_time):
-            active_blockers.append("TIME_FILTER")
+        # TIME_FILTER — entries allowed only during market hours.
+        # NOTE: this replaces a broken call to self._in_trading_hours(current_time)
+        # (method never existed → AttributeError every cycle → engine could
+        # never fire a trade).
+        _now_t = ts.time() if isinstance(ts, datetime) else datetime.now().time()
+        if not (_MARKET_OPEN <= _now_t < dtime(15, 15)):
+            active_blockers.append(f"TIME_FILTER({_now_t.strftime('%H:%M')})")
+
+        # ── [ACTIVITY] persist the full decision snapshot ─────────────
+        # One structured line per evaluation (throttled inside the module):
+        # probs, direction, threshold, 5m trend, VWAP, every active blocker.
+        # This is what lets the analyzer reconstruct WHY any trade happened
+        # (or why signals never fired).
+        try:
+            from engine.diagnostics import session_activity as _sa
+            _sa.log_decision(
+                ce=ce_adj, pe=pe_adj, dir_side=side, thr=thr,
+                htf5=htf5, pvwap=pvwap, blockers=active_blockers,
+                signal_fired=not active_blockers, price=price,
+            )
+        except Exception:
+            pass
 
         if active_blockers:
             logger.info("BLOCKER TRACE → [%s]", ", ".join(active_blockers))
@@ -898,6 +926,25 @@ class LiveEngine:
     def record_block(self, key: str) -> None:
         """Public — called from master_runner for OI_WALL, PAUSED, etc."""
         self._count_block(key)
+
+    def _activity_block(self, reason: str, price: float | None = None):
+        """
+        Persist a decision-block to the session activity stream.
+        Used by the legacy check_entry gates (ORB_BUILD, COOLDOWN, ...).
+        Lazy import + full try/except — diagnostics can never break trading.
+        """
+        try:
+            from engine.diagnostics import session_activity as _sa
+            _sa.log_decision(
+                ce=self._last_ce_adj, pe=self._last_pe_adj, dir_side="",
+                thr=float(getattr(self.learner, "get_ml_threshold", lambda: 0.0)() or 0.0),
+                htf5=self._htf5_dir,
+                pvwap=self._last_features.get("price_vs_vwap", 0.0),
+                blockers=[reason], signal_fired=False,
+                price=price if price is not None else 0.0,
+            )
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════════════════════════
     # MARKET STATE  (snapshot for dashboard rendering)

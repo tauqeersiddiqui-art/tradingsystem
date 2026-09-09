@@ -1,0 +1,138 @@
+16:41:04 [ml_intraday_learner] INFO: IntradayMLLearner reset for new day
+16:41:04 [master] INFO: [SINGLETON] Lock acquired (pid=14020).
+16:41:04 [master] INFO: MASTER STARTED
+16:41:05 [master] INFO: Initializing ZerodhaBroker
+16:41:14 [master] INFO: Starting market feed
+16:41:15 [master] INFO: Feed ready — first tick received: NIFTY BANK=57380.60
+16:41:15 [master] INFO: Broker initialized
+16:41:15 [master] INFO: [HIST] Fetching NIFTY BANK 1m  2026-08-29 -> 2026-09-03 ...
+16:41:15 [master] INFO: [HIST] CSV updated: 2,477 rows  latest=2026-09-03 15:31:00
+16:41:15 [candle_builder] INFO: [CandleBuilder] token=260105 interval=1m buffer=300
+16:41:16 [candle_builder] INFO: [CandleBuilder] Seeded 200 historical candles
+16:41:16 [master] INFO: CandleBuilder ready | seeded=200 candles
+16:41:16 [ml_intraday_learner] INFO: IntradayMLLearner reset for new day
+16:41:16 [predictor_champion] INFO: [ChampionPredictor] Mode: LGBM+CAT_ENSEMBLE | CE=35 feats thresh=0.4 | PE=35 feats thresh=0.4
+16:41:16 [live_engine] INFO: [LiveEngine] Initialized
+16:41:16 [master] INFO: [STATE] Restored session: pnl=-858 trades_today=2
+16:41:16 [trade_journal] INFO: [JOURNAL] Started | session=20260903_164116 | commit=16a0ed1 | config=272b3fb_be4_htf30m_recency3x
+16:41:16 [trade_journal] INFO: [VERSION] commit=16a0ed1 ce_model=2026-09-02T12:18:24.427278 pe_model=2026-09-02T12:18:24.431845 config=272b3fb_be4_htf30m_recency3x
+16:41:16 [master] INFO: Context built
+16:41:16 [scalp] INFO: [SCALP ENGINE] initialized | threshold=20.0pt window=30s SL=3.0pt target=50.0pt max_hold=180s cooldown=240s
+16:41:16 [live_engine] INFO: [ORB RECONSTRUCTED] High=57661.40  Low=57467.05  (candles=15, window=9:15-9:29)
+16:41:16 [master] INFO: Engine loop started
+16:41:16 [master] INFO: Engine thread started
+16:41:16 [master] INFO: [RECOVERY] DRY_RUN mode — skipping live broker position check
+16:41:16 [master] INFO: [ENGINE WATCHDOG] Engine healthy
+16:41:16 [ml_intraday_learner] INFO: Day open set: 57380.6
+16:41:16 [master] INFO: [ENGINE WATCHDOG] Supervisor started — interval=30s max_restarts=5
+16:41:16 [live_engine] WARNING: [DAY CLASSIFIER] Skipped (insufficient candles or model missing)
+16:41:16 [master] INFO: [FEED HEALTH]
+  WS mode             : CONNECTED
+  First tick received : 16:41:16
+  Subscribed tokens   : 23
+  ORB status          : RECONSTRUCTED
+  WIP candle active   : YES
+  Learner candles     : 0
+  Day clf candles     : 0
+16:41:16 [master] INFO: [EOD] Trades=2 PnL=\u20b9-858 WR=0%
+16:41:16 [master] INFO: [EOD F3 REGIME]
+\U0001f4c8 <b>REGIME PERFORMANCE</b>  (all-time)
+<code>\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501</code>
+
+<b>SCALP</b>  (2 trades)
+W/L: 0/2   WR: 0%
+P&amp;L: -\u20b9858   PF: 0.00
+Exp: -\u20b9429/trade   Cap: 0%
+Avg MFE: +\u20b90   Avg MAE: -\u20b9429
+
+<code>\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501</code>
+16:41:16 [master] INFO: [EOD F4 ML_BUCKETS]
+\U0001f9e0 <b>ML SIGNAL QUALITY</b>  (all-time)
+<code>\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501</code>
+<code>Bucket       N   WR    AvgPnL  AvgMFE  Cap</code>
+<code>0.75–0.80  —</code>
+<code>0.80–0.85  —</code>
+<code>0.85–0.90  —</code>
+<code>0.90+      —</code>
+
+<i>PnL and MFE in \u20b9/trade.  Capture = Realized / MFE.</i>
+16:41:16 [master] INFO: [EOD F7 SETUP]
+\U0001f3af <b>SETUP PERFORMANCE</b>  (all-time)
+<code>\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501</code>
+<code>Setup          N   WR    Exp     PF    MFE</code>
+<code>SCALP_MOM        2    0%    -429   0.00      0</code>
+
+<i>Sorted best-to-worst by total PnL</i>
+16:41:59 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:42:56 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:44:40 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:48:23 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:49:19 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:49:56 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:51:46 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:52:49 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:53:16 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:53:35 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:53:40 [state_store] WARNING: [STATE] save failed: [WinError 5] Access is denied: 'data\\runtime_state.json.14020.tmp' -> 'data\\runtime_state.json'
+16:55:26 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:57:28 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+16:58:16 [state_store] WARNING: [STATE] save failed: [WinError 5] Access is denied: 'data\\runtime_state.json.14020.tmp' -> 'data\\runtime_state.json'
+16:58:47 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:00:29 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:01:20 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:01:56 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:05:56 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:06:26 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:06:53 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:07:21 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:08:20 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:09:56 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:10:25 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:10:58 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:12:43 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:14:45 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:17:01 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:19:54 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:22:40 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:24:17 [tg.notifier] WARNING: [TG] poll_commands error (#1): ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+17:26:51 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:27:57 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:28:16 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:30:44 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:34:34 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:38:51 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:39:25 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:41:03 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:43:56 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:50:13 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+17:57:00 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:03:21 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:09:13 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:11:27 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:13:45 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:18:20 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:20:01 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:20:21 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:21:07 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:23:00 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:26:30 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:28:12 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:31:40 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:36:04 [state_store] WARNING: [STATE] save failed: [WinError 5] Access is denied: 'data\\runtime_state.json.14020.tmp' -> 'data\\runtime_state.json'
+18:47:04 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:50:25 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:50:38 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:50:54 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:52:29 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+18:55:54 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:08:42 [state_store] WARNING: [STATE] save failed: [WinError 5] Access is denied: 'data\\runtime_state.json.14020.tmp' -> 'data\\runtime_state.json'
+19:10:13 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:12:09 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:13:09 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:14:27 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:16:37 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:23:51 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:25:13 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:26:40 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:28:15 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)
+19:31:07 [tg.notifier] WARNING: [TG] poll_commands error (#1): HTTPSConnectionPool(host='api.telegram.org', port=443): Read timed out. (read timeout=5)

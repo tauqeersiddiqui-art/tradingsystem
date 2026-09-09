@@ -35,7 +35,7 @@ try:
 except ImportError:
     _CATBOOST_AVAILABLE = False
 
-from ml.feature_config import FEATURE_COLUMNS
+from ml.feature_config import ALL_FEATURE_COLUMNS as FEATURE_COLUMNS
 from ml.predictor_champion import CalibratedLGBM
 
 DATA_PATH = "ml/models/training_dataset_v3.csv"
@@ -46,6 +46,59 @@ MIN_AUC = 0.55       # below this the model has no real edge
 MIN_STD = 0.05       # calibrated-prob spread; below = saturated/no signal
 RECENCY_CUTOFF = "2024-01-01"
 RECENCY_MULT   = 3.0
+
+# ── Calibration / threshold holdout ───────────────────────────────────
+# CRITICAL (2026-09-06): the last CAL_FRAC of rows (chronological) are held
+# OUT of the final fit and used ONLY for Platt calibration, threshold search,
+# and the deploy-gate AUC.
+#
+# The bug this replaces: the final booster was fit on ALL rows, then
+# `*_, (_, hold) = TimeSeriesSplit(5).split(X)` picked the last fold — rows the
+# booster had already memorised — and Platt scaling AND find_threshold() ran on
+# those in-sample predictions. Consequence, measured on a clean temporal split
+# (train < 2025-07-01, test >= 2025-07-01) of training_dataset_v3.csv:
+#     shipped LGBM alone      AUC 0.4959   <- below chance
+#     shipped CatBoost alone  AUC 0.5281
+#     shipped ensemble        AUC 0.5235
+#     fresh retrain, same pre-cutoff data AUC 0.6361
+# The models were not weak; the procedure was measuring memorisation, so the
+# deploy gate passed models with no out-of-sample edge and handed the live
+# engine calibrated-looking probabilities that meant nothing.
+CAL_FRAC = float(os.getenv("V3_CAL_FRAC", "0.20"))
+
+
+# ── Disentangled composition wrapper ──────────────────────────────────
+class DisentangledModel:
+    """
+    Composes an ACTIVITY head (P(touch)) with a DIRECTION head (P(up | touch))
+    into a single predictor-compatible model:
+
+        p_CE = P(touch) * P(up | touch)
+        p_PE = P(touch) * (1 - P(up | touch))
+
+    Drop-in for the live ChampionPredictor: exposes .predict_proba(X),
+    .predict(X), .feature_names_, and .base_model (used for raw-prob logging).
+    """
+
+    def __init__(self, activity, direction, side):
+        self.activity       = activity
+        self.direction      = direction
+        self.side           = side
+        self.feature_names_ = list(FEATURE_COLUMNS)
+        self.base_model     = activity.base_model
+
+    def predict_proba(self, X):
+        p_touch = np.clip(self.activity.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
+        p_dir   = np.clip(self.direction.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6)
+        if self.side == "CE":
+            p = p_touch * p_dir
+        else:
+            p = p_touch * (1.0 - p_dir)
+        p = np.clip(p, 1e-6, 1 - 1e-6)
+        return np.column_stack([1.0 - p, p])
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
 
 def recency_weights(timestamps):
@@ -79,6 +132,16 @@ def find_threshold(probs, y):
     return best
 
 
+def holdout_split(n):
+    """
+    Chronological (fit_idx, hold_idx). Rows are already date-sorted in main().
+    The holdout is a genuine future window: no fit row is ever scored.
+    """
+    cut = int(n * (1.0 - CAL_FRAC))
+    cut = max(min(cut, n - 1), 1)
+    return np.arange(cut), np.arange(cut, n)
+
+
 def train_one(df, label_col, name):
     print(f"\n{'-'*60}\n  {name}  (label={label_col})\n{'-'*60}")
     X = df[FEATURE_COLUMNS].values
@@ -86,9 +149,13 @@ def train_one(df, label_col, name):
     ts = df["date"].values if "date" in df.columns else None
     print(f"  samples={len(y):,}  positive_rate={y.mean():.1%}")
 
+    # NOTE: params mirror probe_features_v4.PARAMS — the configuration that
+    # measured 65-feature conditional-direction AUC 0.676 OOS (vs 0.51 on
+    # the base 35).  The previous weaker params (depth=6/leaves=31/lr=0.02)
+    # left the direction head at 0.51 even with the new features.
     params = dict(
-        n_estimators=500, learning_rate=0.02, max_depth=6, num_leaves=31,
-        subsample=0.8, colsample_bytree=0.8, min_child_samples=50,
+        n_estimators=500, learning_rate=0.03, max_depth=7, num_leaves=63,
+        subsample=0.8, colsample_bytree=0.7, min_child_samples=50,
         reg_alpha=0.05, reg_lambda=0.1,
         verbose=-1, random_state=42, n_jobs=-1,
         # NOTE: no scale_pos_weight — calibrated probabilities, not biased.
@@ -108,23 +175,34 @@ def train_one(df, label_col, name):
     mean_auc = float(np.mean(aucs))
     print(f"  mean AUC = {mean_auc:.3f}")
 
-    # Final model + Platt calibration on the last time-series fold
+    # ── Final model: fit on the EARLY portion only ─────────────────────
+    fit_idx, hold = holdout_split(len(y))
+    Xdf = pd.DataFrame(X, columns=FEATURE_COLUMNS)
+    print(f"  holdout: fit={len(fit_idx):,} rows | hold={len(hold):,} rows "
+          f"({CAL_FRAC:.0%}, out-of-sample)")
+
     final = lgb.LGBMClassifier(**params)
-    final.fit(pd.DataFrame(X, columns=FEATURE_COLUMNS), y,
-              sample_weight=recency_weights(ts))
-    *_, (_, hold) = TimeSeriesSplit(n_splits=5).split(X)
+    final.fit(Xdf.iloc[fit_idx], y[fit_idx],
+              sample_weight=recency_weights(ts[fit_idx] if ts is not None else None))
+
+    # Platt scaling on TRULY unseen rows.
     cal = CalibratedLGBM(final)
-    cal.fit_calibration(pd.DataFrame(X[hold], columns=FEATURE_COLUMNS), y[hold])
+    cal.fit_calibration(Xdf.iloc[hold], y[hold])
     cal.feature_names_ = list(FEATURE_COLUMNS)
 
-    probs = cal.predict_proba(pd.DataFrame(X[hold], columns=FEATURE_COLUMNS))[:, 1]
+    probs = cal.predict_proba(Xdf.iloc[hold])[:, 1]
     std = float(probs.std())
     thr = find_threshold(probs, y[hold])
+    # Out-of-sample AUC — this, not the walk-forward mean, is what the deploy
+    # gate should trust, because it is measured on the same rows the calibration
+    # and threshold came from and none of them were fit.
+    hold_auc = float(roc_auc_score(y[hold], probs)) if y[hold].sum() > 0 else 0.5
     print(f"  calibrated prob: min={probs.min():.3f} max={probs.max():.3f} "
           f"mean={probs.mean():.3f} std={std:.3f}")
+    print(f"  HOLDOUT AUC = {hold_auc:.4f}  (walk-forward mean {mean_auc:.4f})")
     print(f"  best threshold: {thr}")
 
-    return {"model": cal, "auc": mean_auc, "std": std,
+    return {"model": cal, "auc": mean_auc, "hold_auc": hold_auc, "std": std,
             "threshold": thr["threshold"], "expectancy": thr["expectancy"],
             "wr": thr["wr"], "trades": thr["trades"]}
 
@@ -156,10 +234,14 @@ def train_one_cat(df, label_col, name):
     mean_auc = float(np.mean(aucs))
     print(f"  mean AUC = {mean_auc:.3f}")
 
-    # Final model + Platt calibration on last time-series holdout
+    # ── Final model: fit on the EARLY portion only (see CAL_FRAC note) ──
+    fit_idx, hold = holdout_split(len(y))
+    print(f"  holdout: fit={len(fit_idx):,} rows | hold={len(hold):,} rows "
+          f"({CAL_FRAC:.0%}, out-of-sample)")
+
     final = CatBoostClassifier(**cat_params)
-    final.fit(Xdf, y, sample_weight=recency_weights(ts))
-    *_, (_, hold) = TimeSeriesSplit(n_splits=5).split(X)
+    final.fit(Xdf.iloc[fit_idx], y[fit_idx],
+              sample_weight=recency_weights(ts[fit_idx] if ts is not None else None))
     cal = CalibratedLGBM(final)          # wrapper works for any sklearn-compatible model
     cal.fit_calibration(Xdf.iloc[hold], y[hold])
     cal.feature_names_ = list(FEATURE_COLUMNS)
@@ -167,11 +249,13 @@ def train_one_cat(df, label_col, name):
     probs = cal.predict_proba(Xdf.iloc[hold])[:, 1]
     std   = float(probs.std())
     thr   = find_threshold(probs, y[hold])
+    hold_auc = float(roc_auc_score(y[hold], probs)) if y[hold].sum() > 0 else 0.5
     print(f"  calibrated prob: min={probs.min():.3f} max={probs.max():.3f} "
           f"mean={probs.mean():.3f} std={std:.3f}")
+    print(f"  HOLDOUT AUC = {hold_auc:.4f}  (walk-forward mean {mean_auc:.4f})")
     print(f"  best threshold: {thr}")
 
-    return {"model": cal, "auc": mean_auc, "std": std,
+    return {"model": cal, "auc": mean_auc, "hold_auc": hold_auc, "std": std,
             "threshold": thr["threshold"], "expectancy": thr["expectancy"],
             "wr": thr["wr"], "trades": thr["trades"]}
 
@@ -209,75 +293,163 @@ def candidate(res, name):
     print(f"  [CANDIDATE ONLY] {p}  (NOT deployed — failed gate)")
 
 
+def train_disentangled(df, family="lgbm"):
+    """
+    Train the FIXED-label heads on the consolidated dataset:
+
+      head A (activity) : label_touch on ALL rows        -> P(touch)
+      head D (direction): label_dir on TOUCHED rows only -> P(up | touch)
+
+    Compose per-side probabilities (DisentangledModel) and gate on the
+    DIRECTION holdout AUC — the honest edge metric. The legacy fused
+    label_ce/label_pe made the two heads learn ACTIVITY (corr ~ +0.78),
+    which is why the deployed champions could not pick a direction.
+    """
+    n   = len(df)
+    cut = int(n * (1.0 - CAL_FRAC))
+    cut = max(min(cut, n - 1), 1)
+
+    print("\n" + "=" * 64)
+    print(f"  DISENTANGLED TRAIN ({family.upper()})  label_touch x label_dir")
+    print("=" * 64)
+
+    head = train_one_cat if family == "cat" else train_one
+    if family == "cat" and not _CATBOOST_AVAILABLE:
+        print("  [CATBOOST] Library not installed — skipping.")
+        return None
+
+    act = head(df, "label_touch", f"activity_{family}")
+
+    touched = df[df["label_dir"].notna()].copy()
+    print(f"\n  direction head on {len(touched):,} touched rows "
+          f"(of {n:,})  touch_rate={len(touched)/n:.1%}")
+    dirn = head(touched, "label_dir", f"direction_{family}")
+
+    ce = DisentangledModel(act["model"], dirn["model"], "CE")
+    pe = DisentangledModel(act["model"], dirn["model"], "PE")
+
+    # ── Composed metrics on the activity head's chronological holdout ──
+    hold      = df.iloc[cut:]
+    X_hold    = hold[FEATURE_COLUMNS]
+    p_ce      = ce.predict_proba(X_hold)[:, 1]
+    p_pe      = pe.predict_proba(X_hold)[:, 1]
+    y_ce      = hold["label_ce"].astype(int).values
+    y_pe      = hold["label_pe"].astype(int).values
+    ce_auc    = float(roc_auc_score(y_ce, p_ce)) if y_ce.sum() > 0 else 0.5
+    pe_auc    = float(roc_auc_score(y_pe, p_pe)) if y_pe.sum() > 0 else 0.5
+    std       = float(np.std(np.concatenate([p_ce, p_pe])))
+
+    # ── THE edge metric: direction head on its own touched holdout ────
+    cut_d = int(len(touched) * (1.0 - CAL_FRAC))
+    cut_d = max(min(cut_d, len(touched) - 1), 1)
+    t_hold   = touched.iloc[cut_d:]
+    p_dir    = dirn["model"].predict_proba(t_hold[FEATURE_COLUMNS])[:, 1]
+    y_dir    = t_hold["label_dir"].astype(int).values
+    dir_auc  = float(roc_auc_score(y_dir, p_dir)) if y_dir.sum() > 0 else 0.5
+    thr      = find_threshold(p_dir, y_dir)
+    dir_exp  = thr["expectancy"]
+
+    print("\n" + "-" * 60)
+    print(f"  COMPOSED HOLDOUT  (n={len(hold):,})")
+    print(f"    CE auc (vs label_ce)   : {ce_auc:.4f}")
+    print(f"    PE auc (vs label_pe)   : {pe_auc:.4f}")
+    print(f"    composed prob std      : {std:.4f}")
+    print(f"  DIRECTION EDGE (touched holdout n={len(t_hold):,})")
+    print(f"    dir auc                : {dir_auc:.4f}   (coin flip = 0.50)")
+    print(f"    best thr               : {thr['threshold']}  wr={thr['wr']:.1%}  "
+          f"exp=Rs{thr['expectancy']}  trades={thr['trades']}")
+
+    ok = (dir_auc >= MIN_AUC and std >= MIN_STD and dir_exp > 0)
+    print(f"\n  DISENTANGLED GATE {family.upper()}: {'PASS' if ok else 'FAIL'}")
+    print(f"  (need dir_auc>={MIN_AUC}, std>={MIN_STD}, expectancy>0)")
+
+    return {"ce": ce, "pe": pe, "auc": ce_auc, "pe_auc": pe_auc,
+            "dir_auc": dir_auc, "std": std, "threshold": thr["threshold"],
+            "expectancy": dir_exp, "wr": thr["wr"], "trades": thr["trades"],
+            "gate": ok}
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Disentangled directional trainer")
+    ap.add_argument("--family", choices=["lgbm", "cat", "both"],
+                    default="both", help="which model families to train")
+    args = ap.parse_args()
+
     print("=" * 64)
     print("  DIRECTIONAL TRAINER v3  (de-saturated, deploy-gated)")
     print("=" * 64)
-    df = pd.read_csv(DATA_PATH).dropna()
+    print(f"  Dataset: {DATA_PATH}")
+    df = pd.read_csv(DATA_PATH)
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
     for f in FEATURE_COLUMNS:
         if f not in df.columns:
             df[f] = 0.0
+    # label_dir NaNs are BY DESIGN (untouched bars) — never drop rows on it.
+    df = df.dropna(subset=FEATURE_COLUMNS).reset_index(drop=True)
 
-    # ── LightGBM ──────────────────────────────────────────────────────
-    ce = train_one(df, "label_ce", "champion_ce_lgbm")
-    pe = train_one(df, "label_pe", "champion_pe_lgbm")
+    for lab in ("label_touch", "label_dir", "label_ce", "label_pe"):
+        if lab not in df.columns:
+            print(f"[ABORT] {lab} missing — run python ml/dataset_builder_v3.py first")
+            sys.exit(1)
 
-    print(f"\n{'='*64}")
-    print(f"  LGBM  CE: AUC={ce['auc']:.3f} std={ce['std']:.3f} thr={ce['threshold']} "
-          f"WR={ce['wr']:.1%} exp=Rs{ce['expectancy']}")
-    print(f"  LGBM  PE: AUC={pe['auc']:.3f} std={pe['std']:.3f} thr={pe['threshold']} "
-          f"WR={pe['wr']:.1%} exp=Rs{pe['expectancy']}")
+    print(f"  rows={len(df):,}  {df['date'].min().date()} -> {df['date'].max().date()}")
+    print(f"  touch_rate={df['label_touch'].mean():.1%}  "
+          f"dir rows={int(df['label_dir'].notna().sum()):,}")
 
-    def passes(r):
-        return r["auc"] >= MIN_AUC and r["std"] >= MIN_STD and r["expectancy"] > 0
-
-    ce_ok, pe_ok = passes(ce), passes(pe)
-    print(f"\n  LGBM GATE  CE: {'PASS' if ce_ok else 'FAIL'}   PE: {'PASS' if pe_ok else 'FAIL'}")
-    print(f"  (need AUC>={MIN_AUC}, std>={MIN_STD}, expectancy>0)")
-
-    if ce_ok and pe_ok:
-        backup_existing()
-        deploy(ce, "champion_ce_lgbm")
-        deploy(pe, "champion_pe_lgbm")
-        print("\n  [LGBM RESULT] New LightGBM models DEPLOYED.")
-    else:
-        candidate(ce, "champion_ce_lgbm")
-        candidate(pe, "champion_pe_lgbm")
-        print("\n  [LGBM RESULT] Gate FAILED — LGBM champions left UNCHANGED.")
-        print("                Inspect candidates / adjust TARGET or START_DATE and rerun.")
-
-    # ── CatBoost (optional — skipped if library not installed) ────────
-    print(f"\n{'='*64}")
-    if not _CATBOOST_AVAILABLE:
-        print("  [CATBOOST] Library not installed — skipping.")
-        print("             Install with:  pip install catboost")
-    else:
-        ce_cat = train_one_cat(df, "label_ce", "champion_ce_cat")
-        pe_cat = train_one_cat(df, "label_pe", "champion_pe_cat")
+    # ── LightGBM (required) ───────────────────────────────────────────
+    if args.family in ("lgbm", "both"):
+        res = train_disentangled(df, family="lgbm")
 
         print(f"\n{'='*64}")
-        print(f"  CAT   CE: AUC={ce_cat['auc']:.3f} std={ce_cat['std']:.3f} "
-              f"thr={ce_cat['threshold']} WR={ce_cat['wr']:.1%} exp=Rs{ce_cat['expectancy']}")
-        print(f"  CAT   PE: AUC={pe_cat['auc']:.3f} std={pe_cat['std']:.3f} "
-              f"thr={pe_cat['threshold']} WR={pe_cat['wr']:.1%} exp=Rs{pe_cat['expectancy']}")
+        print(f"  LGBM DISENTANGLED: dir_auc={res['dir_auc']:.3f} "
+              f"composed_CE_auc={res['auc']:.3f} composed_PE_auc={res['pe_auc']:.3f} "
+              f"std={res['std']:.3f} thr={res['threshold']} exp=Rs{res['expectancy']}")
 
-        ce_cat_ok, pe_cat_ok = passes(ce_cat), passes(pe_cat)
-        print(f"\n  CAT  GATE  CE: {'PASS' if ce_cat_ok else 'FAIL'}   "
-              f"PE: {'PASS' if pe_cat_ok else 'FAIL'}")
-
-        if ce_cat_ok and pe_cat_ok:
-            deploy(ce_cat, "champion_ce_cat")
-            deploy(pe_cat, "champion_pe_cat")
-            print("\n  [CAT RESULT] CatBoost models DEPLOYED. "
-                  "Predictor will use LGBM+CAT_ENSEMBLE.")
+        if res["gate"]:
+            backup_existing()
+            deploy({"model": res["ce"], "threshold": res["threshold"]},
+                   "champion_ce_lgbm")
+            deploy({"model": res["pe"], "threshold": res["threshold"]},
+                   "champion_pe_lgbm")
+            print("\n  [LGBM RESULT] Disentangled LightGBM models DEPLOYED.")
         else:
-            candidate(ce_cat, "champion_ce_cat")
-            candidate(pe_cat, "champion_pe_cat")
-            print("\n  [CAT RESULT] Gate FAILED — CatBoost candidates saved, "
-                  "LGBM-only mode unchanged.")
+            candidate({"model": res["ce"], "threshold": res["threshold"]},
+                      "champion_ce_lgbm")
+            candidate({"model": res["pe"], "threshold": res["threshold"]},
+                      "champion_pe_lgbm")
+            print("\n  [LGBM RESULT] Gate FAILED — champions left UNCHANGED.")
+            print("                Candidates saved; inspect and rerun.")
+
+    # ── CatBoost (optional — skipped if library not installed) ────────
+    if args.family in ("cat", "both"):
+        print(f"\n{'='*64}")
+        res_cat = train_disentangled(df, family="cat") if _CATBOOST_AVAILABLE else None
+        if res_cat is None:
+            if not _CATBOOST_AVAILABLE:
+                print("  [CATBOOST] Library not installed — skipping.")
+                print("             Install with:  pip install catboost")
+        else:
+            print(f"\n{'='*64}")
+            print(f"  CAT  DISENTANGLED: dir_auc={res_cat['dir_auc']:.3f} "
+                  f"composed_CE_auc={res_cat['auc']:.3f} composed_PE_auc={res_cat['pe_auc']:.3f} "
+                  f"std={res_cat['std']:.3f} exp=Rs{res_cat['expectancy']}")
+            if res_cat["gate"]:
+                deploy({"model": res_cat["ce"], "threshold": res_cat["threshold"]},
+                       "champion_ce_cat")
+                deploy({"model": res_cat["pe"], "threshold": res_cat["threshold"]},
+                       "champion_pe_cat")
+                print("\n  [CAT RESULT] Disentangled CatBoost models DEPLOYED. "
+                      "Predictor will use LGBM+CAT_ENSEMBLE.")
+            else:
+                candidate({"model": res_cat["ce"], "threshold": res_cat["threshold"]},
+                          "champion_ce_cat")
+                candidate({"model": res_cat["pe"], "threshold": res_cat["threshold"]},
+                          "champion_pe_cat")
+                print("\n  [CAT RESULT] Gate FAILED — CatBoost candidates saved, "
+                      "LGBM-only mode unchanged.")
 
     print("=" * 64)
 

@@ -1,0 +1,24 @@
+{
+  "session_date": "2026-09-09",
+  "saved_at": "2026-09-09T14:15:37.323393",
+  "pnl": 0.0,
+  "trades_today": 0,
+  "positions": [],
+  "open_position": {
+    "symbol": "X",
+    "side": "CE",
+    "qty": 30,
+    "entry": 100.0,
+    "stop_loss": 103.0,
+    "target": 0.0,
+    "max_pnl": 0.0,
+    "min_pnl": 0.0,
+    "ml_prob": 0.7,
+    "regime": "RANGE",
+    "reason": "STRUCT_CE",
+    "sl_order_id": null,
+    "initial_stop": 95.0,
+    "entry_ts": "2026-09-09T10:00:00"
+  },
+  "scalp_position": null
+}

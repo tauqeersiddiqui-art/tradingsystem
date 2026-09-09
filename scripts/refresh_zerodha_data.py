@@ -27,8 +27,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-CSV_PATH   = "data/historical/nifty_1m_full.csv"
-NIFTY_TOKEN = 256265            # NSE:NIFTY 50 index
+CSV_PATH   = os.getenv("HIST_CSV", "data/historical/banknifty_1m_full.csv")
+INDEX_TOKEN_ = int(os.getenv("INDEX_TOKEN", "260105"))  # traded index (BANKNIFTY)
 YEARS_BACK  = float(os.getenv("YEARS_BACK", "3"))
 CHUNK_DAYS  = 60                # Zerodha minute-data max window per request
 
@@ -87,7 +87,7 @@ def main():
     while cur < to_dt:
         chunk_end = min(cur + timedelta(days=CHUNK_DAYS), to_dt)
         try:
-            raw = kite.historical_data(NIFTY_TOKEN, cur, chunk_end, "minute", oi=False)
+            raw = kite.historical_data(INDEX_TOKEN_, cur, chunk_end, "minute", oi=False)
             if raw:
                 frames.append(pd.DataFrame(raw))
                 print(f"  {cur.date()}..{chunk_end.date()}: {len(raw):,} candles")

@@ -15,12 +15,18 @@ import time
 import logging
 from datetime import datetime, time as dtime
 
+import pandas as pd
+
 from ml.predictor_champion import ChampionPredictor
-from ml.feature_config import build_live_features, _safe_build_live_features, FEATURE_COLUMNS
+from ml.feature_config import build_live_features, _safe_build_live_features, FEATURE_COLUMNS, ALL_FEATURE_COLUMNS
 from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
-from engine.risk.risk_manager import compute_entry_stops
+from engine.risk.risk_manager import (
+    compute_entry_stops,
+    premium_stop_pts,
+    _TARGET_R,
+)
 
 logger = logging.getLogger("live_engine")
 
@@ -28,8 +34,8 @@ logger = logging.getLogger("live_engine")
 _MARKET_OPEN  = dtime(9, 15)
 _ORB_END      = dtime(9, 30)   # ORB window: 9:15 – 9:29 (15 candles)
 
-# Zerodha instrument token for NIFTY 50 index (used in ORB reconstruction)
-_NIFTY_INDEX_TOKEN = 256265
+# Zerodha instrument token for the traded index (config-driven; ORB reconstruction)
+from engine.config.config import INDEX_TOKEN as _NIFTY_INDEX_TOKEN
 _DAY_CLASS_AT = dtime(9, 45)   # Day classifier locks after 9:44
 _MARKET_CLOSE = dtime(15, 30)
 
@@ -45,7 +51,7 @@ _MIN_EXPECTED_PNL = 150.0
 # CE: 0.78 — raised from 0.70. Model is CE-biased (outputs 0.80-0.96 all day
 #     even on bear days). Higher floor forces only truly exceptional signals.
 #     On RANGE regime days, CE_ML_FLOOR rises further to 0.85 (see STEP 5).
-_MIN_ML_FLOOR    = 0.65   # PE floor
+_MIN_ML_FLOOR    = 0.40   # PE floor — lowered from 0.65 to match new model output range
 _CE_ML_FLOOR     = 0.78   # CE needs high confidence — model is CE-biased
 # Re-entry cooldown is config-driven (Config.REENTRY_COOLDOWN, default 300s);
 # see LiveEngine.__init__ self._reentry_cooldown.
@@ -114,13 +120,46 @@ class LiveEngine:
         # instead of 1m SuperTrend choosing and ML rubber-stamping. Requires
         # the v3 directional models (both sides trained on all bars).
         self._predict_first: bool = (os.getenv("PREDICT_FIRST", "1") == "1")
+
+        # ── STRUCTURE-FIRST decision (Sep-2026 fix) ───────────────────
+        # Direction on 1m spot OHLC is a coin flip (dir AUC ~0.51 even with
+        # 65 features — see probe_direction.log / trainer_v3 gate).  The
+        # learnable ML signal is ACTIVITY (P(touch), AUC ~0.76): "is a 50pt
+        # move likely at all?".  STRUCTURE_FIRST=1 therefore lets structure
+        # (5m SuperTrend + VWAP) pick the SIDE and uses ML ONLY as an
+        # activity filter: fire when P(touch) = ce_prob + pe_prob clears
+        # STRUCTURE_ACTIVITY_THRESHOLD.  This replaces the unreachable
+        # argmax+edge+threshold logic that blocked every entry for 2 weeks.
+        self._structure_first: bool = (os.getenv("STRUCTURE_FIRST", "0") == "1")
+        self._activity_thr: float = float(
+            os.getenv("STRUCTURE_ACTIVITY_THRESHOLD", "0.55")
+        )
         # Minimum gap between the two sides' probs to claim a directional
         # edge. If |ce - pe| < margin, conviction is too low → no trade.
         self._ml_edge_margin: float = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
 
+        # [PREDICT-FIRST] log throttle — the engine loop runs ~1x/sec, so the
+        # per-cycle INFO line would spam identical text 60x/min. We log only
+        # when the decision inputs change, plus a 60 s heartbeat so a silent
+        # freeze is still visible in the log (see _check_entry_predict_first).
+        self._pf_log_key: tuple | None = None
+        self._pf_log_ts: float = 0.0
+
         # ── Per-minute dedup guards (learner + VWAP update once per minute) ──
         self._last_classify_minute: datetime | None = None
         self._last_vwap_minute: datetime | None = None
+
+        # ── Day-context cache for NEW-30 features (from_day_open,
+        #    day_range_*, gap_from_prev) — reset at each new trading day.
+        #    df_window only spans ~5h of 1m candles, so day_open/prev_close
+        #    must be captured once per day, not recomputed from the window.
+        self._day_ctx: dict = {
+            "date":       None,
+            "day_open":   0.0,
+            "day_high":   0.0,
+            "day_low":    0.0,
+            "prev_close": 0.0,
+        }
 
         # ── Dashboard state (updated every cycle for rich display) ────
         self._last_block_reason: str = "WARMING_UP"
@@ -355,14 +394,65 @@ class LiveEngine:
 
         signal = self._compute_signal_dict(closes, highs, lows, df_window)
 
-        features = _safe_build_live_features(closes, opens, highs, lows, volumes, signal, ts=ts)
+        day_ctx = self._update_day_ctx(df_window, ts)
+        features = _safe_build_live_features(closes, opens, highs, lows, volumes,
+                                             signal, ts=ts, day_ctx=day_ctx)
 
-        missing = [f for f in FEATURE_COLUMNS if f not in features]
+        missing = [f for f in ALL_FEATURE_COLUMNS if f not in features]
         if missing:
             logger.error(f"[FEATURES] Still missing after build: {missing}")
             return None
 
         return features
+
+    def _update_day_ctx(self, df_window, ts=None) -> dict:
+        """
+        Maintain day_open / day_high / day_low / prev_close for the
+        NEW-30 features.  Captured once per trading day (window only spans
+        ~5h of candles; at 14:30 the buffer no longer contains 9:15).
+        """
+        ctx = self._day_ctx
+        if ts is None:
+            return ctx
+        today = ts.date()
+
+        if ctx["date"] != today:
+            ctx["date"] = today
+            ctx["day_open"]   = 0.0
+            ctx["day_high"]   = 0.0
+            ctx["day_low"]    = 0.0
+            ctx["prev_close"] = self._prev_close or 0.0
+
+            if df_window is not None and len(df_window) and "ts" in df_window.columns:
+                try:
+                    ts_col = pd.to_datetime(df_window["ts"])
+                    prev = df_window[ts_col.dt.date < today]
+                    if len(prev):
+                        ctx["prev_close"] = float(prev["close"].iloc[-1])
+                    today_rows = df_window[ts_col.dt.date == today]
+                    if len(today_rows):
+                        ctx["day_open"] = float(today_rows["open"].iloc[0])
+                        ctx["day_high"] = float(today_rows["high"].max())
+                        ctx["day_low"]  = float(today_rows["low"].min())
+                except Exception as _dc_e:
+                    logger.debug(f"[DAY_CTX] window parse failed: {_dc_e}")
+        else:
+            # Same day — roll running high/low forward with the latest candle.
+            if df_window is not None and len(df_window):
+                last = df_window.iloc[-1]
+                try:
+                    if ctx["day_high"]:
+                        ctx["day_high"] = max(ctx["day_high"], float(last["high"]))
+                    else:
+                        ctx["day_high"] = float(last["high"])
+                    if ctx["day_low"]:
+                        ctx["day_low"] = min(ctx["day_low"], float(last["low"]))
+                    else:
+                        ctx["day_low"] = float(last["low"])
+                except Exception:
+                    pass
+
+        return ctx
 
     def _compute_signal_dict(self, closes: list, highs: list, lows: list, df) -> dict:
         """
@@ -529,17 +619,21 @@ class LiveEngine:
         # ══ STEP 2: Session gates ════════════════════════════════════════
         if now < _ORB_END:
             self._last_block_reason = "ORB_BUILD (9:15-9:30)"
+            self._activity_block("ORB_BUILD")
             return None
         if now >= dtime(15, 15):
             self._last_block_reason = "MARKET_CLOSING (after 15:15)"
+            self._activity_block("MARKET_CLOSING")
             return None
         # LUNCH_FILTER — OFF in dry-run testing. Set LUNCH_FILTER_ENABLED=1
         # (config) when switching to live capital.
         if self._lunch_enabled and _LUNCH_START <= now < _LUNCH_END:
             self._last_block_reason = "LUNCH_FILTER (11:00-12:30)"
+            self._activity_block("LUNCH_FILTER")
             return None
         if not features:
             self._last_block_reason = "INSUFFICIENT_DATA (<26 candles)"
+            self._activity_block("INSUFFICIENT_DATA")
             return None
 
         # ── Re-entry cooldown ────────────────────────────────────────────
@@ -548,7 +642,15 @@ class LiveEngine:
             _wait = int(self._reentry_cooldown - _secs_since_exit)
             self._count_block("COOLDOWN")
             self._last_block_reason = f"COOLDOWN ({_wait}s remaining)"
+            self._activity_block(f"COOLDOWN({_wait}s)")
             return None
+
+        # ══ STRUCTURE-FIRST PATH (Sep-2026) ════════════════════════════
+        # Structure picks the side; ML gates on activity only.  See
+        # STRUCTURE_FIRST note in __init__ for why this replaces the
+        # predict-first gate for the current models.
+        if self._structure_first:
+            return self._check_entry_structure_first(df_window, features, ts)
 
         # ══ PREDICT-FIRST PATH ═══════════════════════════════════════════
         # ML chooses direction; structure confirms. Replaces the legacy
@@ -567,6 +669,7 @@ class LiveEngine:
         if direction_bias == 0:
             self._count_block("NO_DIRECTION")
             self._last_block_reason = "NO_DIRECTION (ST=0)"
+            self._activity_block("NO_DIRECTION")
             return None
 
         # ── Higher-timeframe (5m) confirmation — anti-noise entry gate ───
@@ -577,6 +680,7 @@ class LiveEngine:
         if (direction_bias == 1 and htf5 == -1) or (direction_bias == -1 and htf5 == 1):
             self._count_block("HTF5_OPPOSES")
             self._last_block_reason = f"HTF5_OPPOSES (1m={direction_bias} 5m={htf5})"
+            self._activity_block(f"HTF5_OPPOSES(1m={direction_bias} 5m={htf5})")
             return None
 
         # ══ STEP 4: Signal thresholds + ORB breakout ════════════════════
@@ -604,19 +708,13 @@ class LiveEngine:
         ce_adj = self._last_ce_adj
         pe_adj = self._last_pe_adj
 
-        # Hard direction gate — zero out opposite side
-        if direction_bias != 1:
-            ce_adj = 0.0
-        if direction_bias != -1:
-            pe_adj = 0.0
-
         logger.debug(
             f"[ML] CE={ce_adj:.3f}({self._last_ce_prob:.3f}) "
             f"PE={pe_adj:.3f}({self._last_pe_prob:.3f}) "
             f"thr={threshold:.3f} ORB_CE={ce_breakout} ORB_PE={pe_breakout}"
         )
 
-        # ══ STEP 5: Side selection ═══════════════════════════════════════
+        # ══ STEP 5: Side selection ════════════════════════════════════════
         signal  = None
         dir_str = "BULL" if direction_bias == 1 else "BEAR"
         self._last_block_reason = (
@@ -626,6 +724,7 @@ class LiveEngine:
         # CE entry — requires BULL direction + VWAP confirmation.
         # VWAP✗ on a BULL ST signal = false bounce, not a real uptrend.
         # On RANGE days, pure ML_CE floor rises to 0.85 (model fires too freely on chop).
+        # NOTE: Removed artificial zeroing of opposite-side probabilities.
         if not _CE_ORB_ENABLED:
             ce_adj = 0.0
         else:
@@ -733,6 +832,7 @@ class LiveEngine:
             elif "ML_BELOW" in _br: _bk = "ML_BELOW_THR"
             else:                  _bk = "ML_BELOW_THR"
             self._count_block(_bk)
+            self._activity_block(f"{_bk}({_br})")
             return None
 
         # ══ STEP 6: Risk + expected PnL guard ═══════════════════════════
@@ -743,6 +843,16 @@ class LiveEngine:
         STEP 6 — attach risk stops + expected-PnL guard, then return the
         signal (or None if it fails the guard). Shared by both the legacy
         direction-gate path and the predict-first path.
+
+        UNITS (2026-09-06 fix): `price` here is the SPOT close, not the option
+        premium. The old code called compute_entry_stops(price, ...) and stored
+        the resulting SPOT levels as the signal's stop_loss/target, then computed
+        expected PnL as (target - price) * lot_size — i.e. spot points priced as
+        if they were premium rupees. master_runner recomputes real premium stops
+        from the fill anyway, so those levels were never traded; they only
+        corrupted this guard and the Telegram message.
+        We now carry the premium stop DISTANCE (what the risk manager will
+        actually place) and evaluate the guard in premium space, net of cost.
         """
         atr_val  = features.get("atr", price * 0.01)
         day_type = self.learner.get_day_type()
@@ -751,28 +861,152 @@ class LiveEngine:
             "TREND"     if "TREND"    in day_type else
             "RANGE"
         )
-        stop_loss, target, stop_pct = compute_entry_stops(price, atr_val, regime)
-        signal.update(stop_loss=stop_loss, target=target,
-                      stop_pct=stop_pct, regime=regime)
 
-        lot_size     = getattr(getattr(self.ctx, "config", None), "LOT_SIZE", 65)
-        exp_win      = (target - price) * lot_size
-        exp_loss     = (price - stop_loss) * lot_size
-        expected_pnl = signal["ml_prob"] * exp_win - (1 - signal["ml_prob"]) * exp_loss
+        # Premium-space risk geometry — same numbers master_runner will use at
+        # the fill, expressed as distances so no premium price is needed here.
+        stop_pts   = premium_stop_pts(atr_val)
+        target_pts = stop_pts * _TARGET_R
+        signal.update(stop_pts=round(stop_pts, 2),
+                      target_pts=round(target_pts, 2),
+                      regime=regime)
+
+        _cfg         = getattr(self.ctx, "config", None)
+        lot_size     = int(getattr(_cfg, "LOT_SIZE", 30) or 30)
+        cost_rs      = float(getattr(_cfg, "COST_PER_LOT", 66.0) or 66.0)
+        exp_win      = target_pts * lot_size
+        exp_loss     = stop_pts * lot_size
+        # NOTE: this uses the 3.5R target, which a replay shows is almost never
+        # reached — the profit ladder exits first. The guard is therefore an
+        # optimistic R:R sanity check, not the edge test; CHAMPION_THRESHOLD is.
+        expected_pnl = (signal["ml_prob"] * exp_win
+                        - (1 - signal["ml_prob"]) * exp_loss
+                        - cost_rs)
         if expected_pnl < _MIN_EXPECTED_PNL:
             logger.info(
                 f"[PNL GUARD] Expected Rs{expected_pnl:.0f} < Rs{_MIN_EXPECTED_PNL} — skipping"
             )
             self._count_block("PNL_GUARD")
             self._last_block_reason = f"PNL_GUARD (exp=Rs{expected_pnl:.0f})"
+            self._activity_block(f"PNL_GUARD(exp=Rs{expected_pnl:.0f})", price)
             return None
 
         logger.info(
             f"[ENTRY SIGNAL] {signal['side']} | reason={signal['reason']} | "
-            f"prob={signal['ml_prob']:.3f} | SL={stop_loss:.2f} | TP={target:.2f} | "
-            f"ExpPnL=Rs{expected_pnl:.0f}"
+            f"prob={signal['ml_prob']:.3f} | stop={stop_pts:.1f}prem "
+            f"| tgt={target_pts:.1f}prem | ExpPnL=Rs{expected_pnl:.0f}"
         )
         return signal
+
+    def _live_threshold(self) -> float:
+        """
+        THE decision threshold, for every consumer (entry gate, dashboard,
+        allocator sanity, Telegram). One function so the number can never
+        disagree with itself again.
+
+        Under PREDICT_FIRST (the live path) the gate is Config.CHAMPION_THRESHOLD
+        read off the live instance. Under the legacy path it is the adaptive
+        learner value floored by _MIN_ML_FLOOR.
+        """
+        if not self._predict_first:
+            try:
+                return float(max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR))
+            except Exception:
+                return _MIN_ML_FLOOR
+        cfg = getattr(self.ctx, "config", None)
+        thr = getattr(cfg, "CHAMPION_THRESHOLD", None) if cfg is not None else None
+        if thr is None:
+            thr = os.getenv("CHAMPION_THRESHOLD", "0.55")
+        try:
+            return float(thr)
+        except (TypeError, ValueError):
+            return 0.55
+
+    def _check_entry_structure_first(self, df_window, features, ts):
+        """
+        STRUCTURE-FIRST decision (STRUCTURE_FIRST=1):
+          structure (5m SuperTrend + VWAP) picks the SIDE;
+          ML is used ONLY as an ACTIVITY filter.
+
+        Why: the deployed directional models cannot pick direction (dir AUC
+        ~0.51 = coin flip, see probe_direction.log and the trainer_v3 deploy
+        gate), but their ACTIVITY signal is real (P(touch) AUC ~0.76).  The
+        predict-first gate required |ce_adj - pe_adj| >= 0.15 AND prob >= 0.40
+        on probabilities that provably never reach those levels (P(dir)~0.5
+        makes P(touch)*P(dir) peak near 0.3), which is why no trade fired
+        for two weeks.  This path removes the unreachable ML direction gate
+        entirely and instead:
+          1. SIDE — 5m SuperTrend must AGREE with VWAP side:
+             CE when 5m=UP and price >= VWAP - tol
+             PE when 5m=DOWN and price <= VWAP + tol
+          2. ACTIVITY — ML gates entries: P(touch) = ce_prob + pe_prob must
+             clear STRUCTURE_ACTIVITY_THRESHOLD (the learnable signal).
+          3. learner side-block + finalize (risk/PnL guard) as before.
+        """
+        price  = df_window["close"].iloc[-1]
+        ce_adj = self._last_ce_adj
+        pe_adj = self._last_pe_adj
+        ce_prob = self._last_ce_prob
+        pe_prob = self._last_pe_prob
+        htf5   = self._htf5_dir
+        pvwap  = features.get("price_vs_vwap", 0.0)
+
+        # P(touch) — the learnable activity signal.  ce+pe is the sum of the
+        # two composed probabilities, i.e. P(touch)*P(up|t) + P(touch)*(1-P(up|t))
+        # = P(touch).  Falls back to 0.0 if the model returned nothing.
+        activity = float(ce_prob or 0.0) + float(pe_prob or 0.0)
+
+        active_blockers = []
+
+        # 1. STRUCTURE picks the side — 5m trend AND VWAP must agree.
+        _VWAP_TOL = 0.0015
+        side = None
+        if htf5 == 1 and pvwap >= -_VWAP_TOL:
+            side = "CE"
+        elif htf5 == -1 and pvwap <= _VWAP_TOL:
+            side = "PE"
+        else:
+            active_blockers.append(
+                f"NO_STRUCT_DIR(5m={htf5} pvwap={pvwap:.4f})"
+            )
+
+        # 2. ML ACTIVITY filter — is a 50pt move likely at all?
+        if activity < self._activity_thr:
+            active_blockers.append(
+                f"LOW_ACTIVITY(activity={activity:.3f}<{self._activity_thr:.3f})"
+            )
+
+        # 3. learner side-block (consecutive-loss / losing-side lock)
+        if side:
+            blocked, reason_block = self.learner.is_side_blocked(side)
+            if blocked:
+                active_blockers.append(f"{side}_BLOCKED ({reason_block})")
+
+        # TIME_FILTER — entries allowed only during market hours.
+        _now_t = ts.time() if isinstance(ts, datetime) else datetime.now().time()
+        if not (_MARKET_OPEN <= _now_t < dtime(15, 15)):
+            active_blockers.append(f"TIME_FILTER({_now_t.strftime('%H:%M')})")
+
+        # ── [ACTIVITY] persist the decision snapshot ──────────────────
+        try:
+            from engine.diagnostics import session_activity as _sa
+            _sa.log_decision(
+                ce=ce_adj, pe=pe_adj, dir_side=side or "NONE", thr=self._activity_thr,
+                htf5=htf5, pvwap=pvwap, blockers=active_blockers,
+                signal_fired=not active_blockers, price=price,
+            )
+        except Exception:
+            pass
+
+        if active_blockers:
+            logger.info(
+                "STRUCT BLOCKER → [%s]", ", ".join(active_blockers)
+            )
+            return None
+
+        self._last_block_reason = f"SIGNAL_FIRE (STRUCT_{side})"
+        signal = {"side": side, "ml_prob": activity,
+                  "features": features, "reason": f"STRUCT_{side}"}
+        return self._finalize_signal(signal, features, price)
 
     def _check_entry_predict_first(self, df_window, features, ts):
         """
@@ -795,11 +1029,26 @@ class LiveEngine:
         htf5   = self._htf5_dir
         pvwap  = features.get("price_vs_vwap", 0.0)
 
-        # Per-side thresholds: max of the model's calibrated threshold and the
-        # learner's adaptive threshold (rises after losses).
-        learn_thr = self.learner.get_ml_threshold()
-        ce_thr = max(getattr(self.predictor, "ce_threshold", 0.5), learn_thr)
-        pe_thr = max(getattr(self.predictor, "pe_threshold", 0.5), learn_thr)
+        # THRESHOLD — single source of truth is self._live_threshold(), which
+        # reads the LIVE Config INSTANCE.
+        # Was `getattr(Config, "CHAMPION_THRESHOLD", os.getenv(...))`: Config is
+        # the CLASS and CHAMPION_THRESHOLD is set in __init__, so the attribute
+        # never existed on the class and the env fallback ALWAYS won. Any change
+        # made on the running config object (e.g. a Telegram /ce override) was
+        # silently ignored.
+        base_thr = self._live_threshold()
+        regime_adj = 0.0
+        if hasattr(self.learner, "get_regime_adjustment"):
+            regime_adj = float(self.learner.get_regime_adjustment() or 0.0)
+        final_ce_thr = round(base_thr + regime_adj, 4)
+        final_pe_thr = round(base_thr + regime_adj, 4)
+        if final_ce_thr > 0.65 or final_pe_thr > 0.65:
+            logger.warning("[CONFIG_BUG] Threshold > 0.65 detected: CE=%s PE=%s; clamping to 0.65", final_ce_thr, final_pe_thr)
+            final_ce_thr = min(final_ce_thr, 0.65)
+            final_pe_thr = min(final_pe_thr, 0.65)
+        logger.info("THRESHOLD TRACE → base=%.3f, regime_adj=%+.3f, final_ce=%.3f, final_pe=%.3f", base_thr, regime_adj, final_ce_thr, final_pe_thr)
+        ce_thr = final_ce_thr
+        pe_thr = final_pe_thr
 
         # 1. PREDICT direction
         side   = "CE" if ce_adj >= pe_adj else "PE"
@@ -807,52 +1056,70 @@ class LiveEngine:
         thr    = ce_thr if side == "CE" else pe_thr
         other  = pe_adj if side == "CE" else ce_adj
 
-        logger.info(
-            f"[PREDICT-FIRST] CE={ce_adj:.3f} PE={pe_adj:.3f} -> {side} "
-            f"thr={thr:.2f} 5m={htf5} pvwap={pvwap:.4f}"
-        )
+        # Log throttle: the engine loop evaluates ~1x/sec, so logging this
+        # every cycle spams identical lines (60/min). Log only when the
+        # decision inputs (CE/PE probs, 5m trend) change, plus a 60 s heartbeat
+        # so a stalled engine stays visible in the log. pvwap is deliberately
+        # excluded from the change-key — it drifts with every tick.
+        _pf_key = (round(ce_adj, 3), round(pe_adj, 3), htf5)
+        if _pf_key != self._pf_log_key or (time.time() - self._pf_log_ts) >= 60:
+            logger.info(
+                f"[PREDICT-FIRST] CE={ce_adj:.3f} PE={pe_adj:.3f} -> {side} "
+                f"thr={thr:.2f} 5m={htf5} pvwap={pvwap:.4f}"
+            )
+            self._pf_log_key = _pf_key
+            self._pf_log_ts  = time.time()
+
+        # Collect blockers for unified trace
+        active_blockers = []
 
         # 2. EDGE — need clear directional conviction
         if abs(ce_adj - pe_adj) < self._ml_edge_margin:
-            self._count_block("NO_EDGE")
-            self._last_block_reason = (
-                f"NO_EDGE (|CE-PE|={abs(ce_adj-pe_adj):.2f} < {self._ml_edge_margin})"
-            )
-            return None
-
+            active_blockers.append(f"NO_EDGE(diff={abs(ce_adj - pe_adj):.3f}<{self._ml_edge_margin})")
         # 3. THRESHOLD
         if prob < thr:
-            self._count_block("ML_BELOW_THR")
-            self._last_block_reason = f"ML_BELOW_THR ({side} {prob:.2f} < {thr:.2f})"
-            return None
-
-        # 4. CONFIRM — 5m trend must AGREE (htf5==0 = insufficient data → allow)
+            active_blockers.append(f"ML_BELOW_THR({side} {prob:.3f} < {thr:.3f})")
+        # 4. CONFIRM — 5m trend must AGREE
         if side == "CE" and htf5 == -1:
-            self._count_block("HTF5_OPPOSES")
-            self._last_block_reason = f"CE_HTF5_OPPOSES (5m=DOWN, prob={prob:.2f})"
-            return None
+            active_blockers.append(f"CE_HTF5_OPPOSES (5m=DOWN, prob={prob:.3f})")
         if side == "PE" and htf5 == 1:
-            self._count_block("HTF5_OPPOSES")
-            self._last_block_reason = f"PE_HTF5_OPPOSES (5m=UP, prob={prob:.2f})"
-            return None
-
+            active_blockers.append(f"PE_HTF5_OPPOSES (5m=UP, prob={prob:.3f})")
         # 4b. CONFIRM — VWAP side must agree (within tolerance). CE above VWAP,
         # PE below. Tolerance ≈ 0.15% so a marginal cross isn't over-blocked.
         _VWAP_TOL = 0.0015
         if side == "CE" and pvwap < -_VWAP_TOL:
-            self._count_block("VWAP_FAIL")
-            self._last_block_reason = f"CE_VWAP_FAIL (pvwap={pvwap:.4f} below VWAP)"
-            return None
+            active_blockers.append(f"CE_VWAP_FAIL (pvwap={pvwap:.4f} below VWAP)")
         if side == "PE" and pvwap > _VWAP_TOL:
-            self._count_block("VWAP_FAIL")
-            self._last_block_reason = f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)"
-            return None
-
+            active_blockers.append(f"PE_VWAP_FAIL (pvwap={pvwap:.4f} above VWAP)")
         # 5. learner side-block (consecutive-loss / losing-side lock)
         blocked, reason_block = self.learner.is_side_blocked(side)
         if blocked:
-            self._count_block("ML_BLOCKED")
-            self._last_block_reason = f"{side}_BLOCKED ({reason_block})"
+            active_blockers.append(f"{side}_BLOCKED ({reason_block})")
+        # TIME_FILTER — entries allowed only during market hours.
+        # NOTE: this replaces a broken call to self._in_trading_hours(current_time)
+        # (method never existed → AttributeError every cycle → engine could
+        # never fire a trade).
+        _now_t = ts.time() if isinstance(ts, datetime) else datetime.now().time()
+        if not (_MARKET_OPEN <= _now_t < dtime(15, 15)):
+            active_blockers.append(f"TIME_FILTER({_now_t.strftime('%H:%M')})")
+
+        # ── [ACTIVITY] persist the full decision snapshot ─────────────
+        # One structured line per evaluation (throttled inside the module):
+        # probs, direction, threshold, 5m trend, VWAP, every active blocker.
+        # This is what lets the analyzer reconstruct WHY any trade happened
+        # (or why signals never fired).
+        try:
+            from engine.diagnostics import session_activity as _sa
+            _sa.log_decision(
+                ce=ce_adj, pe=pe_adj, dir_side=side, thr=thr,
+                htf5=htf5, pvwap=pvwap, blockers=active_blockers,
+                signal_fired=not active_blockers, price=price,
+            )
+        except Exception:
+            pass
+
+        if active_blockers:
+            logger.info("BLOCKER TRACE → [%s]", ", ".join(active_blockers))
             return None
 
         self._last_block_reason = f"SIGNAL_FIRE (ML_{side})"
@@ -888,6 +1155,25 @@ class LiveEngine:
     def record_block(self, key: str) -> None:
         """Public — called from master_runner for OI_WALL, PAUSED, etc."""
         self._count_block(key)
+
+    def _activity_block(self, reason: str, price: float | None = None):
+        """
+        Persist a decision-block to the session activity stream.
+        Used by the legacy check_entry gates (ORB_BUILD, COOLDOWN, ...).
+        Lazy import + full try/except — diagnostics can never break trading.
+        """
+        try:
+            from engine.diagnostics import session_activity as _sa
+            _sa.log_decision(
+                ce=self._last_ce_adj, pe=self._last_pe_adj, dir_side="",
+                thr=float(getattr(self.learner, "get_ml_threshold", lambda: 0.0)() or 0.0),
+                htf5=self._htf5_dir,
+                pvwap=self._last_features.get("price_vs_vwap", 0.0),
+                blockers=[reason], signal_fired=False,
+                price=price if price is not None else 0.0,
+            )
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════════════════════════
     # MARKET STATE  (snapshot for dashboard rendering)
@@ -941,8 +1227,14 @@ class LiveEngine:
             "htf_bullish":     getattr(self, "_last_htf_bullish", True),
             "ce_adj":          self._last_ce_adj,
             "pe_adj":          self._last_pe_adj,
-            "ml_threshold":    max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR),
-            "ce_threshold":    max(self.learner.get_ml_threshold(), _CE_ML_FLOOR),
+            # Report the threshold the LIVE path actually gates on. Under
+            # PREDICT_FIRST (default) that is Config.CHAMPION_THRESHOLD, NOT the
+            # learner value: the dashboard used to print ce_threshold=0.78 (via
+            # _CE_ML_FLOOR) while entries were being taken at 0.40 — the single
+            # most misleading number in the whole system.
+            "ml_threshold":    self._live_threshold(),
+            "ce_threshold":    self._live_threshold(),
+            "threshold_source": "CHAMPION_THRESHOLD" if self._predict_first else "learner+floor",
             "block_reason":    self._last_block_reason,
             # Scoring
             "ml_percentile":   self._ml_percentile(max(self._last_ce_adj, self._last_pe_adj)),

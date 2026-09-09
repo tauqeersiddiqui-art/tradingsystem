@@ -2,6 +2,36 @@
 # Institutional-grade backtesting engine
 # Reuses: LiveEngine, feature_config, profit_manager, risk_manager
 # NO logic duplication — calls the same functions as live system
+#
+# ══════════════════════════════════════════════════════════════════════
+# 2026-09-06 — MADE REPRESENTATIVE OF LIVE
+#
+# Before this change the harness measured a system that has not been live
+# for months, so its output could not validate any live setting:
+#
+#   1. NO PREDICT-FIRST PATH. step() implemented only the legacy hard
+#      direction gate (`if direction_bias == 0: return None`, then
+#      `if direction_bias != 1: ce_adj = 0.0`). Live runs PREDICT_FIRST=1:
+#      side = argmax(ce_adj, pe_adj), then edge-margin, threshold, 5m
+#      SuperTrend AGREEMENT and VWAP agreement as confirmations. Those are
+#      different populations of trades — the legacy gate can never take the
+#      counter-bias side that live's argmax will happily take.
+#   2. CE WAS GATED TO THE ORB BREAKOUT CANDLE ONLY (`if not ce_break:
+#      ce_adj = 0.0`). Live has no such gate, so ~all CE trades live takes
+#      were invisible here.
+#   3. NIFTY-ERA SIZING. NIFTY_LOT_SIZE=65 / _lot_size_for_date() 65-or-75
+#      against the configured BANKNIFTY LOT_SIZE=30 — every PnL was ~2.2x.
+#   4. UNCONDITIONAL LUNCH FILTER (11:00-12:30) while live runs
+#      LUNCH_FILTER_ENABLED=0, removing 90 tradable minutes/day.
+#   5. MAX_TRADES_PER_DAY=10 vs the configured 4.
+#   6. NO TRANSACTION COST. PnL was gross premium change × qty. At
+#      Rs66/lot round-trip that is Rs66 of pure fiction per trade, which is
+#      larger than the median trade — so a "profitable" run meant nothing.
+#      Costs are now deducted in _close_position (CLAUDE.md cost model).
+#   7. ATM proxy rounded to a 50-pt grid (NIFTY) on a 100-pt instrument.
+#
+# Set BT_PREDICT_FIRST=0 to get the old legacy-gate behaviour back.
+# ══════════════════════════════════════════════════════════════════════
 
 import os
 import sys
@@ -20,12 +50,13 @@ warnings.filterwarnings("ignore")
 # ── Project root on path ──────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ml.feature_config import _safe_build_live_features, FEATURE_COLUMNS
+from ml.feature_config import _safe_build_live_features, FEATURE_COLUMNS, ALL_FEATURE_COLUMNS
 from ml.predictor_champion import ChampionPredictor
 from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
-from engine.risk.risk_manager import compute_entry_stops
+from engine.risk.risk_manager import compute_entry_stops, premium_stop_pts, _TARGET_R
+from engine.config.config import Config as _LiveConfig, STRIKE_STEP as _STRIKE_STEP
 
 logger = logging.getLogger("backtest")
 
@@ -36,28 +67,59 @@ _DAY_CLASS_AT = dtime(9, 45)
 _MARKET_CLOSE = dtime(15, 30)
 _NO_ENTRY_AFTER = dtime(15, 15)
 
-# Institutional session filter — avoid lunch-hour chop (11:00–12:30)
+# Institutional session filter — avoid lunch-hour chop (11:00–12:30).
+# Live runs with LUNCH_FILTER_ENABLED=0, so this harness follows the same
+# switch instead of applying the window unconditionally.
 _LUNCH_START    = dtime(11,  0)
 _LUNCH_END      = dtime(12, 30)
+_LUNCH_ENABLED  = (os.getenv("LUNCH_FILTER_ENABLED", "0") == "1")
 
-# Minimum expected PnL for any new trade (₹150 safeguard)
-_MIN_EXPECTED_PNL = 150.0
+# Minimum expected PnL for any new trade (₹150 safeguard) — same as live.
+_MIN_EXPECTED_PNL = float(os.getenv("MIN_EXPECTED_PNL", "150.0"))
 
-# ML floor: never trade below 0.65 (backtest: PE@0.65 = 58% WR, avg +Rs174).
-# Old 0.62 floor: 52.6% WR. Raising to 0.65 improves both WR and avg trade.
-_MIN_ML_FLOOR = 0.65
+# Live gate parameters (engine/live_engine.py) mirrored here.
+_PREDICT_FIRST   = (os.getenv("BT_PREDICT_FIRST", "1") == "1")
 
-NIFTY_LOT_SIZE = 65          # current lot size (changed from 75 → 65 in Jan 2026)
+# STRUCTURE-FIRST (Sep-2026): structure (5m ST + VWAP) picks the side, ML is
+# only an ACTIVITY filter (P(touch) = ce+pe).  Mirrors LiveEngine._structure_first.
+_STRUCTURE_FIRST  = (os.getenv("BT_STRUCTURE_FIRST", "0") == "1")
+_ACTIVITY_THR     = float(os.getenv("BT_STRUCTURE_ACTIVITY_THRESHOLD", "0.55"))
+_ML_EDGE_MARGIN  = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
+_VWAP_TOL        = 0.0015
+
+# ML floor for the LEGACY path only. The predict-first path gates purely on
+# CHAMPION_THRESHOLD, exactly like live.
+_MIN_ML_FLOOR = 0.40
+
+# Position sizing — BANKNIFTY. The old NIFTY_LOT_SIZE=65 / _lot_size_for_date()
+# 65-or-75 inflated every PnL by ~2.2x against the configured LOT_SIZE=30.
+# NOTE: Config sets its attributes in __init__, so the value must be read off
+# an INSTANCE — a class-level getattr silently returns the default.
+_CFG = _LiveConfig()
+BANKNIFTY_LOT_SIZE = int(getattr(_CFG, "LOT_SIZE", 30) or 30)
+NIFTY_LOT_SIZE = BANKNIFTY_LOT_SIZE      # legacy alias — kept for old callers
 OPTIONS_PREMIUM_PROXY = True  # simulate option price as % of spot
+
+# Round-trip transaction cost. CLAUDE.md: Rs66 per lot (qty 65 -> Rs66,
+# qty 130 -> Rs132). Deducted from every closed trade.
+_COST_PER_LOT = float(getattr(_CFG, "COST_PER_LOT", 66.0) or 66.0)
+
+
+def _round_trip_cost(qty: int, lot_units: int) -> float:
+    """Rs cost for opening AND closing `qty` units (scales with lots)."""
+    lots = max(1, round(qty / max(int(lot_units), 1)))
+    return lots * _COST_PER_LOT
 
 
 def _lot_size_for_date(d) -> int:
-    """NIFTY lot size: 75 before Jan 2026, 65 from Jan 2026 onwards."""
-    try:
-        year = d.year if hasattr(d, "year") else int(str(d)[:4])
-        return 65 if year >= 2026 else 75
-    except Exception:
-        return 65
+    """
+    Lot size for the traded instrument.
+
+    Was NIFTY-specific (75 pre-2026, 65 from Jan 2026). The live system trades
+    BANKNIFTY at Config.LOT_SIZE, so the backtest must size identically or its
+    rupee PnL, the profit ladder rungs, and the cost model are all wrong.
+    """
+    return BANKNIFTY_LOT_SIZE
 
 
 def _mins_to_close(ts) -> float:
@@ -96,6 +158,8 @@ class Trade:
     max_pnl:        float
     stop_loss:      float
     target:         float
+    gross_pnl:      float = 0.0   # premium change × qty, BEFORE costs
+    cost:           float = 0.0   # round-trip cost (Rs66/lot, CLAUDE.md)
     features:       dict = field(default_factory=dict, repr=False)
 
 
@@ -217,12 +281,28 @@ class BacktestSignalEngine:
         # Current direction bias (+1 bullish, -1 bearish, 0 unclear)
         self._direction_bias: int = 0
 
+        # Higher-timeframe (5m) SuperTrend direction — live's confirmation gate.
+        self._htf5_dir: int = 0
+
+        # Last adjusted ML probabilities (predict-first inputs).
+        self._last_ce_adj: float = 0.0
+        self._last_pe_adj: float = 0.0
+
         # Day classifier (optional)
         self._day_clf          = None
         self._day_classified   = False
         self._day_candles_30m  = []
         self._prev_close: Optional[float] = None
         self._open_price_set   = False
+
+        # Day-context cache for NEW-30 features (reset per day)
+        self._day_ctx: dict = {
+            "date":       None,
+            "day_open":   0.0,
+            "day_high":   0.0,
+            "day_low":    0.0,
+            "prev_close": 0.0,
+        }
 
         # ═══════════════════════════════════════════════════════
         # TELEMETRY / PIPELINE OBSERVABILITY
@@ -256,6 +336,16 @@ class BacktestSignalEngine:
             "range_candles": 0,
             "volatile_candles": 0,
             "unknown_candles": 0,
+
+            # Predict-first blocker attribution (mirrors live BLOCKER TRACE)
+            "pf_evaluated":     0,
+            "pf_no_edge":       0,
+            "pf_below_thr":     0,
+            "pf_htf5_opposes":  0,
+            "pf_vwap_fail":     0,
+            "pf_side_blocked":  0,
+            "pf_pnl_guard":     0,
+            "pf_passed":        0,
         }
 
         try:
@@ -280,9 +370,44 @@ class BacktestSignalEngine:
         self._prev_close     = prev_close
         self._open_price_set = False
         self._clf_day_type   = None
+        self._day_ctx        = {
+            "date":       None,
+            "day_open":   0.0,
+            "day_high":   0.0,
+            "day_low":    0.0,
+            "prev_close": prev_close or 0.0,
+        }
         self._vwap.reset()
         self._direction_bias = 0
+        self._htf5_dir       = 0
+        self._last_ce_adj    = 0.0
+        self._last_pe_adj    = 0.0
         self.learner.reset_day()
+
+    # ── Higher-timeframe confirmation (mirrors LiveEngine._htf_supertrend_dir) ──
+
+    def _htf_supertrend_dir(self, window: pd.DataFrame, tf: int = 5) -> int:
+        """
+        Resample the 1m window to tf-minute candles and return the last
+        SuperTrend(10,3) direction (+1 up / -1 down / 0 = insufficient data).
+        Byte-for-byte the same construction live uses, so the confirmation gate
+        blocks the same candles here as it does in production.
+        """
+        if window is None or len(window) < tf * 12:
+            return 0
+        h = window["high"].values.astype(float)
+        l = window["low"].values.astype(float)
+        c = window["close"].values.astype(float)
+        usable = (len(c) // tf) * tf
+        if usable < tf * 12:
+            return 0
+        h = h[-usable:].reshape(-1, tf).max(axis=1)
+        l = l[-usable:].reshape(-1, tf).min(axis=1)
+        c = c[-usable:].reshape(-1, tf)[:, -1]
+        if len(c) < 12:
+            return 0
+        st_dir, _ = _compute_supertrend(h, l, c, period=10, multiplier=3.0)
+        return int(st_dir[-1])
 
     # ── ORB ───────────────────────────────────────────────────────────
 
@@ -338,13 +463,51 @@ class BacktestSignalEngine:
         volumes = window["volume"].tolist() if "volume" in window.columns else [0] * len(closes)
 
         signal = self._compute_signal(closes, highs, lows)
-        feats  = _safe_build_live_features(closes, opens, highs, lows, volumes, signal, ts=ts)
+        day_ctx = self._update_day_ctx(window, ts)
+        feats  = _safe_build_live_features(closes, opens, highs, lows, volumes,
+                                           signal, ts=ts, day_ctx=day_ctx)
 
-        missing = [f for f in FEATURE_COLUMNS if f not in feats]
+        missing = [f for f in ALL_FEATURE_COLUMNS if f not in feats]
         if missing:
             return None
 
         return feats
+
+    def _update_day_ctx(self, window: pd.DataFrame, ts: datetime) -> dict:
+        """Maintain day_open/high/low/prev_close for NEW-30 features."""
+        ctx = self._day_ctx
+        today = ts.date()
+        if ctx["date"] != today:
+            ctx["date"] = today
+            ctx["day_open"]   = 0.0
+            ctx["day_high"]   = 0.0
+            ctx["day_low"]    = 0.0
+            ctx["prev_close"] = self._prev_close or 0.0
+            if window is not None and len(window):
+                try:
+                    date_col = next(
+                        (c for c in ("ts", "date", "datetime", "timestamp")
+                         if c in window.columns), None
+                    )
+                    if date_col:
+                        dts = pd.to_datetime(window[date_col])
+                        today_rows = window[dts.dt.date == today]
+                        if len(today_rows):
+                            ctx["day_open"] = float(today_rows["open"].iloc[0])
+                            ctx["day_high"] = float(today_rows["high"].max())
+                            ctx["day_low"]  = float(today_rows["low"].min())
+                except Exception:
+                    pass
+        else:
+            if window is not None and len(window):
+                last = window.iloc[-1]
+                try:
+                    ctx["day_high"] = max(ctx["day_high"], float(last["high"]))
+                    ctx["day_low"]  = min(ctx["day_low"] if ctx["day_low"] else float(last["low"]),
+                                           float(last["low"]))
+                except Exception:
+                    pass
+        return ctx
 
     def _compute_signal(self, closes, highs, lows) -> dict:
         import numpy as np
@@ -428,6 +591,166 @@ class BacktestSignalEngine:
 
     # ── Main step ─────────────────────────────────────────────────────
 
+    def _live_threshold(self) -> float:
+        """
+        Same contract as LiveEngine._live_threshold(): under predict-first the
+        gate is CHAMPION_THRESHOLD; under the legacy path it is the adaptive
+        learner value floored by _MIN_ML_FLOOR.
+        """
+        if not _PREDICT_FIRST:
+            try:
+                return float(max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR))
+            except Exception:
+                return _MIN_ML_FLOOR
+        return float(self.config.get("CHAMPION_THRESHOLD", 0.55))
+
+    def _finalize_signal(self, signal: dict, features: dict, price: float) -> Optional[dict]:
+        """
+        Mirror of LiveEngine._finalize_signal: attach the PREMIUM-space stop
+        distance the risk manager will place at the fill, then apply the
+        expected-PnL guard net of round-trip cost.
+
+        The legacy backtest computed the guard as (target - price) * lot_size
+        with SPOT levels — spot points priced as premium rupees, so the guard
+        was ~50x too permissive.
+        """
+        atr_val  = features.get("atr", price * 0.01)
+        day_type = self.learner.get_day_type()
+        regime   = (
+            "EXPANSION" if "VOLATILE" in day_type else
+            "TREND"     if "TREND"    in day_type else
+            "RANGE"
+        )
+
+        stop_pts   = premium_stop_pts(atr_val)
+        target_pts = stop_pts * _TARGET_R
+        signal.update(stop_pts=round(stop_pts, 2),
+                      target_pts=round(target_pts, 2),
+                      regime=regime)
+
+        lot_size = int(self.config.get("LOT_SIZE", BANKNIFTY_LOT_SIZE))
+        cost_rs  = float(self.config.get("COST_PER_LOT", _COST_PER_LOT))
+        expected_pnl = (signal["ml_prob"] * target_pts * lot_size
+                        - (1 - signal["ml_prob"]) * stop_pts * lot_size
+                        - cost_rs)
+        if expected_pnl < _MIN_EXPECTED_PNL:
+            self.telemetry["pf_pnl_guard"] += 1
+            return None
+        return signal
+
+    def _step_structure_first(self, features: dict, price: float,
+                              ts: datetime) -> Optional[dict]:
+        """
+        Mirror of LiveEngine._check_entry_structure_first (Sep-2026 fix):
+        structure picks the side, ML gates on activity only.  See live
+        implementation for the full rationale (direction is a coin flip;
+        activity is the learnable signal).
+        """
+        self.telemetry["pf_evaluated"] += 1
+
+        ce_prob = self.predictor.predict(features, "CE")
+        pe_prob = self.predictor.predict(features, "PE")
+        if ce_prob is None or pe_prob is None:
+            return None
+        ce_adj, pe_adj = self.learner.get_adjusted_ml_prob(ce_prob, pe_prob, "CE")
+        self._last_ce_adj, self._last_pe_adj = float(ce_adj), float(pe_adj)
+
+        pvwap = features.get("price_vs_vwap", 0.0)
+        htf5  = self._htf5_dir
+        activity = float(ce_prob or 0.0) + float(pe_prob or 0.0)
+
+        blockers = []
+        side = None
+        if htf5 == 1 and pvwap >= -_VWAP_TOL:
+            side = "CE"
+        elif htf5 == -1 and pvwap <= _VWAP_TOL:
+            side = "PE"
+        else:
+            blockers.append("NO_STRUCT_DIR")
+        if activity < _ACTIVITY_THR:
+            blockers.append("LOW_ACTIVITY")
+            self.telemetry["pf_below_thr"] += 1
+        if side:
+            blocked, _reason = self.learner.is_side_blocked(side)
+            if blocked:
+                blockers.append("SIDE_BLOCKED")
+                self.telemetry["pf_side_blocked"] += 1
+        if blockers:
+            return None
+
+        self.telemetry["pf_passed"] += 1
+        if side == "CE":
+            self.telemetry["ce_ml_pass"] += 1
+        else:
+            self.telemetry["pe_ml_pass"] += 1
+        signal = {"side": side, "ml_prob": activity, "features": features,
+                  "reason": f"STRUCT_{side}"}
+        return self._finalize_signal(signal, features, price)
+
+    def _step_predict_first(self, features: dict, price: float,
+                            ts: datetime) -> Optional[dict]:
+        """
+        Byte-for-byte mirror of LiveEngine._check_entry_predict_first:
+          1. PREDICT   — side = argmax(ce_adj, pe_adj)
+          2. EDGE      — |ce_adj - pe_adj| >= ML_EDGE_MARGIN
+          3. THRESHOLD — chosen side clears CHAMPION_THRESHOLD (clamp 0.65)
+          4. CONFIRM   — 5m SuperTrend must not OPPOSE; VWAP side must agree
+          5. learner side-block, then _finalize_signal
+        """
+        self.telemetry["pf_evaluated"] += 1
+
+        ce_prob = self.predictor.predict(features, "CE")
+        pe_prob = self.predictor.predict(features, "PE")
+        if ce_prob is None or pe_prob is None:
+            return None
+
+        ce_adj, pe_adj = self.learner.get_adjusted_ml_prob(ce_prob, pe_prob, "CE")
+        self._last_ce_adj, self._last_pe_adj = float(ce_adj), float(pe_adj)
+
+        base_thr = self._live_threshold()
+        thr      = min(base_thr, 0.65)   # live clamps > 0.65
+
+        side  = "CE" if ce_adj >= pe_adj else "PE"
+        prob  = ce_adj if side == "CE" else pe_adj
+        pvwap = features.get("price_vs_vwap", 0.0)
+        htf5  = self._htf5_dir
+
+        blockers = []
+        if abs(ce_adj - pe_adj) < _ML_EDGE_MARGIN:
+            blockers.append("NO_EDGE")
+            self.telemetry["pf_no_edge"] += 1
+        if prob < thr:
+            blockers.append("ML_BELOW_THR")
+            self.telemetry["pf_below_thr"] += 1
+        if (side == "CE" and htf5 == -1) or (side == "PE" and htf5 == 1):
+            blockers.append("HTF5_OPPOSES")
+            self.telemetry["pf_htf5_opposes"] += 1
+        if (side == "CE" and pvwap < -_VWAP_TOL) or (side == "PE" and pvwap > _VWAP_TOL):
+            blockers.append("VWAP_FAIL")
+            self.telemetry["pf_vwap_fail"] += 1
+        blocked, _reason = self.learner.is_side_blocked(side)
+        if blocked:
+            blockers.append("SIDE_BLOCKED")
+            self.telemetry["pf_side_blocked"] += 1
+
+        if side == "CE":
+            self.telemetry["ce_raw_signals"] += 1
+        else:
+            self.telemetry["pe_raw_signals"] += 1
+
+        if blockers:
+            return None
+
+        self.telemetry["pf_passed"] += 1
+        if side == "CE":
+            self.telemetry["ce_ml_pass"] += 1
+        else:
+            self.telemetry["pe_ml_pass"] += 1
+
+        signal = {"side": side, "ml_prob": prob, "features": features,
+                  "reason": f"ML_{side}"}
+        return self._finalize_signal(signal, features, price)
+
     def step(self, window: pd.DataFrame, ts: datetime) -> Optional[dict]:
         """
         Returns signal dict or None.
@@ -459,11 +782,12 @@ class BacktestSignalEngine:
             return None
 
         # ─────────────────────────────────────────────────────
-        # SESSION FILTER — no new entries during lunch chop
-        # Institutional desks avoid 11:00–14:00 on NIFTY options.
-        # Thin order flow → fake breakouts → high cost of carry.
+        # SESSION FILTER — no new entries during lunch chop.
+        # Live runs LUNCH_FILTER_ENABLED=0, so this is now switched off by
+        # default here too. Applying it unconditionally removed 90 tradable
+        # minutes/day that live actually trades.
         # ─────────────────────────────────────────────────────
-        if _LUNCH_START <= now < _LUNCH_END:
+        if _LUNCH_ENABLED and _LUNCH_START <= now < _LUNCH_END:
             self.telemetry["signals_none"] += 1
             return None
 
@@ -496,6 +820,31 @@ class BacktestSignalEngine:
             return None
 
         price = row["close"]
+
+        # 5m SuperTrend — live's anti-noise confirmation. Computed every
+        # candle so both paths can use it.
+        try:
+            self._htf5_dir = self._htf_supertrend_dir(window, tf=5)
+        except Exception:
+            self._htf5_dir = 0
+
+        # ═════════════════════════════════════════════════════
+        # PREDICT-FIRST PATH — what live actually runs
+        # ═════════════════════════════════════════════════════
+        if _STRUCTURE_FIRST:
+            sig = self._step_structure_first(features, price, ts)
+            if sig is not None:
+                self.telemetry["signals_returned"] += 1
+            else:
+                self.telemetry["signals_none"] += 1
+            return sig
+        elif _PREDICT_FIRST:
+            sig = self._step_predict_first(features, price, ts)
+            if sig is not None:
+                self.telemetry["signals_returned"] += 1
+            else:
+                self.telemetry["signals_none"] += 1
+            return sig
 
         # Adaptive threshold — never below ML floor (0.62 filters losers)
         threshold = max(self.learner.get_ml_threshold(), _MIN_ML_FLOOR)
@@ -763,12 +1112,17 @@ class BacktestSignalEngine:
         stop_loss = position.get("stop_loss", position["entry"] * 0.90)
         max_pnl   = position.get("max_pnl",   0.0)
         ml_prob   = position.get("ml_prob",    0.5)
-        lot_size  = position.get("lot_size",   NIFTY_LOT_SIZE)
+        # SINGLE position-size source of truth — same as LiveEngine.check_exit:
+        # the ACTUAL filled qty drives max_pnl/MFE, and lot_units (the index lot
+        # size) drives the cost model inside the ladder.
+        qty       = position.get("qty", position.get("lot_size", BANKNIFTY_LOT_SIZE))
+        lot_units = position.get("lot_size", BANKNIFTY_LOT_SIZE)
 
         new_sl, new_max_pnl, pm_reason = manage_position(
             entry_price=position["entry"],
             ltp=ltp,
-            lot_size=lot_size,
+            lot_size=qty,
+            lot_units=lot_units,
             stop_loss=stop_loss,
             max_pnl=max_pnl,
             ml_prob=ml_prob,
@@ -802,8 +1156,9 @@ class BacktestSignalEngine:
 
 class BacktestEngine:
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(self, config: Optional[dict] = None, verbose: bool = True):
         self.config = config or self._default_config()
+        self.verbose = verbose
 
         self.signal_engine = BacktestSignalEngine(self.config)
 
@@ -818,15 +1173,25 @@ class BacktestEngine:
 
     @staticmethod
     def _default_config() -> dict:
+        """
+        Defaults now MIRROR the live Config instance (engine/config/config.py)
+        instead of the NIFTY-era hardcodes. Every value that differed made the
+        backtest measure a system nobody runs:
+            MAX_TRADES_PER_DAY  10 -> Config (4)
+            LOT_SIZE            65 -> Config (30)
+            CHAMPION_THRESHOLD 0.42 -> Config / env
+            COOLDOWN_SECONDS   180 -> Config.REENTRY_COOLDOWN (300)
+        """
         return {
-            "INITIAL_CAPITAL":    100_000,
-            "DAILY_LOSS_LIMIT":   -2_000,
-            "MAX_TRADES_PER_DAY": 10,
-            "MAX_HOLD_SECONDS":   300,
-            "COOLDOWN_SECONDS":   180,
-            "LOT_SIZE":           NIFTY_LOT_SIZE,
-            "LOTS_PER_TRADE":     1,
-            "CHAMPION_THRESHOLD": float(os.getenv("CHAMPION_THRESHOLD", 0.42)),
+            "INITIAL_CAPITAL":    float(os.getenv("BT_CAPITAL", "100000")),
+            "DAILY_LOSS_LIMIT":   float(getattr(_CFG, "DAILY_LOSS_LIMIT", -2000)),
+            "MAX_TRADES_PER_DAY": int(getattr(_CFG, "MAX_TRADES_PER_DAY", 4)),
+            "MAX_HOLD_SECONDS":   int(getattr(_CFG, "MAX_HOLD_SECONDS", 300)),
+            "COOLDOWN_SECONDS":   int(getattr(_CFG, "REENTRY_COOLDOWN", 300)),
+            "LOT_SIZE":           BANKNIFTY_LOT_SIZE,
+            "COST_PER_LOT":       _COST_PER_LOT,
+            "LOTS_PER_TRADE":     int(os.getenv("BT_LOTS_PER_TRADE", "1")),
+            "CHAMPION_THRESHOLD": float(getattr(_CFG, "CHAMPION_THRESHOLD", 0.55)),
             "ENTRY_ON":           "current_close",  # enter on signal candle close (was next_open = late entry)
         }
 
@@ -917,6 +1282,9 @@ class BacktestEngine:
 
         metrics = self._compute_metrics(total_pnl, equity, max_drawdown)
         logger.info("[BACKTEST] Complete")
+        if not self.verbose:
+            metrics["telemetry"] = dict(self.signal_engine.telemetry)
+            return metrics
         # ═══════════════════════════════════════════════════════
         # FINAL TELEMETRY SUMMARY
         # ═══════════════════════════════════════════════════════
@@ -944,6 +1312,17 @@ class BacktestEngine:
         print(f"Range Candles:               {t['range_candles']}")
         print(f"Volatile Candles:            {t['volatile_candles']}")
         print(f"Unknown Candles:             {t['unknown_candles']}")
+
+        if _PREDICT_FIRST:
+            print("\n===== PREDICT-FIRST BLOCKERS =====")
+            print(f"Evaluated:                   {t['pf_evaluated']}")
+            print(f"  NO_EDGE:                   {t['pf_no_edge']}")
+            print(f"  ML_BELOW_THR:              {t['pf_below_thr']}")
+            print(f"  HTF5_OPPOSES:              {t['pf_htf5_opposes']}")
+            print(f"  VWAP_FAIL:                 {t['pf_vwap_fail']}")
+            print(f"  SIDE_BLOCKED:              {t['pf_side_blocked']}")
+            print(f"  PNL_GUARD:                 {t['pf_pnl_guard']}")
+            print(f"Passed all gates:            {t['pf_passed']}")
 
         # ═══════════════════════════════════════════════════════
         # DERIVED DIAGNOSTICS
@@ -976,6 +1355,7 @@ class BacktestEngine:
         except Exception as e:
 
             print(f"[Telemetry Error] {e}")
+        metrics["telemetry"] = dict(self.signal_engine.telemetry)
         return metrics
 
     # ── Single day simulation ─────────────────────────────────────────
@@ -1104,49 +1484,40 @@ class BacktestEngine:
                 signal = self.signal_engine.step(window_df, ts)
 
                 if signal is not None:
-                    logger.info(f"[SIGNAL] {signal}")       
+                    logger.info(f"[SIGNAL] {signal}")
                     side = signal["side"]
                     features = signal.get("features", {})
 
-                    # TREND FILTER (CORRECT PLACE)
-                    ema20 = features.get("ema20")
-                    ema50 = features.get("ema50")
+                    # ── Trend alignment filter (LEGACY PATH ONLY) ───────────
+                    # Live's predict-first gate has NO EMA counter-trend filter —
+                    # its confirmations are the 5m SuperTrend and VWAP side,
+                    # already applied in _step_predict_first. Running this extra
+                    # filter under predict-first would silently remove trades
+                    # live takes, which is exactly the class of divergence this
+                    # harness is being fixed to eliminate.
+                    if not _PREDICT_FIRST:
+                        ema20 = features.get("ema20")
+                        ema50 = features.get("ema50")
+                        trend_penalty = 0.0
+                        counter_trend = False
+                        ema_gap_pct   = abs(ema20 - ema50) / max(float(row["close"]), 1)
 
-                    # ── Trend alignment filter ──────────────────────────────
-                    # Mild misalignment → soft probability penalty (keep trading).
-                    # STRONG counter-trend (EMA gap > 0.15% of price) → skip the
-                    # entry entirely. This is where the big CE losses on downtrend
-                    # days come from. ORB breakouts are exempt (fighting EMA is
-                    # their job).
-                    trend_penalty = 0.0
-                    counter_trend = False
-                    ema_gap_pct   = abs(ema20 - ema50) / max(float(row["close"]), 1)
+                        # CE against trend
+                        if side == "CE" and ema20 < ema50:
+                            trend_penalty = 0.04
+                            counter_trend = ema_gap_pct > 0.0015
 
-                    # CE against trend
-                    if side == "CE" and ema20 < ema50:
-                        trend_penalty = 0.04
-                        counter_trend = ema_gap_pct > 0.0015
+                        # PE against trend
+                        elif side == "PE" and ema20 > ema50:
+                            trend_penalty = 0.04
+                            counter_trend = ema_gap_pct > 0.0015
 
-                    # PE against trend
-                    elif side == "PE" and ema20 > ema50:
-                        trend_penalty = 0.04
-                        counter_trend = ema_gap_pct > 0.0015
+                        if counter_trend and not signal.get("reason", "").startswith("ORB"):
+                            # Pure-ML entry fighting a strong trend — skip it.
+                            continue
 
-                    if counter_trend and not signal.get("reason", "").startswith("ORB"):
-                        # Pure-ML entry fighting a strong trend — skip it.
-                        continue
-
-                    # Soft trend adjustment only
-                    signal["ml_prob"] = max(
-                        signal["ml_prob"] - trend_penalty,
-                        0.0
-                    )
-                    # Entry price: next candle open or current close
-                    if entry_on == "next_open" and i < len(day_df) - 1:
-                        next_row = day_df.iloc[i + 1]
-                        entry_price = float(next_row["open"]) + 0.5
-                    else:
-                        entry_price = float(row["close"]) + 0.5
+                        # Soft trend adjustment only
+                        signal["ml_prob"] = max(signal["ml_prob"] - trend_penalty, 0.0)
 
                     # Entry SPOT: next candle open or current close
                     if entry_on == "next_open" and i < len(day_df) - 1:
@@ -1155,8 +1526,10 @@ class BacktestEngine:
                     else:
                         entry_spot = float(row["close"]) + 0.5
 
-                    # ATM strike proxy
-                    atm_strike = round(entry_spot / 50) * 50
+                    # ATM strike proxy — real instrument grid (BANKNIFTY = 100).
+                    # Was round(spot/50)*50, the NIFTY grid, which produced
+                    # phantom strikes like 57450 on a 100-pt instrument.
+                    atm_strike = round(entry_spot / _STRIKE_STEP) * _STRIKE_STEP
 
                     # mins to close at entry
                     mins_to_close = _mins_to_close(ts)
@@ -1173,7 +1546,7 @@ class BacktestEngine:
                     )
 
                     position = {
-                        "symbol":      f"NIFTY_{side}_{atm_strike}",
+                        "symbol":      f"BANKNIFTY_{side}_{atm_strike}",
                         "side":        side,
                         "entry":       entry_premium,
                         "entry_spot":  entry_spot,
@@ -1253,7 +1626,14 @@ class BacktestEngine:
         # premium change × qty — exactly what live realises.
         exit_mins_to_close = _mins_to_close(exit_time)
         exit_premium = _opt_sim.premium(entry_spot, exit_spot, side, exit_mins_to_close)
-        pnl = round((exit_premium - entry_premium) * qty, 2)
+        gross_pnl = round((exit_premium - entry_premium) * qty, 2)
+
+        # ── Round-trip transaction cost ───────────────────────────────────
+        # The old harness reported GROSS premium change as PnL. At Rs66/lot the
+        # omission is larger than the median trade, so a "profitable" backtest
+        # could still be a losing strategy after brokerage+taxes.
+        cost = _round_trip_cost(qty, lot_size)
+        pnl  = round(gross_pnl - cost, 2)
 
         held_secs = (exit_time - position["_entry_ts"]).total_seconds()
 
@@ -1268,6 +1648,8 @@ class BacktestEngine:
             qty           = qty,
             lot_size      = lot_size,
             pnl           = pnl,
+            gross_pnl     = gross_pnl,
+            cost          = cost,
             ml_prob       = position.get("ml_prob", 0.0),
             entry_reason  = position.get("reason", ""),
             exit_reason   = exit_reason,
@@ -1355,6 +1737,8 @@ class BacktestEngine:
             "total_trades":   n,
             "win_rate":       round(win_rate, 3),
             "total_pnl":      round(total_pnl, 2),
+            "gross_pnl":      round(sum(t.gross_pnl for t in trades), 2),
+            "total_cost":     round(sum(t.cost for t in trades), 2),
             "avg_pnl":        round(avg_pnl, 2),
             "avg_win":        round(avg_win, 2),
             "avg_loss":       round(avg_loss, 2),
@@ -1387,6 +1771,8 @@ class BacktestEngine:
                 "exit_price":   t.exit_price,
                 "qty":          t.qty,
                 "pnl":          t.pnl,
+                "gross_pnl":    t.gross_pnl,
+                "cost":         t.cost,
                 "ml_prob":      t.ml_prob,
                 "entry_reason": t.entry_reason,
                 "exit_reason":  t.exit_reason,
@@ -1423,18 +1809,42 @@ class BacktestEngine:
         return trade_path, day_path
 if __name__ == "__main__":
 
+    import argparse
+
+    ap = argparse.ArgumentParser(description="BANKNIFTY predict-first backtest")
+    ap.add_argument("--csv", default=os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "historical", "banknifty_1m_full.csv"))
+    ap.add_argument("--thr", type=float, default=None,
+                    help="CHAMPION_THRESHOLD override for this run")
+    ap.add_argument("--tail", type=int, default=0, help="use only last N rows")
+    args = ap.parse_args()
+
     print("Starting Backtest...")
 
-    engine = BacktestEngine()
+    cfg = BacktestEngine._default_config()
+    if args.thr is not None:
+        cfg["CHAMPION_THRESHOLD"] = args.thr
 
-    df = engine.load_data(r"D:\All Bots\trading_system\data\historical\nifty_1m_full.csv")
-    df = df.tail(200000)
+    engine = BacktestEngine(cfg)
+
+    # Default data set is BANKNIFTY (the traded instrument). The old default
+    # pointed at nifty_1m_full.csv.
+    df = engine.load_data(args.csv)
+    if args.tail:
+        df = df.tail(args.tail)
     print("Data loaded:", df.shape)
+    print(f"Config: predict_first={_PREDICT_FIRST} thr={cfg['CHAMPION_THRESHOLD']} "
+          f"lot={cfg['LOT_SIZE']} max_trades={cfg['MAX_TRADES_PER_DAY']} "
+          f"cooldown={cfg['COOLDOWN_SECONDS']}s cost=Rs{cfg['COST_PER_LOT']}/lot "
+          f"lunch_filter={_LUNCH_ENABLED}")
 
     results = engine.run(df)
 
     print("\n===== BACKTEST RESULTS =====")
     for k, v in results.items():
+        if k == "telemetry":
+            continue
         print(f"{k}: {v}")
 
     engine.save_results()

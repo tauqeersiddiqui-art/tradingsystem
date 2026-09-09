@@ -64,7 +64,7 @@ class IntradayMLLearner:
         self.pe_losses = 0
 
         # Adaptive ML threshold — starts high, tightens with consecutive wins
-        self.base_threshold   = float(os.getenv("CHAMPION_THRESHOLD", 0.51))
+        self.base_threshold   = float(os.getenv("CHAMPION_THRESHOLD", 0.65))
         self.current_threshold = self.base_threshold
 
         # Adaptive probability multipliers (start neutral)
@@ -191,14 +191,14 @@ class IntradayMLLearner:
     def get_ml_threshold(self) -> float:
         """
         Returns today's adaptive ML threshold.
-        Starts at base (0.25). Rises with losses. Falls with wins.
-        Day type also adjusts:
+        Base threshold comes from CHAMPION_THRESHOLD (default 0.65).
+        Day type adjusts:
           VOLATILE_DAY: +0.04 (market unpredictable — be very selective)
           GAP_DAY:      +0.02 (wait for gap fill first)
           RANGE_DAY:    +0.03 (reversals are tricky)
-          TREND_DAY:    +0.00 (follow the trend — base threshold is fine)
+          TREND_DAY:   -0.01 (follow the trend — slightly more aggressive)
         """
-        base = self.current_threshold
+        base = float(os.getenv("CHAMPION_THRESHOLD", "0.40"))
         day_adj = {
             DAY_VOLATILE: 0.04,
             DAY_GAP:      0.02,
@@ -210,7 +210,7 @@ class IntradayMLLearner:
         adaptive_threshold = base + day_adj
 
         # Keep thresholds realistic for intraday ML
-        adaptive_threshold = max(0.45, min(adaptive_threshold, 0.56))
+        adaptive_threshold = max(0.35, min(adaptive_threshold, 0.55))
 
         return round(adaptive_threshold, 3)
 
@@ -287,9 +287,12 @@ class IntradayMLLearner:
             self.current_threshold = min(
                 self.current_threshold + 0.02, 0.56)
 
-            # After 2+ consecutive losses, request AI review
-            if self.consecutive_losses >= 2:
-                self.ai_review_pending = True
+            # AI review after EVERY trade (user config 2026-09-09) — keeps
+            # the AI brain continuously linked, not just after 2 losses, so
+            # it can steer toward the stronger side before losses pile up.
+            # Still throttled by the 5-min cooldown in run_ai_brain_review
+            # (max once per 5 min), so it never spams the LLM endpoint.
+            self.ai_review_pending = True
 
         # Update feature reliability
         self._update_feature_scores(features, is_win)

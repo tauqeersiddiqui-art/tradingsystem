@@ -161,7 +161,7 @@ def _simulate(test_df, warmup_rows, ce_model, pe_model, ce_thr, pe_thr):
             if exit_spot is not None:
                 exit_ltp = _opt.premium(es, exit_spot, sd, mtc_now) - SPREAD_PTS / 2.0
                 gross = (exit_ltp - position["entry"]) * position["qty"]
-                cost = _cost_rs(position["qty"])
+                cost = _cost_rs(position["qty"], LOT_UNITS)
                 trades.append(gross - cost)
                 last_exit_ts = ts
                 position = None
@@ -175,6 +175,7 @@ def _simulate(test_df, warmup_rows, ce_model, pe_model, ce_thr, pe_thr):
             held = (ts - entry_ts).total_seconds()
             new_sl, new_max, reason = manage_position(
                 entry_price=position["entry"], ltp=ltp, lot_size=position["qty"],
+                lot_units=LOT_UNITS,
                 stop_loss=position["stop_loss"], max_pnl=position["max_pnl"],
                 ml_prob=position["ml_prob"], target=position.get("target"),
             )
@@ -191,7 +192,7 @@ def _simulate(test_df, warmup_rows, ce_model, pe_model, ce_thr, pe_thr):
                 # exit fill: premium minus half the round-trip spread
                 exit_ltp = ltp - SPREAD_PTS / 2.0
                 gross = (exit_ltp - position["entry"]) * position["qty"]
-                cost = _cost_rs(position["qty"])
+                cost = _cost_rs(position["qty"], LOT_UNITS)
                 trades.append(gross - cost)
                 last_exit_ts = ts
                 position = None

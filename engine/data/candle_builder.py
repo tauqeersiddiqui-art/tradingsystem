@@ -67,7 +67,8 @@ class CandleBuilder:
             return self._ltp
         # Fallback: REST call (slow, only on cold start)
         try:
-            sym = f"NSE:NIFTY 50"
+            from engine.config.config import INDEX_SPOT_KEY
+            sym = INDEX_SPOT_KEY
             data = self.broker.kite.ltp(sym)
             price = data[sym]["last_price"]
             self._ltp = float(price)
@@ -217,7 +218,8 @@ class CandleBuilder:
 
             df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
             df = df.dropna(subset=[date_col])
-            df = df.sort_values(date_col)
+            df = df.drop_duplicates(subset=[date_col], keep="last")
+            df = df.sort_values(date_col, ascending=True).reset_index(drop=True)
 
             # Seed all candles up to 2 minutes ago (avoids incomplete current candle).
             # Includes today's data because update_historical_data() runs before this.
@@ -304,6 +306,10 @@ class CandleBuilder:
     # ══════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def nifty_token() -> int:
-        """Zerodha instrument token for NIFTY 50 index."""
-        return 256265
+    def index_token() -> int:
+        """Zerodha instrument token of the traded index (config-driven)."""
+        from engine.config.config import INDEX_TOKEN
+        return INDEX_TOKEN
+
+    # Backward-compatible alias
+    nifty_token = index_token

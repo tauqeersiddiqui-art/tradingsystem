@@ -27,7 +27,7 @@ _COLUMNS = [
     "R_multiple", "ml_prob", "entry_score",
     "MFE", "MAE",
     "holding_seconds", "stop_loss", "target",
-    "stop_distance_pts", "peak_pnl",
+    "stop_distance_pts", "initial_stop_distance_pts", "peak_pnl",
     "entry_reason", "exit_reason",
     "ce_threshold", "pe_threshold",
 ]
@@ -72,9 +72,18 @@ def log_trade(
 
     pnl          = (exit_price - entry_price) * qty
     holding_s    = (exit_time - entry_time).total_seconds() if entry_time else 0
-    stop_pts     = entry_price - stop_loss
-    risk_rs      = stop_pts * qty
-    R_multiple   = (pnl / risk_rs) if risk_rs != 0 else 0.0
+
+    # ── R-multiple on the INITIAL stop, not the trailed stop ──────────
+    # The live `stop_loss` ratchets UP as the ladder locks profit, so for a
+    # winner it can sit ABOVE entry → (entry - stop) < 0 → negative R even for
+    # profitable trades, poisoning every R-based stat.  Persist the stop as of
+    # ENTRY (position["initial_stop"], set in master_runner) and measure risk
+    # against that.  Fall back to the live stop only if never recorded.
+    initial_stop   = position.get("initial_stop", stop_loss)
+    stop_pts       = abs(entry_price - initial_stop) if initial_stop else 0.0
+    initial_stop_distance_pts = stop_pts   # persisted for R/expectancy analytics
+    risk_rs        = stop_pts * qty
+    R_multiple     = (pnl / risk_rs) if risk_rs > 1e-9 else 0.0
 
     # MFE/MAE in currency (best / worst during hold)
     MFE = peak_pnl                        # best we ever were
@@ -103,7 +112,7 @@ def log_trade(
                 round(MFE, 2), round(MAE, 2),
                 round(holding_s, 1),
                 round(stop_loss, 2), round(target, 2),
-                round(stop_pts, 2),
+                round(stop_pts, 2), round(initial_stop_distance_pts, 2),
                 round(peak_pnl, 2),
                 entry_reason, exit_reason,
                 round(ce_threshold, 3), round(pe_threshold, 3),

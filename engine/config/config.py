@@ -29,9 +29,10 @@ class Config:
         self.INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", 100000))
         self.RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.02))
         self.DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", -2000))
-        # Overtrading guard: was 10 (today fired 10 trades = Rs1320 cost drag).
-        # 4 keeps cost bounded; scalp + ML share this counter.
-        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 4))
+        # Overtrading guard: 10 trades/day OR ₹3000 profit — whichever hits
+        # first stops new entries for the day (user config 2026-09-09).
+        self.MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", 10))
+        self.DAILY_PROFIT_TARGET = float(os.getenv("DAILY_PROFIT_TARGET", 3000))
 
         # Round-trip cost per 65-qty lot (buy+sell). Drives the cost-aware
         # profit ladder so it never locks a profit below the trade's own cost.

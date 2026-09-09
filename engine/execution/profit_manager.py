@@ -18,11 +18,9 @@
 # Ladder — uses max_pnl (Rs, on the ACTUAL position qty) as the source of truth:
 #   MFE >= Rs2000  ->  lock 80% of peak profit
 #   MFE >= Rs1200  ->  lock 70% of peak profit
-#   MFE >= Rs 800  ->  lock Rs600
-#   MFE >= Rs 500  ->  lock Rs350
-#   MFE >= Rs 390  ->  lock Rs195   (~+3pt for 65-lot, net-positive floor)
-#   MFE >= Rs 195  ->  lock Rs 65   (~+1pt for 65-lot, cost-recovery floor)
-#   MFE >= Rs 130  ->  lock Rs 32   (~+0.5pt for 65-lot, slippage-proof entry)
+#   MFE >= Rs 800  ->  lock 65% of peak profit
+#   above 3x cost  ->  trail 50% of peak profit (floored at round-trip cost)
+#   below 3x cost  ->  NO trailing — ride the initial stop (no early lock)
 #
 # RULES (enforced by construction):
 #   * Stop only TIGHTENS (max() ratchet) — it can never loosen.
@@ -53,9 +51,9 @@ LOCK_PTS  = _RS_FLOOR / max(_LOT_QTY, 1)
 # NEW DESIGN (two guarantees):
 #   1. No lock is EVER below cost  -> a locked exit is break-even or better,
 #      never a guaranteed loss.
-#   2. First lock only arms once MFE >= 1.5x cost  -> noise no longer trips it.
-# Above cost-recovery it trails ~62% of the running peak, so a trade that
-# peaks at +Rs442 keeps ~Rs274 instead of the old hard Rs195 cap.
+#   2. First lock only arms once MFE >= 3x cost  -> noise no longer trips it.
+# Above cost-recovery it trails ~50% of the running peak, so a trade that
+# peaks at +Rs442 keeps ~Rs221 instead of the old hard Rs195 cap.
 #
 # Worst-case loss is UNCHANGED: until the first lock arms, the stop stays at
 # the initial risk_manager stop. The ladder only ever TIGHTENS the stop.
@@ -63,7 +61,7 @@ LOCK_PTS  = _RS_FLOOR / max(_LOT_QTY, 1)
 
 _COST_PER_LOT = 66.0     # round-trip cost per lot (overridable via env)
 _LOT_UNITS    = int(os.getenv("LOT_SIZE", "30"))   # lot size of the traded index
-_TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
+_TRAIL_PCT    = 0.50     # fraction of peak profit retained once cost recovered
 
 
 def _cost_rs(qty: int, lot_units: int | None = None) -> float:
@@ -84,12 +82,14 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS, lot_units: int | Non
     Return (locked_profit_rs, stage_label) for the current peak PnL in Rs.
 
     Cost-aware: never returns a lock below the trade's round-trip cost, and
-    returns 0 (no lock) until MFE clears 1.5x cost so noise can't trip it.
+    returns 0 (no lock) until MFE clears 3x cost so noise can't trip it.
     """
     cost = _cost_rs(qty, lot_units)
 
     # Not enough cushion yet — rely on the initial stop (no early lock).
-    if max_pnl < cost * 1.5:
+    # Arm at 3x cost (was 1.5x) so normal 3-4pt premium noise can't trip the
+    # ladder the moment a trade ticks green.
+    if max_pnl < cost * 3.0:
         return 0.0, "INITIAL"
 
     # Trail a fraction of the peak, floored at break-even-after-cost.
@@ -106,7 +106,7 @@ def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS, lot_units: int | Non
         locked = max(locked, 0.65 * max_pnl)
         stage  = "S4_TRAIL65%"
     else:
-        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else "S2_TRAIL62%"
+        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else "S2_TRAIL50%"
 
     locked = min(locked, max_pnl)   # never lock more than the peak itself
     return locked, stage

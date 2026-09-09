@@ -101,10 +101,15 @@ def add_new_features(df):
     df["st_x_adx"] = df["supertrend_dir"] * df["adx"]
     df["vwap_x_adx"] = df["price_vs_vwap"] * df["adx"]
 
+    # CRITICAL (2026-09-08): training_dataset_v3.csv now carries the
+    # disentangled LABEL columns label_touch/label_dir. They must never enter
+    # the feature set — label_dir is literally the target (corr(y, label_dir)
+    # = 0.997), so including it produced a bogus 0.999 AUC.
     new = [x for x in df.columns
            if x not in FEATURE_COLUMNS and x not in
            ("date", "open", "high", "low", "close", "volume", "label_ce",
-            "label_pe", "ce_eligible", "pe_eligible", "_d")]
+            "label_pe", "label_touch", "label_dir", "ce_eligible",
+            "pe_eligible", "_d")]
     return df, new
 
 

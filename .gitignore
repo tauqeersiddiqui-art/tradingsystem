@@ -107,3 +107,6 @@ ml/models/*_threshold.txt
 ml/models/*_features.txt
 ml/models/*_candidate.pkl
 ml/models/training_dataset*.csv
+
+# Runtime pid file (engine rewrites every run)
+data/.master_runner.pid

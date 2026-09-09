@@ -16,6 +16,8 @@
 
 from datetime import datetime, time as dtime
 
+import numpy as np
+
 _MARKET_OPEN_T  = dtime(9, 15)
 _MARKET_CLOSE_T = dtime(15, 30)
 
@@ -61,7 +63,36 @@ FEATURE_COLUMNS = [
     "upper_wick",
     "lower_wick",
     "close_position",
-]  # 36 features total
+]  # 35 features total (base set)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# NEW-30 FEATURES  (probe_features_v4.add_new_features — 6 kinds)
+# Multi-timeframe trend, variance-ratio/mean-reversion, prior-day
+# context, streak structure, volatility term structure, time-of-day
+# interactions.  These are what moved conditional-direction AUC from
+# 0.51 (coin flip) to 0.676 OOS in probe_features_v4.
+# ─────────────────────────────────────────────────────────────────────
+NEW_FEATURE_COLUMNS = [
+    # Multi-timeframe trend
+    "ret_15", "ret_30", "ret_60", "ret_120",
+    "ema_slope_15", "ema_slope_30", "ema_slope_60", "ema_slope_120",
+    "pos_in_range_30", "pos_in_range_120",
+    # Variance-ratio / mean-reversion vs trending
+    "vr_30", "vr_60", "acf1_30", "acf1_60",
+    # Prior-day / overnight context
+    "from_day_open", "day_range_pos", "day_range_atr", "gap_from_prev",
+    # Streak / persistence
+    "up_streak", "up_frac_10", "up_frac_30",
+    # Volatility term structure
+    "rv_10", "rv_60", "vol_ratio_10_60", "atr_expand",
+    # Time-of-day interactions
+    "tod_sin", "tod_cos", "adx_x_tod", "st_x_adx", "vwap_x_adx",
+]
+
+# Full 65-feature set (base + new-30).  New champions are trained on
+# this; the live feature builder must produce every one of these keys.
+ALL_FEATURE_COLUMNS = FEATURE_COLUMNS + NEW_FEATURE_COLUMNS
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -242,15 +273,162 @@ def build_live_features(closes, opens, highs, lows, volumes, signal, ts=None):
     }
 
 
-def _safe_build_live_features(closes, opens, highs, lows, volumes, signal, ts=None):
+# ─────────────────────────────────────────────────────────────────────
+# NEW-30 LIVE FEATURES
+# Same definitions as probe_features_v4.add_new_features(), but computed
+# for the CURRENT bar only (the engine has a rolling window, not the full
+# history). Day-context features need day_open / day_high / day_low /
+# prev_close which the caller maintains across the session.
+# ─────────────────────────────────────────────────────────────────────
+
+def build_new_live_features(closes, opens, highs, lows, volumes, signal,
+                            ts=None, day_ctx=None):
+    """Compute the 30 NEW_FEATURE_COLUMNS for the latest bar.
+
+    day_ctx: dict with keys day_open, day_high, day_low, prev_close
+             (floats).  Missing/None -> features fall back to neutral 0.0
+             except day_range_pos (0.5).
+    """
+    import numpy as np
+
+    out = {f: 0.0 for f in NEW_FEATURE_COLUMNS}
+
+    if len(closes) < 26:
+        return out
+
+    c = np.asarray(closes, dtype=float)
+    h = np.asarray(highs, dtype=float)
+    l = np.asarray(lows, dtype=float)
+    n = len(c)
+    close = c[-1]
+    r1 = np.diff(c) / np.maximum(c[:-1], 1e-9)
+
+    # ── Multi-timeframe trend ────────────────────────────────────────
+    for w in (15, 30, 60, 120):
+        if n > w:
+            out[f"ret_{w}"] = float((c[-1] - c[-1 - w]) / c[-1 - w])
+        else:
+            out[f"ret_{w}"] = float((c[-1] - c[0]) / c[0]) if c[0] > 0 else 0.0
+
+    # ema_slope_w = (ewm(w).mean().diff(5))/c  → last value, vectorized on window
+    try:
+        import pandas as pd
+        cs = pd.Series(c)
+        for w in (15, 30, 60, 120):
+            ema = cs.ewm(span=w).mean()
+            slope = ema.diff(5) / cs
+            out[f"ema_slope_{w}"] = float(slope.iloc[-1]) if n >= 6 else 0.0
+        for w in (30, 120):
+            if n >= w:
+                lo = float(np.min(l[-w:]))
+                hi = float(np.max(h[-w:]))
+                out[f"pos_in_range_{w}"] = float((close - lo) / (hi - lo + 1e-9))
+    except Exception:
+        pass
+
+    # ── Variance-ratio / mean-reversion vs trending ──────────────────
+    for w in (30, 60):
+        if len(r1) >= w:
+            rw = r1[-w:]
+            out[f"vr_{w}"] = float(abs(rw.sum()) / (np.abs(rw).sum() + 1e-9))
+            out[f"acf1_{w}"] = _autocorr1(rw)
+
+    # ── Prior-day / overnight context ────────────────────────────────
+    day_open    = (day_ctx or {}).get("day_open", 0.0) or 0.0
+    day_high    = (day_ctx or {}).get("day_high", 0.0) or 0.0
+    day_low     = (day_ctx or {}).get("day_low", 0.0) or 0.0
+    prev_close  = (day_ctx or {}).get("prev_close", 0.0) or 0.0
+
+    if day_open > 0:
+        out["from_day_open"] = float((close - day_open) / close)
+    if day_open > 0 and prev_close > 0:
+        out["gap_from_prev"] = float((day_open - prev_close) / close)
+    if day_high > day_low:
+        out["day_range_pos"] = float((close - day_low) / (day_high - day_low + 1e-9))
+    atr_val = float(signal.get("atr", 0.0) or 0.0)
+    if day_high > day_low and atr_val > 0:
+        out["day_range_atr"] = float((day_high - day_low) / atr_val)
+
+    # ── Streak / persistence ─────────────────────────────────────────
+    if n >= 2:
+        sign = 1 if c[-1] > c[-2] else (-1 if c[-1] < c[-2] else 0)
+        streak = 0
+        if sign != 0:
+            for i in range(n - 1, 0, -1):
+                s = 1 if c[i] > c[i - 1] else (-1 if c[i] < c[i - 1] else 0)
+                if s == sign:
+                    streak += 1
+                else:
+                    break
+        out["up_streak"] = float(sign * streak)
+        up = (np.diff(c) > 0).astype(float)
+        for w in (10, 30):
+            if len(up) >= w:
+                out[f"up_frac_{w}"] = float(up[-w:].mean())
+
+    # ── Volatility term structure ────────────────────────────────────
+    if len(r1) >= 10:
+        out["rv_10"] = float(np.std(r1[-10:]))
+    if len(r1) >= 60:
+        out["rv_60"] = float(np.std(r1[-60:]))
+    if out["rv_60"] > 0:
+        out["vol_ratio_10_60"] = float(out["rv_10"] / (out["rv_60"] + 1e-9))
+
+    # atr_expand = atr / mean(atr_14[-60:]) — needs an ATR series over window
+    try:
+        if n >= 15:
+            tr = [max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1]))
+                  for i in range(1, n)]
+            atr_series = np.array([np.mean(tr[max(0, i - 13):i + 1])
+                                   for i in range(len(tr))])
+            mean60 = float(np.mean(atr_series[-60:])) if len(atr_series) >= 60 \
+                else float(np.mean(atr_series))
+            if mean60 > 0 and atr_val > 0:
+                out["atr_expand"] = float(atr_val / mean60)
+    except Exception:
+        pass
+
+    # ── Time-of-day interactions ─────────────────────────────────────
+    if ts is not None:
+        mins_open = max(0.0, (ts.hour * 60 + ts.minute) - (9 * 60 + 15))
+        mins_open = min(mins_open, 375.0)
+        frac = mins_open / 375.0
+        out["tod_sin"] = float(np.sin(2 * np.pi * frac))
+        out["tod_cos"] = float(np.cos(2 * np.pi * frac))
+        adx_val = float(signal.get("adx", 0.0) or 0.0)
+        st_dir  = float(signal.get("supertrend_dir", 0.0) or 0.0)
+        pvwap   = float(signal.get("price_vs_vwap", 0.0) or 0.0)
+        out["adx_x_tod"]   = float(adx_val * frac)
+        out["st_x_adx"]    = float(st_dir * adx_val)
+        out["vwap_x_adx"]  = float(pvwap * adx_val)
+
+    return out
+
+
+def _autocorr1(x: np.ndarray) -> float:
+    """Lag-1 autocorrelation of a 1-D array."""
+    if len(x) < 3:
+        return 0.0
+    x = x - x.mean()
+    denom = float((x * x).sum())
+    if denom <= 0:
+        return 0.0
+    return float((x[1:] * x[:-1]).sum() / denom)
+
+
+def _safe_build_live_features(closes, opens, highs, lows, volumes, signal, ts=None,
+                              day_ctx=None):
     try:
         feats = build_live_features(closes, opens, highs, lows, volumes, signal, ts=ts)
         if not feats:
-            return {f: 0.0 for f in FEATURE_COLUMNS}
-        for f in FEATURE_COLUMNS:
+            return {f: 0.0 for f in ALL_FEATURE_COLUMNS}
+        new30 = build_new_live_features(closes, opens, highs, lows, volumes,
+                                        signal, ts=ts, day_ctx=day_ctx)
+        feats.update(new30)
+        for f in ALL_FEATURE_COLUMNS:
             if f not in feats:
                 feats[f] = 0.0
         return feats
     except Exception as e:
         print("[FEATURE ERROR]", e)
-        return {f: 0.0 for f in FEATURE_COLUMNS}
+        return {f: 0.0 for f in ALL_FEATURE_COLUMNS}

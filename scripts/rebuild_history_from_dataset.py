@@ -1,19 +1,21 @@
 # scripts/rebuild_history_from_dataset.py
 #
-# Reconstruct the long-history raw OHLC CSV that dataset_builder_v3.py needs.
+# Reconstruct the single canonical raw OHLC CSV that the whole system uses.
+#
+# SINGLE-CSV policy (2026-09-08): the system keeps ONE historical CSV —
+# data/historical/banknifty_1m_full.csv. It is both the long-history file
+# (463k+ rows, 2021-01-01 onwards) AND the running-data file (the live engine
+# appends every completed candle to it via HIST_CSV). banknifty_1m_history.csv
+# is a legacy artifact no longer referenced by active code.
 #
 # WHY THIS EXISTS
-#   The builder reads DATA_PATH = data/historical/nifty_1m_full.csv, but that
-#   file was overwritten with the same 47-day 2026 BANKNIFTY window as
-#   banknifty_1m_full.csv (both: 2026-01-09 -> 2026-09-04, close 56064-58587).
-#   The 451,260-row / 1,211-day history the deployed champions were trained on
-#   (2021-01-01 -> 2026-09-02, close 29,720-58,571) survives only inside
+#   The builder reads DATA_PATH (see ml/dataset_builder_v3.py). At various
+#   points the live CSV was reduced to a short 2026 window, losing the long
+#   history the champions were trained on. That history survives inside
 #   ml/models/training_dataset_v3.csv, which carries date+OHLC alongside the
-#   35 features.
-#
-#   So the history is NOT lost and does NOT need a broker re-fetch: lift the
-#   OHLC columns back out of the dataset, union them with whatever the 2026
-#   CSV adds, and write a single canonical file the builder can point at.
+#   features, so it does NOT need a broker re-fetch: lift the OHLC columns
+#   back out of the dataset, union them with whatever the live CSV adds, and
+#   write the single canonical file the builder and engine point at.
 #
 # WHAT IT DOES NOT FIX
 #   volume is 0 throughout (it is 0 in both sources), so volume_ratio stays
@@ -32,7 +34,7 @@ import pandas as pd
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DATASET = os.path.join(_ROOT, "ml", "models", "training_dataset_v3.csv")
 _BN_CSV = os.path.join(_ROOT, "data", "historical", "banknifty_1m_full.csv")
-_OUT = os.path.join(_ROOT, "data", "historical", "banknifty_1m_history.csv")
+_OUT = os.path.join(_ROOT, "data", "historical", "banknifty_1m_full.csv")
 
 _COLS = ["date", "open", "high", "low", "close", "volume"]
 DATE_FMT = "%Y-%m-%d %H:%M:%S"

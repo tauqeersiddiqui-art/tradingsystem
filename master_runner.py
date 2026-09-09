@@ -51,6 +51,7 @@ from engine.config.config import (
     HIST_CSV,
     INDEX_FEED_SYMBOL,
     INDEX_TOKEN as _INDEX_TOKEN,
+    STRIKE_STEP as _STRIKE_STEP,
 )
 
 # ── Imports ───────────────────────────────────────────────────────────
@@ -61,7 +62,7 @@ from engine.core.health_monitor import update_health, snapshot
 from engine.live_engine import LiveEngine
 from engine.portfolio.allocator import CapitalAllocator
 from engine.execution.filters import has_oi_wall
-from engine.risk.risk_manager import compute_entry_stops
+from engine.risk.risk_manager import compute_entry_stops, premium_stop_pts
 from engine.execution.profit_manager import ladder_stop
 from engine.core.state_store import save_state, load_state, deserialize_position
 from engine.services.trade_logger import log_trade, today_summary
@@ -103,7 +104,6 @@ from telegram.notifier import (
     send_trade_channel,
     remove_exit_button,
     poll_commands,
-    ask_trade_permission,
     send_or_edit_market_dashboard,
     send_eod_summary,
     MANUAL_EXIT_REQUESTED,
@@ -799,6 +799,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
     entry_time        = None    # FIX-2: defined at entry, used for held_seconds
     entry_order_rec   = None    # saved order dict for trade_logger
     max_trades        = ctx.config.MAX_TRADES_PER_DAY
+    daily_profit_target = ctx.config.DAILY_PROFIT_TARGET
     consecutive_stops = 0       # auto-pause trigger
     _eod_sent         = False   # send EOD summary once at 15:30
     _last_feed_warn   = 0.0     # watchdog: last time we warned about stale feed
@@ -1045,7 +1046,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             if new_candle_ready:
                 _append_candle_to_csv(builder.latest_candle(), HIST_CSV)
 
-            df_window = builder.get_window(120)
+            # 300 = full CandleBuilder buffer.  The NEW-30 features need
+            # up to 120 bars of history (ret_120, pos_in_range_120), so a
+            # 120-bar window would leave the longest features on fallback
+            # values.  The decision engine handles any window >= 26.
+            df_window = builder.get_window(300)
 
             if df_window is None or len(df_window) < 26:
                 time.sleep(0.5)
@@ -1585,12 +1590,22 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
             if decision is not None and position is None:
 
-                # FIX-8: max trades per day guard
+                # Daily stop guard — 10 trades OR ₹3000 profit, first to hit.
                 if ctx.trades_today >= max_trades:
                     logger.debug(f"[GATE] Max trades reached: {ctx.trades_today}")
                     ctx.live_engine.record_block("MAX_TRADES")
                     activity.log_gate("MAX_TRADES",
                                       detail=f"{ctx.trades_today}/{max_trades}")
+                    decision = None
+
+                elif ctx.pnl >= daily_profit_target:
+                    logger.info(
+                        f"[GATE] Daily profit target hit: "
+                        f"{ctx.pnl:.0f} >= {daily_profit_target:.0f} — no new trades"
+                    )
+                    ctx.live_engine.record_block("PROFIT_TARGET")
+                    activity.log_gate("PROFIT_TARGET",
+                                      detail=f"pnl={ctx.pnl:.0f} >= {daily_profit_target:.0f}")
                     decision = None
 
             if decision is not None and position is None:
@@ -1616,8 +1631,14 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 # ── OI wall filter ────────────────────────────────────
                 # FIX-10: was never called
+                # 2026-09-06: was `round(price / 50) * 50` — a NIFTY-era 50-pt
+                # grid. On BANKNIFTY (STRIKE_STEP=100) that produces strikes
+                # that do not exist (e.g. 57450), so every option-chain row was
+                # an odd distance from "ATM", the nearest-5 window was skewed,
+                # and the wall test ran against a phantom centre. 8 of the ~10
+                # signal minutes on 2026-09-04 died here.
                 try:
-                    atm_strike = round(current_price / 50) * 50
+                    atm_strike = round(current_price / _STRIKE_STEP) * _STRIKE_STEP
                     option_chain = ctx.broker.get_option_chain_near_atm(strikes_range=5)
                     
                     if has_oi_wall(option_chain, atm_strike, side):
@@ -1638,7 +1659,11 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
 
                 # Position sizing via allocator (SINGLE computation — the
                 # result is reused below; do NOT recompute with a fallback).
+                # `stop_pts` is the PREMIUM stop distance the risk manager will
+                # actually place. Without it the allocator sized against spot
+                # ATR (a different unit) and always collapsed to 1 lot.
                 atr_val = decision.get("features", {}).get("atr", current_price * 0.01)
+                _stop_pts = premium_stop_pts(atr_val)
                 qty = ctx.allocator.size_position(
                     capital=ctx.config.INITIAL_CAPITAL,
                     ml_prob=decision["ml_prob"],
@@ -1646,6 +1671,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     price=builder.ltp() or 0,
                     lot_size=lot_size,
                     current_pnl=ctx.pnl,
+                    stop_pts=_stop_pts,
                 )
 
                 # Respect allocator rejection.  A 0 return means "do not trade".
@@ -1666,23 +1692,22 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 # qty was computed and validated in the block above — single
                 # source of truth, no fallback recompute here.
 
-                # ── Telegram confirmation (3s timeout → auto-execute) ──
-                _confirmed = ask_trade_permission(
-                    side    = side,
-                    price   = builder.ltp() or 0.0,
-                    ml_prob = decision["ml_prob"],
-                    stop    = decision.get("stop_loss", 0.0),
-                    target  = decision.get("target",    0.0),
-                )
-                if not _confirmed:
-                    logger.info(f"[GATE] Trade SKIPPED by user (Telegram SKIP)")
-                    ctx.live_engine.record_block("TG_SKIP")
-                    activity.log_gate("TG_SKIP", side=side,
-                                      detail="user skipped Telegram confirmation")
-                    decision = None  # fall through cleanly
-
-                if decision is not None:
-                    pass  # proceed to execute below
+                # ── Signal alert (informational — NO confirmation gate) ──
+                # Removed the Telegram YES/SKIP prompt + 3s wait — trades now
+                # execute immediately on signal.
+                try:
+                    _opt_ltp_preview = ctx.broker.ltp(symbol) or 0.0
+                except Exception:
+                    _opt_ltp_preview = 0.0
+                try:
+                    send_bot(
+                        f"<b>TRADE {side}:</b> {symbol}\n"
+                        f"Entry ~{_opt_ltp_preview or (builder.ltp() or 0.0):.1f}"
+                        f"  |  ML {decision['ml_prob']:.0%}\n"
+                        f"<i>Executing now…</i>"
+                    )
+                except Exception as _e:
+                    logger.warning(f"[GATE] Signal alert failed: {_e}")
 
                 # F5: capture option LTP just before market order (slippage baseline)
                 _signal_opt_ltp = 0.0
@@ -1703,8 +1728,14 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                     # (The signal's spot-based stop is unusable here: position
                     #  entry/LTP are option premiums, not spot — mixing them
                     #  made every trade instant-stop.)
+                    # `atr_val` is SPOT ATR — compute_entry_stops converts to
+                    # premium space via delta. The old `1.0` fallback silently
+                    # pinned the stop to its 4-pt floor; fall back to a fraction
+                    # of spot instead, same as the sizing block above.
                     fill_premium = order["price"]
-                    atr_val = decision.get("features", {}).get("atr", 1.0)
+                    atr_val = decision.get("features", {}).get(
+                        "atr", (current_price or 0.0) * 0.01
+                    )
                     regime  = decision.get("regime", "UNKNOWN")
                     stop_loss, target, _stop_pct = compute_entry_stops(
                         fill_premium, atr_val, regime
@@ -1946,6 +1977,7 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         and _scalp_trades_today < ctx.config.SCALP_MAX_TRADES_PER_DAY
                         and _scalp_consec_losses < ctx.config.SCALP_MAX_CONSEC_LOSSES
                         and ctx.trades_today < max_trades
+                        and ctx.pnl < daily_profit_target
                         and ctx.pnl > ctx.config.DAILY_LOSS_LIMIT):
                     _s_htf5 = getattr(ctx.live_engine, "_htf5_dir", 0)
                     _s_safe = (time.time() - _last_ml_signal_epoch) > (

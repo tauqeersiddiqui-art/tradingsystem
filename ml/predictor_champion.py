@@ -86,12 +86,36 @@ class ChampionPredictor:
         if cat_both:
             self.ce_cat_model = joblib.load(ce_cat_path)
             self.pe_cat_model = joblib.load(pe_cat_path)
-            self._ensemble = True
-            logger.info(
-                f"[ChampionPredictor] Mode: LGBM+CAT_ENSEMBLE | "
-                f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
-                f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}"
+            # Guard: only ensemble when the CAT feature set matches the
+            # LGBM feature set.  After the 65-feature retrain (Sep 8) the
+            # champions grew from 35->65 features; an old 35-feat CAT model
+            # left on disk would be fed 65 columns and silently mispredict.
+            _ce_cat_feats = self._model_features(self.ce_cat_model, "CE-CAT")
+            _pe_cat_feats = self._model_features(self.pe_cat_model, "PE-CAT")
+            _match = (
+                _ce_cat_feats == self.ce_features
+                and _pe_cat_feats == self.pe_features
             )
+            if _match:
+                self.ce_cat_model = self.ce_cat_model
+                self.pe_cat_model = self.pe_cat_model
+                self._ensemble = True
+                logger.info(
+                    f"[ChampionPredictor] Mode: LGBM+CAT_ENSEMBLE | "
+                    f"CE={len(self.ce_features)} feats thresh={self.ce_threshold} | "
+                    f"PE={len(self.pe_features)} feats thresh={self.pe_threshold}"
+                )
+            else:
+                # Feature sets differ — CAT is stale.  Run LGBM-only rather
+                # than averaging mismatched inputs.
+                self.ce_cat_model = None
+                self.pe_cat_model = None
+                self._ensemble = False
+                logger.warning(
+                    f"[ChampionPredictor] CAT feature mismatch "
+                    f"(CE cat={len(_ce_cat_feats)} vs lgbm={len(self.ce_features)}) — "
+                    f"running LGBM_ONLY until CAT is retrained to match."
+                )
         else:
             self.ce_cat_model = None
             self.pe_cat_model = None

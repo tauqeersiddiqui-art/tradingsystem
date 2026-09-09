@@ -34,15 +34,21 @@ import pandas as pd
 # Reuse the EXACT feature computation from v2 (single source of truth).
 from ml.dataset_builder_v2 import compute_all_features, _in_active_session
 
-# DATA_PATH was "data/historical/nifty_1m_full.csv" until 2026-09-06. That file
-# had been overwritten with the same 47-day 2026 BANKNIFTY window as
-# banknifty_1m_full.csv (2026-01-09 -> 2026-09-04, close 56064-58587), so the
-# builder no longer read the 1,211-day series the champions were trained on.
-# banknifty_1m_history.csv restores it: 463,331 rows / 1,243 days / 2021-01-01
-# -> 2026-09-04, rebuilt by scripts/rebuild_history_from_dataset.py.
-# NOTE: OUTPUT below is the file that rebuild script recovers history FROM, so
+# NEW-30 features (probe_features_v4.add_new_features — the same definitions
+# the live feature builder uses via feature_config.build_new_live_features).
+from ml.probe_features_v4 import add_new_features
+
+# SINGLE-CSV policy (2026-09-08): there is exactly ONE historical CSV in the
+# system — data/historical/banknifty_1m_full.csv. It carries the full
+# long history (463k+ rows / 2021-01-01 onwards, merged from
+# banknifty_1m_history.csv by scripts/rebuild_history_from_dataset.py) AND is
+# the file the live engine appends every completed candle to (HIST_CSV in
+# .env / engine/config/config.py), so it is both the more-data file and the
+# running-data file. banknifty_1m_history.csv is now a legacy artifact and is
+# NOT referenced by any active code path.
+# NOTE: OUTPUT below is the file the rebuild script recovers history FROM, so
 # always keep a .bak of it before regenerating.
-DATA_PATH = "data/historical/banknifty_1m_history.csv"
+DATA_PATH = "data/historical/banknifty_1m_full.csv"
 OUTPUT    = "ml/models/training_dataset_v3.csv"
 
 # ── Label parameters ──────────────────────────────────────────────────
@@ -155,6 +161,14 @@ def main():
 
     print("[FEATURES] Computing indicators ...")
     df = compute_all_features(df)
+
+    print("[FEATURES] Adding 30 multi-timeframe / context features ...")
+    df, _new_cols = add_new_features(df)
+    # Rolling-window features are NaN/Inf at the start of the series and
+    # around overnight gaps — fill with 0 (model trains with fillna(0)).
+    _feat_cols = [c for c in _new_cols if c in df.columns]
+    df[_feat_cols] = df[_feat_cols].replace([np.inf, -np.inf], np.nan)
+    df[_feat_cols] = df[_feat_cols].fillna(0.0)
 
     print("[LABELS] First-touch directional labels (this is the slow part) ...")
     df = create_first_touch_labels(df)

@@ -35,6 +35,13 @@ from collections import defaultdict
 
 logger = logging.getLogger("ml_intraday_learner")
 
+# ── Micro-loss fast-reversal config (Option-1, 2026-09-10) ──────────
+# FAST_REVERSAL losses at or below this |pnl| (₹) don't count toward the
+# consecutive-loss pause. Override MICRO_LOSS_ABS_PNL in .env if position
+# sizing changes.
+MICRO_LOSS_ABS_PNL    = float(os.getenv("MICRO_LOSS_ABS_PNL", "400"))
+FAST_REV_STRIKE_LIMIT = 4   # consecutive fast-rev scratches that equal 1 strike
+
 # ── DAY TYPE DEFINITIONS ─────────────────────────────────────────────
 DAY_UNKNOWN   = "UNKNOWN"
 DAY_TREND     = "TREND_DAY"      # directional, follow the move
@@ -64,7 +71,7 @@ class IntradayMLLearner:
         self.pe_losses = 0
 
         # Adaptive ML threshold — starts high, tightens with consecutive wins
-        self.base_threshold   = float(os.getenv("CHAMPION_THRESHOLD", 0.51))
+        self.base_threshold   = float(os.getenv("CHAMPION_THRESHOLD", 0.65))
         self.current_threshold = self.base_threshold
 
         # Adaptive probability multipliers (start neutral)
@@ -84,9 +91,10 @@ class IntradayMLLearner:
         self._last_candle_minute = None
 
         # Consecutive state
-        self.consecutive_losses = 0
-        self.consecutive_wins   = 0
-        self.last_loss_side     = None
+        self.consecutive_losses  = 0
+        self.consecutive_wins    = 0
+        self.last_loss_side      = None
+        self.fast_reversal_streak = 0   # micro fast-rev scratches since last real strike
 
         # Feature reliability today
         self.feature_scores = defaultdict(lambda: {"correct": 0, "total": 0})
@@ -191,14 +199,14 @@ class IntradayMLLearner:
     def get_ml_threshold(self) -> float:
         """
         Returns today's adaptive ML threshold.
-        Starts at base (0.25). Rises with losses. Falls with wins.
-        Day type also adjusts:
+        Base threshold comes from CHAMPION_THRESHOLD (default 0.65).
+        Day type adjusts:
           VOLATILE_DAY: +0.04 (market unpredictable — be very selective)
           GAP_DAY:      +0.02 (wait for gap fill first)
           RANGE_DAY:    +0.03 (reversals are tricky)
-          TREND_DAY:    +0.00 (follow the trend — base threshold is fine)
+          TREND_DAY:   -0.01 (follow the trend — slightly more aggressive)
         """
-        base = self.current_threshold
+        base = float(os.getenv("CHAMPION_THRESHOLD", "0.40"))
         day_adj = {
             DAY_VOLATILE: 0.04,
             DAY_GAP:      0.02,
@@ -210,7 +218,7 @@ class IntradayMLLearner:
         adaptive_threshold = base + day_adj
 
         # Keep thresholds realistic for intraday ML
-        adaptive_threshold = max(0.45, min(adaptive_threshold, 0.56))
+        adaptive_threshold = max(0.35, min(adaptive_threshold, 0.55))
 
         return round(adaptive_threshold, 3)
 
@@ -243,6 +251,7 @@ class IntradayMLLearner:
         self.trades_today.append(trade)
 
         is_win = pnl > 0
+        is_micro_fast_rev = False
 
         if side == "CE":
             if is_win:
@@ -262,6 +271,7 @@ class IntradayMLLearner:
             self.last_loss_side      = None
 
             # Boost winning side's multiplier
+            self.fast_reversal_streak = 0
             if side == "CE":
                 self.ce_multiplier = min(self.ce_multiplier + 0.03, 1.15)
             else:
@@ -272,9 +282,31 @@ class IntradayMLLearner:
                 self.current_threshold - 0.01, self.base_threshold)
 
         else:
-            self.consecutive_losses += 1
-            self.consecutive_wins    = 0
-            self.last_loss_side      = side
+            # ── Micro fast-reversals: no strike (Option-1, 2026-09-10) ──
+            # FAST_REVERSAL_30S exits are the 30s emergency guard cutting
+            # dead-on-arrival entries at ~-0.4R. Journal analysis (W36-W37,
+            # 6/6 with MFE≈0) shows they SAVE money (~₹2,200 over 2 sessions)
+            # and are often followed by profitable re-entries. Counting them
+            # as full strikes paused the bot after 2 tiny scratches and
+            # missed those winners. They still update multipliers, threshold
+            # and AI review — everything except the pause counter.
+            # Backstop: FAST_REV_STRIKE_LIMIT scratches in a row = 1 strike,
+            # so a persistent chop-day bleed still trips the lock (and the
+            # daily loss limit remains the hard floor either way).
+            if ("FAST_REVERSAL" in (reason or "")
+                    and abs(pnl) <= MICRO_LOSS_ABS_PNL):
+                is_micro_fast_rev = True
+                self.fast_reversal_streak += 1
+                if self.fast_reversal_streak >= FAST_REV_STRIKE_LIMIT:
+                    self.consecutive_losses  += 1
+                    self.consecutive_wins     = 0
+                    self.last_loss_side       = side
+                    self.fast_reversal_streak = 0
+            else:
+                self.fast_reversal_streak = 0
+                self.consecutive_losses  += 1
+                self.consecutive_wins     = 0
+                self.last_loss_side       = side
 
             # Reduce losing side's multiplier
             if side == "CE":
@@ -287,18 +319,22 @@ class IntradayMLLearner:
             self.current_threshold = min(
                 self.current_threshold + 0.02, 0.56)
 
-            # After 2+ consecutive losses, request AI review
-            if self.consecutive_losses >= 2:
-                self.ai_review_pending = True
+            # AI review after EVERY trade (user config 2026-09-09) — keeps
+            # the AI brain continuously linked, not just after 2 losses, so
+            # it can steer toward the stronger side before losses pile up.
+            # Still throttled by the 5-min cooldown in run_ai_brain_review
+            # (max once per 5 min), so it never spams the LLM endpoint.
+            self.ai_review_pending = True
 
         # Update feature reliability
         self._update_feature_scores(features, is_win)
 
+        _strike_note = " | micro fast-rev → no strike" if is_micro_fast_rev else ""
         logger.info(
             f"Trade recorded: {side} PnL={pnl:.0f} | "
             f"CE mult={self.ce_multiplier:.2f} PE mult={self.pe_multiplier:.2f} | "
             f"Threshold={self.current_threshold:.2f} | "
-            f"ConsecLoss={self.consecutive_losses}"
+            f"ConsecLoss={self.consecutive_losses}{_strike_note}"
         )
 
     def _update_feature_scores(self, features: dict, was_correct: bool):

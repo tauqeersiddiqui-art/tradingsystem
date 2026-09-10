@@ -85,6 +85,74 @@ def _totp_diagnostic() -> None:
     log.info("──────────────────────────────────────────────────────────")
 
 
+# ── Safety rails around TOTP submission ───────────────────────────────
+#
+# WHY THESE EXIST
+#   A run on 2026-09-06 failed with "Invalid TOTP. 3 attempt(s) remain before
+#   the account is locked." Two defects in the old path caused it:
+#     1) RACE: _totp_diagnostic() printed a code with 2s left in its window,
+#        then the typing step called TOTP.now() again and got the NEXT code —
+#        so the code typed was not the code verified, and could itself roll
+#        over mid-submit.
+#     2) NO GUARD: a mismatch between intended and actual field contents was
+#        only logged (`JS set didn't land`), then submitted anyway, burning a
+#        real attempt against a 4-attempt lockout budget.
+#
+#   Zerodha locks the account after ~4 consecutive bad TOTPs. Locking it takes
+#   out live trading, not just a backfill, so this module now:
+#     - refuses more than ONE automated submit per process (_ATTEMPT_GUARD),
+#     - waits for a fresh window instead of typing a nearly-dead code,
+#     - ABORTS before submit if the field does not contain the intended code,
+#     - supports DRY_TOTP / --dry-totp: generate, log, snapshot, pause, and
+#       never submit. Use that mode for any verification work.
+
+DRY_TOTP = (os.getenv("DRY_TOTP", "").strip().lower() in ("1", "true", "yes", "on"))
+MIN_WINDOW_SECS = int(os.getenv("TOTP_MIN_WINDOW_SECS", "8"))
+
+
+class TOTPSafetyAbort(RuntimeError):
+    """Raised instead of submitting a TOTP we are not confident in."""
+
+
+class _AttemptGuard:
+    """At most one automated TOTP submit per process."""
+
+    def __init__(self, limit: int = 1):
+        self.limit = limit
+        self.used = 0
+
+    def claim(self) -> None:
+        if self.used >= self.limit:
+            raise TOTPSafetyAbort(
+                f"refusing a {self.used + 1}nd automated TOTP submit in one run "
+                f"(limit={self.limit}). Zerodha locks the account after ~4 bad "
+                f"codes. Re-run the process for another attempt, or use "
+                f"--dry-totp to verify the secret without spending one."
+            )
+        self.used += 1
+
+
+_ATTEMPT_GUARD = _AttemptGuard(limit=1)
+
+
+def totp_with_fresh_window(secret: str, min_window: int = MIN_WINDOW_SECS,
+                           sleeper=time.sleep, clock=time.time):
+    """
+    Return (code, seconds_left) for a code with room left to be submitted.
+
+    Typing a code with 2s left is how the 2026-09-06 run failed. If the current
+    window is nearly dead we wait it out and use the next one, so the code that
+    gets logged is the same code that gets typed.
+    """
+    left = 30 - int(clock()) % 30
+    if left < min_window:
+        log.info(f"TOTP window has only {left}s left (< {min_window}s) — "
+                 f"waiting for the next window so the code cannot roll mid-submit")
+        sleeper(left + 1)
+        left = 30 - int(clock()) % 30
+    return pyotp.TOTP(secret).at(int(clock())), left
+
+
 def _update_env_token(token: str) -> None:
     lines = []
     found = False
@@ -233,9 +301,13 @@ def login() -> str:
             try:
                 page.wait_for_selector(sel, state="visible", timeout=4_000)
 
-                # Refresh code right before typing to avoid window expiry
-                totp_code = pyotp.TOTP(TOTP_SECRET).now()
-                log.info(f"Typing TOTP {totp_code} into {sel!r}")
+                # Use a code with room left in its window (see the safety-rails
+                # comment above): the old code called TOTP.now() here after the
+                # diagnostic had already printed a DIFFERENT code, so the code
+                # verified by the user was never the code submitted.
+                totp_code, _win_left = totp_with_fresh_window(TOTP_SECRET)
+                log.info(f"Typing TOTP {totp_code} into {sel!r} "
+                         f"({_win_left}s left in window)")
 
                 loc = page.locator(sel).first
                 loc.click()
@@ -270,11 +342,47 @@ def login() -> str:
                     loc.press_sequentially(totp_code, delay=150)
                     actual = loc.input_value()
                     log.info(f"Input value after press_sequentially: {actual!r}")
-                page.screenshot(path=os.path.join(BASE_DIR, "logs", "after_totp_fill.png"))
+                snap = os.path.join(BASE_DIR, "logs", "after_totp_fill.png")
+                page.screenshot(path=snap)
+                log.info(f"Pre-submit snapshot: {snap}")
 
+                # ── GUARD: never submit a code we did not actually type ──
+                # The 2026-09-06 failure logged actual='' and submitted anyway,
+                # spending one of four attempts before lockout.
+                if actual != totp_code:
+                    raise TOTPSafetyAbort(
+                        f"field contains {actual!r} but the intended code is "
+                        f"{totp_code!r} — NOT submitting. Submitting a wrong "
+                        f"code spends one of ~4 attempts before Zerodha locks "
+                        f"the account. Inspect {snap} to see the live field."
+                    )
+
+                if DRY_TOTP:
+                    log.info("=" * 62)
+                    log.info("DRY_TOTP: code generated, typed and verified but")
+                    log.info("NOT submitted. No login attempt was spent.")
+                    log.info(f"  intended code : {totp_code}")
+                    log.info(f"  field value   : {actual}")
+                    log.info(f"  snapshot      : {snap}")
+                    log.info("Compare the code above with your authenticator app.")
+                    log.info("  match    -> KITE_TOTP_SECRET is correct; re-run "
+                             "without --dry-totp for one real attempt")
+                    log.info("  mismatch -> the secret in .env is WRONG; fix it "
+                             "before any real attempt")
+                    log.info("=" * 62)
+                    try:
+                        input("Confirm TOTP in authenticator and press Enter to continue...")
+                    except EOFError:
+                        log.info("(non-interactive stdin — continuing without pause)")
+                    raise TOTPSafetyAbort("DRY_TOTP set — aborting before submit by design")
+
+                # This is a real submit: claim the single per-run attempt.
+                _ATTEMPT_GUARD.claim()
                 log.info("6 digits typed — auto-submit + redirect expected ...")
                 _filled = True
                 break
+            except TOTPSafetyAbort:
+                raise
             except PWTimeout:
                 log.info(f"Selector not found: {sel!r}")
         if not _filled:
@@ -317,12 +425,50 @@ def login() -> str:
 
 
 def main() -> None:
+    global DRY_TOTP
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Zerodha headless login (Playwright).",
+        epilog="SAFETY: --dry-totp generates and verifies a code WITHOUT "
+               "submitting it, so it cannot spend a login attempt. Zerodha "
+               "locks the account after ~4 bad codes.",
+    )
+    ap.add_argument("--dry-totp", action="store_true",
+                    help="generate + log + snapshot the TOTP, pause for manual "
+                         "verification, and exit WITHOUT submitting")
+    ap.add_argument("--totp-only", action="store_true",
+                    help="print the TOTP diagnostic locally and exit (no browser, "
+                         "no network, cannot affect the account)")
+    args = ap.parse_args()
+
+    if args.dry_totp:
+        DRY_TOTP = True
+
+    if args.totp_only:
+        # Fully offline: local code generation only. Safe to run any number of times.
+        _totp_diagnostic()
+        code, left = totp_with_fresh_window(TOTP_SECRET or "")
+        log.info(f"Fresh-window code: {code}  ({left}s left)")
+        log.info("No browser launched, no submit, no attempt spent.")
+        log.info("If this code does not match your authenticator app, "
+                 "KITE_TOTP_SECRET in .env is wrong.")
+        return
+
+    if DRY_TOTP:
+        log.info("DRY_TOTP active — will NOT submit a TOTP or spend an attempt.")
+
     try:
         token = login()
         _update_env_token(token)
         with open(os.path.join(BASE_DIR, "access_token.txt"), "w") as f:
             f.write(token)
         log.info("Login complete — .env and access_token.txt updated")
+    except TOTPSafetyAbort as exc:
+        # Not a failure: the guard deliberately declined to submit.
+        log.warning(f"TOTP submit declined by safety guard: {exc}")
+        log.warning("No login attempt was spent.")
+        sys.exit(0 if DRY_TOTP else 2)
     except Exception as exc:
         log.critical(f"Headless login failed: {exc}")
         sys.exit(1)

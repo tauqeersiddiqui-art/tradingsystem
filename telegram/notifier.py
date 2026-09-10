@@ -9,6 +9,7 @@
 # and the same two messages are always edited in place (never new messages).
 
 import os
+import re
 import json
 import logging
 import time
@@ -45,6 +46,18 @@ if not BOT_CHAT_ID:        raise RuntimeError("TELEGRAM_BOT_CHAT_ID missing")
 if not CHANNEL_ID:         raise RuntimeError("TELEGRAM_CHANNEL_ID missing")
 if not AUTHORIZED_USER_ID: raise RuntimeError("TELEGRAM_ADMIN_ID missing")
 
+# Token sanity check — a real BotFather token looks like "123456789:AAExxxx…"
+# (digits, colon, 30+ secret chars). A wrong/malformed token does NOT fail
+# here (engine must keep running); instead every API call returns HTTP 404
+# "Not Found" and _warn_token_invalid() below surfaces the root cause once.
+if not re.match(r"^\d{6,}:[A-Za-z0-9_\-]{30,}$", BOT_TOKEN):
+    _log.error(
+        "[TG] TELEGRAM_BOT_TOKEN looks INVALID (len=%d — expected "
+        "'<bot_id>:<secret>' from @BotFather). Every send/edit/poll will fail "
+        "with 404 Not Found until .env is fixed and the process restarted.",
+        len(BOT_TOKEN),
+    )
+
 API_URL             = f"https://api.telegram.org/bot{BOT_TOKEN}"
 SEND_URL            = f"{API_URL}/sendMessage"
 EDIT_MESSAGE_URL    = f"{API_URL}/editMessageText"
@@ -61,6 +74,22 @@ ANSWER_CALLBACK_URL = f"{API_URL}/answerCallbackQuery"
 # logs/tg_fallback.log (see _fallback below).
 _proxy_url = os.getenv("TELEGRAM_PROXY", "").strip()
 _PROXY = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else None
+
+# HTTP 404 from api.telegram.org means the BOT TOKEN itself is wrong (a bad
+# chat is 400/403; a gone message is 400 "message to edit not found"). Warn
+# once per 5 min instead of spamming a warning on every single API call.
+_last_token_404_ts = 0.0
+
+def _warn_token_invalid(d: dict) -> None:
+    global _last_token_404_ts
+    now = time.time()
+    if now - _last_token_404_ts >= 300:
+        _last_token_404_ts = now
+        _log.error(
+            "[TG] Bot API 404 Not Found — TELEGRAM_BOT_TOKEN is invalid. "
+            "ALL Telegram notifications AND remote commands (/pause /stop) "
+            "are failing. Fix .env and restart. (%s)", d,
+        )
 
 _STATE_FILE = os.path.join(PROJECT_ROOT, ".telegram_state.json")
 
@@ -189,7 +218,10 @@ def _send(chat_id, text, parse_mode="HTML", reply_markup=None, disable_web_page_
         r = requests.post(SEND_URL, json=payload, timeout=10, proxies=_PROXY)
         d = r.json()
         if not d.get("ok"):
-            _log.warning("[TG] Send error: %s", d)
+            if d.get("error_code") == 404:
+                _warn_token_invalid(d)
+            else:
+                _log.warning("[TG] Send error: %s", d)
             return None
         return d.get("result")
     except Exception as e:
@@ -229,7 +261,10 @@ def _edit(message_id, text, parse_mode="HTML"):
             _log.warning("[TG] Edit target gone: %s", d)
             return _EDIT_GONE
 
-        _log.warning("[TG] Edit error: %s", d)
+        if d.get("error_code") == 404:
+            _warn_token_invalid(d)
+        else:
+            _log.warning("[TG] Edit error: %s", d)
         return False
     except Exception as e:
         _log.warning("[TG] Edit exception: %s", e)
@@ -271,7 +306,10 @@ def _edit_with_markup(message_id, text, reply_markup=None):
             _log.warning("[TG] Edit target gone: %s", d)
             return _EDIT_GONE
 
-        _log.warning("[TG] Market edit error: %s", d)
+        if d.get("error_code") == 404:
+            _warn_token_invalid(d)
+        else:
+            _log.warning("[TG] Market edit error: %s", d)
         return False
     except Exception as e:
         _log.warning("[TG] Market edit exception: %s", e)
@@ -573,6 +611,9 @@ def _poll_commands_internal(status_cb=None):
         r = requests.get(GET_UPDATES_URL, params=params, timeout=5, proxies=_PROXY)
         data = r.json()
         if not data.get("ok"):
+            if data.get("error_code") == 404:
+                _warn_token_invalid(data)
+                _poll_fail_count += 1   # engage worker backoff (3s → 60s)
             return
 
         for update in data.get("result", []):

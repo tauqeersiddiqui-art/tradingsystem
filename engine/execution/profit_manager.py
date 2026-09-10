@@ -15,14 +15,13 @@
 #   [SLIPPAGE] warning when the gap exceeds SLIPPAGE_WARN_PTS.
 # ─────────────────────────────────────────────────────────────────────────
 #
-# Ladder — uses max_pnl (Rs, on the ACTUAL position qty) as the source of truth:
-#   MFE >= Rs2000  ->  lock 80% of peak profit
-#   MFE >= Rs1200  ->  lock 70% of peak profit
-#   MFE >= Rs 800  ->  lock Rs600
-#   MFE >= Rs 500  ->  lock Rs350
-#   MFE >= Rs 390  ->  lock Rs195   (~+3pt for 65-lot, net-positive floor)
-#   MFE >= Rs 195  ->  lock Rs 65   (~+1pt for 65-lot, cost-recovery floor)
-#   MFE >= Rs 130  ->  lock Rs 32   (~+0.5pt for 65-lot, slippage-proof entry)
+# Ladder — point-based retention rungs (user config 2026-09-09), using
+# max_pnl in Rs on the ACTUAL position qty as the source of truth:
+#   MFE >= 40 pts  ->  lock 90% of peak profit
+#   MFE >= 30 pts  ->  lock 80% of peak profit
+#   MFE >= 20 pts  ->  lock 70% of peak profit
+#   above 3x cost  ->  trail 50% of peak profit (floored at round-trip cost)
+#   below 3x cost  ->  NO trailing — ride the initial stop (no early lock)
 #
 # RULES (enforced by construction):
 #   * Stop only TIGHTENS (max() ratchet) — it can never loosen.
@@ -31,13 +30,15 @@
 #   * max_pnl is the only profit reference used.
 
 import logging
+import os
 
 logger = logging.getLogger("profit_manager")
 
 # Retained for backward-compat (telegram.messages imports LOCK_PTS).
-_LOT_QTY  = 65
+# Lot units now come from LOT_SIZE (env) — BANKNIFTY = 30.
+_LOT_QTY  = int(os.getenv("LOT_SIZE", "30"))
 _RS_FLOOR = 200.0
-LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
+LOCK_PTS  = _RS_FLOOR / max(_LOT_QTY, 1)
 
 # ─────────────────────────────────────────────────────────────────────────
 # COST-AWARE PROFIT LADDER  (replaces the old fixed Rs rungs)
@@ -51,68 +52,80 @@ LOCK_PTS  = _RS_FLOOR / _LOT_QTY   # 3.077 pts
 # NEW DESIGN (two guarantees):
 #   1. No lock is EVER below cost  -> a locked exit is break-even or better,
 #      never a guaranteed loss.
-#   2. First lock only arms once MFE >= 1.5x cost  -> noise no longer trips it.
-# Above cost-recovery it trails ~62% of the running peak, so a trade that
-# peaks at +Rs442 keeps ~Rs274 instead of the old hard Rs195 cap.
+#   2. First lock only arms once MFE >= 3x cost  -> noise no longer trips it.
+# Above cost-recovery it trails ~50% of the running peak, so a trade that
+# peaks at +Rs442 keeps ~Rs221 instead of the old hard Rs195 cap.
 #
 # Worst-case loss is UNCHANGED: until the first lock arms, the stop stays at
 # the initial risk_manager stop. The ladder only ever TIGHTENS the stop.
 # ─────────────────────────────────────────────────────────────────────────
 
-_COST_PER_LOT = 66.0     # round-trip cost per 65-qty lot (overridable via env)
-_LOT_UNITS    = 65
-_TRAIL_PCT    = 0.62     # fraction of peak profit retained once cost recovered
+_COST_PER_LOT = 66.0     # round-trip cost per lot (overridable via env)
+_LOT_UNITS    = int(os.getenv("LOT_SIZE", "30"))   # lot size of the traded index
+_TRAIL_PCT    = 0.50     # fraction of peak profit retained once cost recovered
 
 
-def _cost_rs(qty: int) -> float:
-    """Round-trip cost in Rs for a given position qty (scales by lots)."""
-    import os
+def _cost_rs(qty: int, lot_units: int | None = None) -> float:
+    """Round-trip cost in Rs for a given position qty (scales by lots).
+
+    lot_units defaults to LOT_SIZE from the environment (BANKNIFTY = 30).
+    Research tools that replay the NIFTY dataset pass their own unit size
+    explicitly so live config changes never distort historical sims.
+    """
+    lot_units = int(lot_units) if lot_units else int(os.getenv("LOT_SIZE", "30"))
     cost_per_lot = float(os.getenv("COST_PER_LOT", _COST_PER_LOT))
-    lots = max(1, round(qty / _LOT_UNITS))
+    lots = max(1, round(qty / max(lot_units, 1)))
     return lots * cost_per_lot
 
 
-def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS):
+def ladder_locked_rs(max_pnl: float, qty: int = _LOT_UNITS, lot_units: int | None = None):
     """
     Return (locked_profit_rs, stage_label) for the current peak PnL in Rs.
 
     Cost-aware: never returns a lock below the trade's round-trip cost, and
-    returns 0 (no lock) until MFE clears 1.5x cost so noise can't trip it.
+    returns 0 (no lock) until MFE clears 3x cost so noise can't trip it.
     """
-    cost = _cost_rs(qty)
+    cost = _cost_rs(qty, lot_units)
 
     # Not enough cushion yet — rely on the initial stop (no early lock).
-    if max_pnl < cost * 1.5:
+    # Arm at 3x cost (was 1.5x) so normal 3-4pt premium noise can't trip the
+    # ladder the moment a trade ticks green.
+    if max_pnl < cost * 3.0:
         return 0.0, "INITIAL"
 
     # Trail a fraction of the peak, floored at break-even-after-cost.
     locked = max(_TRAIL_PCT * max_pnl, cost)
 
-    # Lock more aggressively when deep in profit (protect large winners).
-    if   max_pnl >= 2000.0:
+    # Point-based retention rungs — keep more of the peak as the move
+    # deepens (user config 2026-09-09):
+    #   >= 40 pts  ->  lock 90%
+    #   >= 30 pts  ->  lock 80%
+    #   >= 20 pts  ->  lock 70%
+    pts = max_pnl / max(qty, 1)
+    if   pts >= 40.0:
+        locked = max(locked, 0.90 * max_pnl)
+        stage  = "P40_LOCK90%"
+    elif pts >= 30.0:
         locked = max(locked, 0.80 * max_pnl)
-        stage  = "S6_LOCK80%"
-    elif max_pnl >= 1200.0:
+        stage  = "P30_LOCK80%"
+    elif pts >= 20.0:
         locked = max(locked, 0.70 * max_pnl)
-        stage  = "S5_LOCK70%"
-    elif max_pnl >= 800.0:
-        locked = max(locked, 0.65 * max_pnl)
-        stage  = "S4_TRAIL65%"
+        stage  = "P20_LOCK70%"
     else:
-        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else "S2_TRAIL62%"
+        stage  = "S1_COSTLOCK" if locked <= cost + 1e-6 else "S2_TRAIL50%"
 
     locked = min(locked, max_pnl)   # never lock more than the peak itself
     return locked, stage
 
 
-def ladder_stop(entry_price, qty, max_pnl, current_stop):
+def ladder_stop(entry_price, qty, max_pnl, current_stop, lot_units: int | None = None):
     """
     Convert the rupee profit-lock to a premium stop level and ratchet UP only.
 
     Returns (new_stop, stage_label, locked_rs).
     Used by BOTH manage_position (normal trades) and the scalp loop.
     """
-    locked_rs, stage = ladder_locked_rs(max_pnl, qty)
+    locked_rs, stage = ladder_locked_rs(max_pnl, qty, lot_units)
     if locked_rs <= 0:
         return current_stop, stage, 0.0
     stop_floor = entry_price + locked_rs / max(qty, 1)
@@ -120,7 +133,8 @@ def ladder_stop(entry_price, qty, max_pnl, current_stop):
     return new_stop, stage, locked_rs
 
 
-def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, target=None):
+def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, target=None,
+                    lot_units: int | None = None):
     """
     Args:
         entry_price : option premium at entry
@@ -147,7 +161,8 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
         return stop_loss, max_pnl, "TARGET_HIT"
 
     # ── 1  Centralized profit-lock ladder (single source of truth) ────
-    new_stop, stage, locked_rs = ladder_stop(entry_price, qty, max_pnl, stop_loss)
+    new_stop, stage, locked_rs = ladder_stop(entry_price, qty, max_pnl, stop_loss,
+                                             lot_units=lot_units)
     if new_stop > stop_loss + 1e-6:
         logger.info(
             f"[LADDER]\nMFE={max_pnl:.0f}\nLOCK={locked_rs:.0f}\n"
@@ -157,7 +172,12 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
 
     # ── 2  Drawdown exit — only after meaningful profit (kept) ────────
     if max_pnl >= qty * 10:
-        retention = 0.65 if ml_prob >= 0.65 else 0.55
+        # Retention quality tiers (Sep-2026 fix): the activity score the live
+        # path trades on is P(touch)=ce+pe, which concentrates 0.65-0.90.
+        # The old `ml_prob >= 0.65` tier put nearly every trade in the strict
+        # bucket. Real quality split in the journal sits at ~0.72 (75% WR vs
+        # 56% below), so tiers are 0.72 / 0.65.
+        retention = 0.75 if ml_prob >= 0.72 else (0.70 if ml_prob >= 0.65 else 0.60)
         if pnl <= max_pnl * retention:
             reason = "Drawdown"
 

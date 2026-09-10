@@ -1052,6 +1052,12 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                         f"chain_tokens_live={_od.get('chain_tokens_live', 0)}"
                         f"/{_od.get('chain_tokens_total', 0)}"
                     )
+                    # Feed OI snapshot to the live engine — becomes the
+                    # oi_imbalance model feature (next retrain learns from it).
+                    try:
+                        ctx.live_engine.update_oi_context(_od)
+                    except Exception as _oi_e:
+                        logger.debug(f"[OPTION FEED] OI context update failed: {_oi_e}")
                 except Exception as _od_e:
                     logger.warning(f"[OPTION FEED] Diagnostics failed (non-fatal): {_od_e}")
 
@@ -2218,6 +2224,14 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
                 except Exception as _retrain_e:
                     logger.warning(f"[RETRAIN] Trigger error: {_retrain_e}")
 
+                # ── EOD complete → engine shutdown (closes process for the day) ─
+                try:
+                    tg_force("🌙 <b>EOD complete — engine shutting down.</b>\nSee you tomorrow at 9:15.")
+                except Exception:
+                    pass
+                logger.info("[EOD] All reports sent — requesting shutdown.")
+                _shutdown_event.set()
+
             # ── Health file update ────────────────────────────────────
             update_health(snapshot(ctx))
 
@@ -2241,6 +2255,16 @@ def engine_loop(ctx: TradingContext, builder: CandleBuilder):
             time.sleep(1)
             # NOTE: position management is NOT here — it runs in the main try block above
             # This except only handles unexpected crashes and resumes the loop
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SHUTDOWN COORDINATION
+# ══════════════════════════════════════════════════════════════════════
+
+# Set by engine_loop once the 15:30 EOD summary (and all reports) are sent.
+# The main thread's keep-alive loop watches this and exits the process
+# cleanly so the engine closes for the day after EOD.
+_shutdown_event = threading.Event()
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2468,9 +2492,26 @@ def main():
         logger.warning(f"[FEED HEALTH] Report failed (non-fatal): {_fh_e}")
 
     # ── Keep-alive ────────────────────────────────────────────────────
+    # Exits when engine_loop requests shutdown after the 15:30 EOD summary,
+    # or on Ctrl+C.
     try:
-        while True:
+        while not _shutdown_event.is_set():
             time.sleep(1)
+        if _shutdown_event.is_set():
+            # Friday: give the weekly retrain a chance to finish before exit.
+            for _t in threading.enumerate():
+                if _t.name == "weekly_retrain" and _t.is_alive():
+                    logger.info("[SHUTDOWN] Waiting for weekly retrain to complete...")
+                    try:
+                        tg_force("⏳ Weekly retrain running — shutting down after it finishes.")
+                    except Exception:
+                        pass
+                    _t.join()
+            logger.info("[SHUTDOWN] EOD shutdown complete — exiting.")
+            try:
+                tg_force("✅ Engine closed after EOD summary.")
+            except Exception:
+                pass
     except KeyboardInterrupt:
         logger.info("Stopping system...")
         try:

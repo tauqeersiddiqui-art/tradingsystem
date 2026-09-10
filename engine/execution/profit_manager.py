@@ -172,7 +172,12 @@ def manage_position(entry_price, ltp, lot_size, stop_loss, max_pnl, ml_prob, tar
 
     # ── 2  Drawdown exit — only after meaningful profit (kept) ────────
     if max_pnl >= qty * 10:
-        retention = 0.65 if ml_prob >= 0.65 else 0.55
+        # Retention quality tiers (Sep-2026 fix): the activity score the live
+        # path trades on is P(touch)=ce+pe, which concentrates 0.65-0.90.
+        # The old `ml_prob >= 0.65` tier put nearly every trade in the strict
+        # bucket. Real quality split in the journal sits at ~0.72 (75% WR vs
+        # 56% below), so tiers are 0.72 / 0.65.
+        retention = 0.75 if ml_prob >= 0.72 else (0.70 if ml_prob >= 0.65 else 0.60)
         if pnl <= max_pnl * retention:
             reason = "Drawdown"
 

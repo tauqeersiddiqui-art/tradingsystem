@@ -18,7 +18,10 @@ from datetime import datetime, time as dtime
 import pandas as pd
 
 from ml.predictor_champion import ChampionPredictor
-from ml.feature_config import build_live_features, _safe_build_live_features, FEATURE_COLUMNS, ALL_FEATURE_COLUMNS
+from ml.feature_config import (
+    build_live_features, _safe_build_live_features, FEATURE_COLUMNS,
+    ALL_FEATURE_COLUMNS, DAY_TYPE_CODE, OI_FEATURE_COLUMNS,
+)
 from ml.ml_intraday_learner import IntradayMLLearner
 from ml.indicators import supertrend as _compute_supertrend, adx as _compute_adx, VWAPAccumulator
 from engine.execution.profit_manager import manage_position
@@ -137,6 +140,13 @@ class LiveEngine:
         # Minimum gap between the two sides' probs to claim a directional
         # edge. If |ce - pe| < margin, conviction is too low → no trade.
         self._ml_edge_margin: float = float(os.getenv("ML_EDGE_MARGIN", "0.15"))
+
+        # ── Context features for next retrain (Sep-2026) ──────────────
+        # OI imbalance snapshot (updated per-minute by master_runner via
+        # update_oi_context).  Positive = PE OI dominant (support), negative
+        # = CE OI dominant (resistance pressure).
+        self._oi_imbalance: float = 0.0
+        self._oi_ts: float = 0.0
 
         # [PREDICT-FIRST] log throttle — the engine loop runs ~1x/sec, so the
         # per-cycle INFO line would spam identical text 60x/min. We log only
@@ -398,12 +408,42 @@ class LiveEngine:
         features = _safe_build_live_features(closes, opens, highs, lows, volumes,
                                              signal, ts=ts, day_ctx=day_ctx)
 
+        # ── Context features (day type + OI) — live-only for now; the
+        # backtest builder fills them 0.0/UNKNOWN until historical OI data
+        # exists, so models learn to ignore them when degenerate. ──────
+        try:
+            features["day_type_code"] = float(DAY_TYPE_CODE.get(
+                self.learner.get_day_type(), 0))
+        except Exception:
+            features["day_type_code"] = 0.0
+        if time.time() - self._oi_ts > 180:
+            self._oi_imbalance = 0.0   # OI stale > 3min → neutral, don't trust it
+        for f in OI_FEATURE_COLUMNS:
+            features[f] = features.get(f, 0.0)
+        features["oi_imbalance"] = self._oi_imbalance
+
         missing = [f for f in ALL_FEATURE_COLUMNS if f not in features]
         if missing:
             logger.error(f"[FEATURES] Still missing after build: {missing}")
             return None
 
         return features
+
+    def update_oi_context(self, od: dict):
+        """
+        Called by master_runner's 60s [OPTION FEED] diagnostics tick.
+        Stores normalized CE-vs-PE OI imbalance for feature building:
+            (pe_oi - ce_oi) / (pe_oi + ce_oi)   in [-1, +1]
+        Positive → PE writers dominant (support / bullish lean).
+        """
+        try:
+            ce = float(od.get("ce_oi", 0) or 0)
+            pe = float(od.get("pe_oi", 0) or 0)
+            total = ce + pe
+            self._oi_imbalance = ((pe - ce) / total) if total > 0 else 0.0
+            self._oi_ts = time.time()
+        except Exception:
+            pass
 
     def _update_day_ctx(self, df_window, ts=None) -> dict:
         """

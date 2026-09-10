@@ -18,10 +18,16 @@ from datetime import datetime
 from pathlib import Path
 from ml.feature_config import FEATURE_COLUMNS
 
+# Context features logged alongside the base set (Sep-2026). They are 0.0 in
+# historical datasets, but every live row now carries the day type the model
+# predicted under and the OI imbalance at entry — so future retrains on
+# merged data can learn day-type / OI-conditional behavior.
+CONTEXT_FEATURE_COLUMNS = ["day_type_code", "oi_imbalance"]
+
 _ROOT         = Path(__file__).resolve().parent.parent
 FEEDBACK_PATH = str(_ROOT / "data" / "ml_feedback.csv")
 HIST_PATH     = str(_ROOT / "ml" / "models" / "training_dataset_trade.csv")
-FIELDNAMES    = FEATURE_COLUMNS + ["direction", "outcome", "pnl", "reason", "date"]
+FIELDNAMES    = FEATURE_COLUMNS + CONTEXT_FEATURE_COLUMNS + ["direction", "outcome", "pnl", "reason", "date"]
 
 BROKERAGE_ROUND_TRIP = 65 * 2   # FIX-2
 
@@ -40,7 +46,7 @@ def log_trade_outcome(features: dict, direction: str, pnl: float,
     file_exists = os.path.isfile(FEEDBACK_PATH)
     os.makedirs(os.path.dirname(FEEDBACK_PATH), exist_ok=True)
 
-    row = {f: features.get(f, 0) for f in FEATURE_COLUMNS}
+    row = {f: features.get(f, 0) for f in FEATURE_COLUMNS + CONTEXT_FEATURE_COLUMNS}
     row.update(direction=direction, outcome=outcome,
                pnl=round(pnl, 2), reason=reason,
                date=entry_time.strftime("%Y-%m-%d"))

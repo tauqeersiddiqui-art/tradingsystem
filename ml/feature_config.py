@@ -90,9 +90,30 @@ NEW_FEATURE_COLUMNS = [
     "tod_sin", "tod_cos", "adx_x_tod", "st_x_adx", "vwap_x_adx",
 ]
 
-# Full 65-feature set (base + new-30).  New champions are trained on
-# this; the live feature builder must produce every one of these keys.
-ALL_FEATURE_COLUMNS = FEATURE_COLUMNS + NEW_FEATURE_COLUMNS
+
+# ─────────────────────────────────────────────────────────────────────
+# CONTEXT FEATURES (Sep-2026) — day type + option-chain OI imbalance.
+#
+# LIVE-ONLY for now: the live feature builder fills them every cycle, the
+# backtest builder leaves them 0.0/UNKNOWN until historical OI data exists.
+# Tree models (LGBM/CAT) treat constant-valued columns as inert, so this is
+# safe for the current champions and becomes learnable as soon as feedback
+# rows recorded via ml/feedback_trainer.py start carrying real values.
+# ─────────────────────────────────────────────────────────────────────
+DAY_TYPE_CODE = {
+    "UNKNOWN":      0,
+    "TREND_DAY":    1,
+    "RANGE_DAY":    2,
+    "VOLATILE_DAY": 3,
+    "GAP_DAY":      4,
+}
+
+OI_FEATURE_COLUMNS = ["oi_imbalance"]
+
+ALL_FEATURE_COLUMNS = FEATURE_COLUMNS + NEW_FEATURE_COLUMNS \
+    + ["day_type_code"] + OI_FEATURE_COLUMNS
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────
